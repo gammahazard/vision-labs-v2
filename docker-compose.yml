@@ -464,7 +464,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    # on-failure (not unless-stopped) so a clean exit from the detect_X flag
+    # check actually stays exited and doesn't restart-loop.
+    restart: on-failure
 
   vehicle-detector-cam2:
     build:
@@ -491,7 +493,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam2:
     build:
@@ -521,7 +523,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    restart: on-failure
 
   tracker-cam2:
     build:
