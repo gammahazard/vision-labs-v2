@@ -338,6 +338,32 @@ Estimated time: 30 min once Phase 7 is done.
 
 ---
 
+## Phase 8b — Multi-camera grid view in the main dashboard (concrete design)
+
+Independent of the TV dashboard (Phase 8). This is for the *operator* dashboard at `index.html`.
+
+### Design
+
+- Camera tiles laid out in a grid on the live-view page
+- Each tile shows a small live feed + bbox overlays + status badge
+- **Resize:** drag corner of any tile (CSS grid + JS resize handlers)
+- **Move:** drag tile header to reorder positions
+- **Click:** opens that camera in a full-screen modal with full overlays, event feed, zone editor, all the current single-camera dashboard features
+- **Layout persists** per-user in `localStorage` or in Redis under `user_prefs:{username}:dashboard`
+
+### Implementation sketch
+
+- New JS module `static/dashboard-grid.js` that wraps multiple WebSocket clients (one per camera)
+- Each tile is a self-contained DOM element with its own WebSocket connection
+- A "camera switcher" in the existing live view becomes a "grid <-> single" mode toggle
+- Modal view reuses the existing single-camera view code
+
+### Effort
+
+~1-2 days. Doesn't need any backend changes — purely a frontend rebuild of the live view. Best done after Phase 8 (TV dashboard) since they share the "multiple WS connections at once" infrastructure.
+
+---
+
 ## Phase 8 — TV viewing dashboard (concrete design)
 
 A dedicated UI optimized for 10-foot viewing (Apple TV / Fire TV / Chromecast / browser on the TV). Not a separate service — just a new static page in the dashboard.
@@ -498,6 +524,7 @@ If any step breaks, we revert the last change and figure out why before continui
 | 7d — Auto-discovery (ONVIF + Pi mDNS) | ⏸️ later | claude | Nice-to-have on top of 7c |
 | 7e — Auto-spawn via Docker socket | ⏸️ deferred (intentionally) | — | Mount /var/run/docker.sock in dashboard, spawn containers automatically on Save. Cleaner UX but adds attack surface. See decision log. |
 | 8 — TV dashboard | ⬜ future | claude | tv.html — works with 1 camera too |
+| 8b — Multi-cam grid view in main dashboard | ⬜ future | claude | Resizable/draggable camera tiles on index.html, click for full-screen modal. Independent of TV dashboard. |
 | 9a — HomeKit (Homebridge) | ⬜ future | claude | Easier first iteration |
 | 9b — HomeKit (HAP-python) | ⏸️ future | — | If we outgrow Homebridge |
 | 10 — Cleanup | ⬜ blocked-by-others | — | Final pass |
