@@ -176,6 +176,7 @@ from routes.telegram_access import router as telegram_access_router
 from routes.image_gen import router as image_gen_router
 from routes.metrics import router as metrics_router, start_metrics_collector
 from routes.recordings import router as recordings_router
+from routes.cameras import router as cameras_router
 
 app.include_router(events_router)
 app.include_router(config_router)
@@ -191,6 +192,7 @@ app.include_router(telegram_access_router)
 app.include_router(image_gen_router)
 app.include_router(metrics_router)
 app.include_router(recordings_router)
+app.include_router(cameras_router)
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +285,21 @@ async def startup():
         logger.info(f"Initialized default config in {CONFIG_KEY}")
     else:
         logger.info(f"Config already exists in {CONFIG_KEY}: {existing}")
+
+    # Seed the camera registry with this deployment's single env-configured
+    # camera so the API has at least one entry. On subsequent boots the
+    # registry is non-empty and this is a no-op.
+    import cameras as camera_registry
+    rtsp_sub = os.getenv("RTSP_SUB", "")
+    rtsp_main = os.getenv("RTSP_MAIN", "")
+    camera_registry.seed_default_if_empty(
+        default_id=CAMERA_ID,
+        default_name=os.getenv("LOCATION_NAME", CAMERA_ID.replace("_", " ").title()),
+        rtsp_sub=rtsp_sub,
+        rtsp_main=rtsp_main,
+        location_lat=float(os.getenv("LOCATION_LAT", "0") or "0"),
+        location_lon=float(os.getenv("LOCATION_LON", "0") or "0"),
+    )
 
     # Initialize AI assistant database
     from ai_db import AIDB

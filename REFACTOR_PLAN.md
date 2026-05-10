@@ -490,8 +490,8 @@ If any step breaks, we revert the last change and figure out why before continui
 | 4.3 — ComfyUI cleanup | ✅ done (`3655c52`) | claude | Uses constants.COMFYUI_HOST |
 | 4.4 — Retention | ✅ done (`8948755`) | claude | Liveness log added at startup |
 | 4.5 — Event poller | ✅ done (`eee1b4e`) | claude | 280 lines moved cleanly; nested fns preserved |
-| 5 — WebSocket | ⬜ pending | claude | Highest risk; sticky-identity fix free |
-| 6 — server.py shape | ⬜ pending | claude | Outcome of 4+5 (target: ~250 lines) |
+| 5 — WebSocket | ✅ done (`3dc24c2`) | claude | 430 lines moved; sticky-identity bug fixed (now per-connection); verified live browser still works |
+| 6 — server.py shape | ✅ done | — | **344 lines** (74% smaller than baseline 1313). Pure wiring file now. |
 | 7 — Camera registry | ⬜ pending | claude | Scaffolds multi-cam |
 | 7b — Add 2nd camera | ⏸️ future | user | When you have a second camera |
 | 8 — TV dashboard | ⬜ future | claude | tv.html — works with 1 camera too |

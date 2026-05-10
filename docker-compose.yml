@@ -294,6 +294,10 @@ services:
       - AUTH_DB_PATH=/data/auth.db
       - OLLAMA_HOST=http://ollama:11434
       - COMFYUI_HOST=http://comfyui:8188
+      # Pass through camera RTSP URLs so the dashboard can seed the camera
+      # registry with this deployment's primary camera on first startup.
+      - RTSP_SUB=${RTSP_SUB:-}
+      - RTSP_MAIN=${RTSP_MAIN:-}
 
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
