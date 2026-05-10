@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision Labs — Cameras</title>
+    <meta name="description" content="Register and manage cameras">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .cam-page { max-width: 960px; margin: 0 auto; padding: 1.5rem 1rem; }
+        .cam-page h1 { font-size: 1.5rem; font-weight: 600; color: #f1f5f9; margin-bottom: 0.5rem; }
+        .cam-page h1 span { font-size: 1.3rem; margin-right: 0.4rem; }
+        .cam-subtitle { color: #94a3b8; font-size: 0.85rem; margin-bottom: 1.5rem; }
+
+        .cam-card { background: #1a2235; border: 1px solid #2d3748; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; }
+        .cam-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+        .cam-card-title { font-size: 1rem; font-weight: 600; color: #e2e8f0; }
+        .cam-card-badge { font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 20px; background: rgba(74,222,128,0.15); color: #4ade80; font-weight: 500; }
+
+        .cam-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; }
+        .cam-form-grid .full { grid-column: 1 / -1; }
+        .cam-form-grid label { font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 0.25rem; }
+        .cam-form-grid input { width: 100%; padding: 0.5rem 0.75rem; background: #0f172a; border: 1px solid #374151; border-radius: 8px; color: #f1f5f9; font-size: 0.85rem; font-family: inherit; }
+        .cam-form-grid input::placeholder { color: #64748b; }
+        .cam-form-grid input:focus { outline: none; border-color: #4ade80; box-shadow: 0 0 0 2px rgba(74,222,128,0.15); }
+
+        .cam-btn { padding: 0.5rem 1rem; border-radius: 8px; border: none; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: all 0.15s ease; font-family: inherit; }
+        .cam-btn-primary { background: #4ade80; color: #0f172a; }
+        .cam-btn-primary:hover { background: #22c55e; }
+        .cam-btn-primary:disabled { background: #4b5563; color: #9ca3af; cursor: not-allowed; }
+        .cam-btn-secondary { background: #374151; color: #e2e8f0; }
+        .cam-btn-secondary:hover { background: #4b5563; }
+        .cam-btn-danger { background: rgba(239,68,68,0.15); color: #ef4444; }
+        .cam-btn-danger:hover { background: rgba(239,68,68,0.25); }
+        .cam-actions { display: flex; gap: 0.5rem; margin-top: 1rem; align-items: center; flex-wrap: wrap; }
+
+        .cam-msg { font-size: 0.85rem; padding: 0.5rem 0.75rem; border-radius: 6px; margin-top: 0.5rem; display: none; }
+        .cam-msg.show { display: block; }
+        .cam-msg.ok { background: rgba(74,222,128,0.12); color: #86efac; border: 1px solid rgba(74,222,128,0.3); }
+        .cam-msg.err { background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); }
+
+        .cam-list { display: flex; flex-direction: column; gap: 0.6rem; }
+        .cam-item { background: #0f172a; border: 1px solid #374151; border-radius: 8px; padding: 0.75rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+        .cam-item-info { flex: 1; min-width: 0; }
+        .cam-item-name { font-weight: 600; color: #f1f5f9; font-size: 0.95rem; }
+        .cam-item-meta { font-size: 0.75rem; color: #94a3b8; margin-top: 0.15rem; word-break: break-all; }
+        .cam-item-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+
+        .cam-empty { color: #64748b; font-size: 0.85rem; padding: 1rem; text-align: center; font-style: italic; }
+
+        .cam-nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        .cam-nav a { color: #94a3b8; font-size: 0.85rem; text-decoration: none; padding: 0.4rem 0.8rem; border-radius: 6px; }
+        .cam-nav a:hover { background: #1a2235; color: #e2e8f0; }
+        .cam-nav a.active { background: #1a2235; color: #4ade80; }
+    </style>
+</head>
+
+<body>
+    <div class="cam-page">
+        <div class="cam-nav">
+            <a href="/">← Dashboard</a>
+            <a href="/cameras.html" class="active">📹 Cameras</a>
+            <a href="/telegram.html">📲 Telegram</a>
+            <a href="/monitoring.html">📊 Monitoring</a>
+        </div>
+
+        <h1><span>📹</span> Cameras</h1>
+        <div class="cam-subtitle">Register cameras for vision-labs. Auto-detect runs against any LAN RTSP URL.</div>
+
+        <!-- Existing cameras list -->
+        <div class="cam-card">
+            <div class="cam-card-header">
+                <div class="cam-card-title">Registered cameras</div>
+                <div class="cam-card-badge" id="camCount">0 cameras</div>
+            </div>
+            <div class="cam-list" id="camList">
+                <div class="cam-empty">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Add camera form -->
+        <div class="cam-card">
+            <div class="cam-card-header">
+                <div class="cam-card-title">Add a camera</div>
+            </div>
+            <form id="addCameraForm" onsubmit="handleAddCamera(event)">
+                <div class="cam-form-grid">
+                    <div>
+                        <label for="camId">Camera ID</label>
+                        <input type="text" id="camId" placeholder="basement" pattern="[a-zA-Z0-9_-]+" required>
+                    </div>
+                    <div>
+                        <label for="camName">Display name</label>
+                        <input type="text" id="camName" placeholder="Basement" required>
+                    </div>
+                    <div class="full">
+                        <label for="camRtspSub">RTSP sub-stream URL <span style="color:#64748b;font-size:0.7rem;">(used for detection, lower resolution)</span></label>
+                        <input type="text" id="camRtspSub" placeholder="rtsp://user:pass@192.168.1.50:554/sub" required>
+                    </div>
+                    <div class="full">
+                        <label for="camRtspMain">RTSP main-stream URL <span style="color:#64748b;font-size:0.7rem;">(optional — HD view)</span></label>
+                        <input type="text" id="camRtspMain" placeholder="rtsp://user:pass@192.168.1.50:554/main">
+                    </div>
+                    <div>
+                        <label for="camLat">Latitude <span style="color:#64748b;font-size:0.7rem;">(optional)</span></label>
+                        <input type="number" id="camLat" step="0.0001" placeholder="42.0974">
+                    </div>
+                    <div>
+                        <label for="camLon">Longitude <span style="color:#64748b;font-size:0.7rem;">(optional)</span></label>
+                        <input type="number" id="camLon" step="0.0001" placeholder="-82.4540">
+                    </div>
+                </div>
+                <div class="cam-actions">
+                    <button type="button" class="cam-btn cam-btn-secondary" onclick="handleTestRtsp()">Test Connection</button>
+                    <button type="submit" class="cam-btn cam-btn-primary" id="addBtn">Save Camera</button>
+                </div>
+                <div class="cam-msg" id="camMsg"></div>
+            </form>
+        </div>
+
+        <!-- Help / next-steps card -->
+        <div class="cam-card">
+            <div class="cam-card-header">
+                <div class="cam-card-title">What happens after I save?</div>
+            </div>
+            <div style="font-size: 0.85rem; color: #94a3b8; line-height: 1.5;">
+                <p>Saving registers the camera in vision-labs's registry. To <strong>actually start detection</strong> on it, we still need per-camera detector / tracker / ingester services running.</p>
+                <p style="margin-top: 0.5rem;">For your existing camera (<code>front_door</code>), those services are already running from <code>docker-compose.yml</code>. For additional cameras, see <code>REFACTOR_PLAN.md</code> Phase 7b — slot-based service spawning coming next.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="cameras.js"></script>
+</body>
+
+</html>
