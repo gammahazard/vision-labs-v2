@@ -297,7 +297,8 @@ async def startup():
     asyncio.create_task(poll_telegram_callbacks())
 
     # Start reminder poller (checks every 60s for due reminders)
-    asyncio.create_task(_reminder_poller(_ai_db))
+    from pollers.reminders import reminder_poller
+    asyncio.create_task(reminder_poller(_ai_db))
 
     # Pull the AI model on first startup (background)
     # Pass a callback so the warm-up can signal when the model is in GPU memory
@@ -313,46 +314,6 @@ async def startup():
     asyncio.create_task(start_metrics_collector())
 
     logger.info(f"Dashboard ready at http://localhost:{DASHBOARD_PORT}")
-
-
-async def _reminder_poller(ai_db):
-    """Background task: check for due reminders every 60 seconds and send via Telegram."""
-    from routes.notifications import (
-        send_text, send_photo, send_video, is_configured,
-        get_latest_frame, build_clip,
-    )
-    await asyncio.sleep(10)  # Initial delay
-    while True:
-        try:
-            if is_configured() and ai_db:
-                due = ai_db.get_due_reminders()
-                for reminder in due:
-                    try:
-                        msg = reminder["message"]
-                        media_type = reminder.get("media_type", "text")
-
-                        if media_type == "snapshot":
-                            frame = get_latest_frame()
-                            if frame:
-                                await send_photo(frame, f"⏰ Reminder: {msg}")
-                            else:
-                                await send_text(f"⏰ Reminder: {msg}\n\n(Snapshot unavailable — camera may be offline)")
-                        elif media_type == "clip":
-                            clip = build_clip(duration=5.0, fps=10)
-                            if clip:
-                                await send_video(clip, f"⏰🎬 Reminder: {msg}")
-                            else:
-                                await send_text(f"⏰ Reminder: {msg}\n\n(Video clip unavailable — camera may be offline)")
-                        else:
-                            await send_text(f"⏰ Reminder: {msg}")
-
-                        ai_db.mark_reminder_sent(reminder["id"])
-                        logger.info(f"Sent reminder {reminder['id']} ({media_type}): {msg}")
-                    except Exception as e:
-                        logger.warning(f"Failed to send reminder {reminder['id']}: {e}")
-        except Exception as e:
-            logger.warning(f"Reminder poller error: {e}")
-        await asyncio.sleep(60)
 
 
 async def _ensure_ollama_model():

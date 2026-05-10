@@ -31,6 +31,7 @@ COPY server.py .
 COPY ai_db.py .
 COPY constants.py .
 COPY helpers/ helpers/
+COPY pollers/ pollers/
 COPY routes/ routes/
 
 # Copy frontend files
