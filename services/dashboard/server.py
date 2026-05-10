@@ -310,96 +310,13 @@ async def startup():
     asyncio.create_task(clear_comfyui_queue())
 
     # Daily prune of /data/snapshots and /data/events (configurable retention)
-    asyncio.create_task(_retention_poller())
+    from pollers.retention import retention_poller
+    asyncio.create_task(retention_poller())
 
     # Start Prometheus metrics collector (polls Redis every 10s)
     asyncio.create_task(start_metrics_collector())
 
     logger.info(f"Dashboard ready at http://localhost:{DASHBOARD_PORT}")
-
-
-async def _retention_poller():
-    """
-    Background task: prune old snapshots and event journals daily.
-
-    Without QNAP, /data/snapshots and /data/events grow unbounded — this caps them
-    at SNAPSHOT_RETENTION_DAYS (default 4 days). Set the env var to 0 to disable.
-    Once QNAP is wired up with its own retention policy, the local prune is harmless.
-    """
-    retention_days = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "4"))
-    if retention_days <= 0:
-        logger.info("Local retention disabled (SNAPSHOT_RETENTION_DAYS=0)")
-        return
-
-    SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
-    EVENT_DIR = os.environ.get("EVENT_JOURNAL_DIR", "/data/events")
-
-    await asyncio.sleep(60)  # let the rest of startup finish
-
-    while True:
-        try:
-            cutoff_ts = time.time() - (retention_days * 86400)
-            cutoff_date = (datetime.now() - timedelta(days=retention_days)).date()
-            removed_files = 0
-            removed_bytes = 0
-
-            # 1. Flat /data/snapshots/*.jpg (person snapshots, written by event poller)
-            if os.path.isdir(SNAPSHOT_DIR):
-                for entry in os.scandir(SNAPSHOT_DIR):
-                    if entry.is_file() and entry.name.endswith(".jpg"):
-                        try:
-                            st = entry.stat()
-                            if st.st_mtime < cutoff_ts:
-                                os.remove(entry.path)
-                                removed_files += 1
-                                removed_bytes += st.st_size
-                        except Exception:
-                            pass
-
-            # 2. Vehicle snapshots organized as /data/snapshots/vehicles/YYYY-MM-DD/
-            vehicles_dir = os.path.join(SNAPSHOT_DIR, "vehicles")
-            if os.path.isdir(vehicles_dir):
-                for entry in os.scandir(vehicles_dir):
-                    if not entry.is_dir():
-                        continue
-                    try:
-                        day = datetime.strptime(entry.name, "%Y-%m-%d").date()
-                    except ValueError:
-                        continue
-                    if day < cutoff_date:
-                        try:
-                            shutil.rmtree(entry.path)
-                            removed_files += 1
-                        except Exception:
-                            pass
-
-            # 3. Event journals at /data/events/YYYY-MM-DD.jsonl
-            if os.path.isdir(EVENT_DIR):
-                for entry in os.scandir(EVENT_DIR):
-                    if not (entry.is_file() and entry.name.endswith(".jsonl")):
-                        continue
-                    try:
-                        day = datetime.strptime(entry.name[:-len(".jsonl")], "%Y-%m-%d").date()
-                    except ValueError:
-                        continue
-                    if day < cutoff_date:
-                        try:
-                            st = entry.stat()
-                            os.remove(entry.path)
-                            removed_files += 1
-                            removed_bytes += st.st_size
-                        except Exception:
-                            pass
-
-            if removed_files:
-                logger.info(
-                    f"Retention prune: removed {removed_files} entries "
-                    f"({removed_bytes/1024/1024:.1f} MB), retention={retention_days}d"
-                )
-        except Exception as e:
-            logger.warning(f"Retention prune error: {e}")
-
-        await asyncio.sleep(86400)  # once per day
 
 
 async def _event_notification_poller():
