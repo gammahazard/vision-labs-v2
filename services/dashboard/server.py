@@ -302,7 +302,8 @@ async def startup():
 
     # Pull the AI model on first startup (background)
     # Pass a callback so the warm-up can signal when the model is in GPU memory
-    asyncio.create_task(_ensure_ollama_model())
+    from pollers.ollama_warmup import warm_ollama
+    asyncio.create_task(warm_ollama())
 
     # Clear stale ComfyUI queue and GPU pause flag from previous session
     asyncio.create_task(_clear_comfyui_queue_on_startup())
@@ -314,68 +315,6 @@ async def startup():
     asyncio.create_task(start_metrics_collector())
 
     logger.info(f"Dashboard ready at http://localhost:{DASHBOARD_PORT}")
-
-
-async def _ensure_ollama_model():
-    """Background task: pull the AI model on first startup if not already cached,
-    then send a warm-up message to force GPU load (saved to chat history)."""
-    import ollama as ollama_lib
-    from constants import CHAT_MODEL, OLLAMA_HOST, OLLAMA_KEEP_ALIVE
-    host = OLLAMA_HOST
-    model = CHAT_MODEL
-    await asyncio.sleep(10)  # Wait for other GPU services to finish CUDA init
-    try:
-        client = ollama_lib.Client(host=host)
-        # Check if model already exists
-        models = client.list()
-        model_names = [m.model for m in models.models] if models.models else []
-        if not any(model in name for name in model_names):
-            logger.info(f"Pulling AI model '{model}' (~9.3 GB, first-time download)...")
-            client.pull(model)
-            logger.info(f"AI model '{model}' downloaded successfully")
-        else:
-            logger.info(f"AI model '{model}' already available")
-
-        # Warm-up: send a real chat message to force the model into GPU memory.
-        # This message + reply are saved to chat history so the user sees it.
-        logger.info(f"Warming up AI model '{model}' (loading into GPU memory)...")
-
-        # Access the AI DB that was set up by startup
-        from routes.ai_state import _ai_db
-        startup_msg = "⚡ System restart detected — loading AI model into memory..."
-
-        try:
-            loop = asyncio.get_event_loop()
-            resp = await loop.run_in_executor(None, lambda: client.chat(
-                model=model,
-                messages=[{"role": "user", "content": "The system just restarted. Confirm you are loaded and ready in one short sentence."}],
-                options={"num_predict": 30, "num_ctx": 8192},
-                think=False,
-                keep_alive=OLLAMA_KEEP_ALIVE,
-            ))
-            # ollama library returns objects, not dicts
-            reply = getattr(resp.message, "content", "") or "Model loaded and ready."
-            # Strip <think> blocks from Qwen 3
-            import re
-            reply = re.sub(r"<think>.*?</think>\s*", "", reply, flags=re.DOTALL).strip()
-            if not reply:
-                reply = "Model loaded and ready."
-            logger.info(f"AI model '{model}' loaded into GPU memory — ready for chat")
-
-            # Signal that the model is now in GPU memory
-            set_gpu_ready_flag(True)
-
-            # Save both messages to chat history so user sees them
-            if _ai_db:
-                _ai_db.save_message("system", startup_msg)
-                _ai_db.save_message("assistant", f"✅ {reply}")
-        except Exception as warm_err:
-            logger.warning(f"Warm-up chat failed (model may still load on first use): {warm_err}")
-            if _ai_db:
-                _ai_db.save_message("system", startup_msg)
-                _ai_db.save_message("assistant", "⚠️ Model is still loading — it will be ready when you send your first message.")
-    except Exception as e:
-        logger.warning(f"Failed to pull AI model: {e} (AI chat will be unavailable until model is pulled)")
 
 
 async def _clear_comfyui_queue_on_startup():
