@@ -76,15 +76,33 @@ def register(app: FastAPI):
         r = ctx.r
         REDIS_HOST = r.connection_pool.connection_kwargs.get("host", "redis")
         REDIS_PORT = r.connection_pool.connection_kwargs.get("port", 6379)
-        DETECTION_STREAM = ctx.DETECTION_STREAM
-        DETECTION_FRAME_POSE = ctx.DETECTION_FRAME_POSE
-        FRAME_STREAM = ctx.FRAME_STREAM
-        HD_FRAME_KEY = ctx.HD_FRAME_KEY
-        IDENTITY_KEY = ctx.IDENTITY_KEY
-        STATE_KEY = ctx.STATE_KEY
-        ZONE_KEY = ctx.ZONE_KEY
-        VEHICLE_DET_STREAM = ctx.VEHICLE_DET_STREAM
-        CONFIG_KEY = ctx.CONFIG_KEY
+
+        # Phase 8b: WebSocket can target any camera via ?camera=<id> query param.
+        # Without it, falls back to the dashboard's primary CAMERA_ID env (front_door).
+        # All Redis keys are rebuilt for the requested camera so multi-camera grid
+        # tiles can each open their own WebSocket connection.
+        from contracts.streams import (
+            FRAME_STREAM as _FRAME_TMPL,
+            DETECTION_STREAM as _DET_TMPL,
+            STATE_KEY as _STATE_TMPL,
+            CONFIG_KEY as _CFG_TMPL,
+            IDENTITY_KEY as _IDKEY_TMPL,
+            ZONE_KEY as _ZONE_TMPL,
+            HD_FRAME_KEY as _HD_TMPL,
+            VEHICLE_STREAM as _VEH_DET_TMPL,
+            DETECTION_FRAME_KEY as _DET_FRAME_TMPL,
+            stream_key,
+        )
+        camera_id = ws.query_params.get("camera", ctx.CAMERA_ID)
+        FRAME_STREAM = stream_key(_FRAME_TMPL, camera_id=camera_id)
+        DETECTION_STREAM = stream_key(_DET_TMPL, detector_type="pose", camera_id=camera_id)
+        DETECTION_FRAME_POSE = stream_key(_DET_FRAME_TMPL, detector_type="pose", camera_id=camera_id)
+        HD_FRAME_KEY = stream_key(_HD_TMPL, camera_id=camera_id)
+        IDENTITY_KEY = stream_key(_IDKEY_TMPL, camera_id=camera_id)
+        STATE_KEY = stream_key(_STATE_TMPL, camera_id=camera_id)
+        ZONE_KEY = stream_key(_ZONE_TMPL, camera_id=camera_id)
+        VEHICLE_DET_STREAM = stream_key(_VEH_DET_TMPL, camera_id=camera_id)
+        CONFIG_KEY = stream_key(_CFG_TMPL, camera_id=camera_id)
 
         # Validate session cookie BEFORE accepting the connection. We have to
         # accept() first to send a close frame; close-before-accept is unreliable
@@ -96,7 +114,7 @@ def register(app: FastAPI):
             logger.warning(f"WebSocket auth rejected from {ws.client.host if ws.client else '?'} — no/invalid session")
             await ws.close(code=4401, reason="Unauthorized")
             return
-        logger.info(f"WebSocket client connected (user={username})")
+        logger.info(f"WebSocket client connected (user={username}, camera={camera_id})")
 
         # Use a separate Redis connection for binary frame data
         r_bin = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
