@@ -131,9 +131,9 @@ These four were applied during the WSL/Windows migration since they prevent disk
 
 ### Tier 2 — High-impact functional bugs
 
-- [ ] **Sticky-identity cache leak** (`services/dashboard/server.py:~898`). The cache is stored as a function attribute on `websocket_live`, shared across all concurrent WebSocket clients. Two browser tabs corrupt each other's labels. Empty-string `person_id`s also trade in/out of the cache every frame. Move into a per-connection dict, or better, into Redis with a TTL.
+- [x] **Sticky-identity cache leak** — Fixed during the May 2026 refactor (commit `3dc24c2`). The cache was extracted into local variables when `websocket_live` was moved to `services/dashboard/websocket.py`. Each WebSocket connection now has its own `sticky_identities` and `zone_cache` dicts; multi-tab corruption gone.
 - [x] **Telegram polling offset not persisted** — Fixed in `routes/bot_commands.py`. Now reads `telegram:last_offset` from Redis at poller startup and `SET`s after every processed update. Verified by setting key, restarting, observing `Telegram offset restored from Redis: <value>` log.
-- [ ] **Schema drift in pose detector** (`services/pose-detector/detector.py:~315`). Reads `data[b"frame"]` only — will KeyError if a frame ever lands without that field. Vehicle and tracker already do `data.get(b"frame") or data.get(b"frame_bytes")`. Match the defensive pattern for symmetry.
+- [ ] **Schema drift in pose detector** (`services/pose-detector/detector.py:~315`). Reads `data[b"frame"]` only — will KeyError if a frame ever lands without that field. Vehicle and tracker already do `data.get(b"frame") or data.get(b"frame_bytes")`. Match the defensive pattern for symmetry. (low priority — has not manifested in practice)
 - [ ] **Vehicle stationarity reference center never resets** (`tracker.py:215-228`). `is_stationary` measures displacement from `center_history[0]` which is set on first detection and never updated. A parked car briefly nudged 31 px is "non-stationary forever." Either rolling-window the reference, or reset after `vehicle_idle` fires once.
 - [ ] **GPU pause race condition** (`routes/image_gen.py:855` vs detectors). Dashboard unloads Ollama models *before* setting the GPU pause flag — detectors can have inference mid-flight when ComfyUI loads weights, causing OOM or 11+ min cold loads. Add a heartbeat: detectors set `detector:{name}:paused` Redis key when they yield; image_gen waits for those before unlocking GPU.
 - [x] **face-recognizer doesn't honor `gpu:generation_active`** — Fixed in `recognizer.py`. Added the same pause check pattern pose-detector + vehicle-detector use, logging `GPU generation active — pausing face recognition...` and `resuming` once per transition. Verified: `SET gpu:generation_active 1 EX 5` triggered pause+resume logs cleanly.
@@ -142,10 +142,11 @@ These four were applied during the WSL/Windows migration since they prevent disk
 ### Tier 3 — Hardcoded values that should be config
 
 - [ ] **Grafana admin password** (`docker-compose.yml:347`) → `GRAFANA_ADMIN_PASSWORD` env var.
-- [ ] **Ollama model strings** hardcoded in 3 places: `routes/ai.py:53`, `routes/bot_commands.py:1193`, `server.py:395` (warmup). Pull into a single constant or env var (`OLLAMA_CHAT_MODEL`), error clearly if model isn't pulled.
-- [ ] **MiniCPM-V model** is at least uniformly read via `os.getenv("VISION_MODEL", "minicpm-v")` — but `keep_alive="5m"` is hardcoded in 5+ call sites. Pull into config too.
-- [ ] **Default ComfyUI checkpoint** `"zillah.safetensors"` hardcoded in `routes/image_gen.py:135`. Will fail silently on systems without that file. Either error explicitly when no checkpoint found, or default to first available `.safetensors` in `models/comfyui/checkpoints/`.
-- [ ] **`MAX_UNKNOWN_FACES = 100`** and **`UNKNOWN_DEDUP_THRESHOLD = 0.6`** in `face_db.py:34,38` → env vars.
+- [x] **Ollama model strings** — Fixed in `e0e93ee`. Moved to `services/dashboard/constants.py` as `CHAT_MODEL` env-overridable.
+- [x] **`keep_alive="5m"`** — Fixed in `e0e93ee`. Now `OLLAMA_KEEP_ALIVE` in constants module.
+- [x] **MiniCPM-V model name** — Fixed in `e0e93ee`. Now `VISION_MODEL` in constants module.
+- [x] **Default ComfyUI checkpoint** — Fixed in `e0e93ee`. Now `DEFAULT_CHECKPOINT` env var; empty string means "auto-pick first .safetensors found".
+- [x] **`MAX_UNKNOWN_FACES` and `UNKNOWN_DEDUP_THRESHOLD`** — Fixed in `e0e93ee`. Now env vars in `face_db.py`.
 - [ ] **camera-ingester `REDIS_HOST=127.0.0.1`** (works only because of host net) — leave as-is but document why in a comment.
 
 ### Tier 4 — Auth & security hardening
@@ -174,10 +175,10 @@ These four were applied during the WSL/Windows migration since they prevent disk
 
 ### Tier 6 — Stale documentation
 
-- [ ] `contracts/streams.py:11-14` describes "rule engine (Phase 4)" as if a separate service. The dashboard event poller absorbed that role; update docstring.
-- [ ] `tracker.py:31` mentions "Phase 5 adds face-based re-identification" — face recognition is a separate service now; description is partly stale.
-- [ ] `state:{cam}.persons` field is read by `server.py:891` and `ai_tools.py:421` as a fallback, but the tracker only ever writes `state:{cam}.people`. Either rename writes or remove the dead branch.
-- [ ] All services default `CAMERA_ID=front_door`. Multi-camera support requires aligning 7 services in lockstep — document this constraint or build a proper multi-camera config.
+- [x] `contracts/streams.py:11-14` "rule engine (Phase 4)" — Fixed in `0536d39`.
+- [x] `tracker.py:31` "Phase 5 adds face-based re-identification" — Fixed in `0536d39`.
+- [x] `state:{cam}.persons` dead branch — Fixed in `0536d39` (server.py) and `routes/metrics.py` (was a real bug, not just dead code — Prometheus active-person gauge was always 0).
+- [ ] All services default `CAMERA_ID=front_door`. Multi-camera support requires aligning 7 services in lockstep — partly addressed by the camera registry (`cameras:registry`) added in `phase7`, but actual per-camera service spawning (Phase 7b) still pending.
 
 **Exit criterion:** none individually blocks anything — just chip away. Re-run Phase 4 smoke tests after each change.
 

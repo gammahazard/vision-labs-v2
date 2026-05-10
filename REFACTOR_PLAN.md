@@ -492,7 +492,7 @@ If any step breaks, we revert the last change and figure out why before continui
 | 4.5 — Event poller | ✅ done (`eee1b4e`) | claude | 280 lines moved cleanly; nested fns preserved |
 | 5 — WebSocket | ✅ done (`3dc24c2`) | claude | 430 lines moved; sticky-identity bug fixed (now per-connection); verified live browser still works |
 | 6 — server.py shape | ✅ done | — | **344 lines** (74% smaller than baseline 1313). Pure wiring file now. |
-| 7 — Camera registry | ⬜ pending | claude | Scaffolds multi-cam |
+| 7 — Camera registry | ✅ done | claude | cameras.py + routes/cameras.py; seeded front_door from env on first boot |
 | 7b — Add 2nd camera | ⏸️ future | user | When you have a second camera |
 | 8 — TV dashboard | ⬜ future | claude | tv.html — works with 1 camera too |
 | 9a — HomeKit (Homebridge) | ⬜ future | claude | Easier first iteration |

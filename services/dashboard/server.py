@@ -26,19 +26,14 @@ MODULES:
 """
 
 import asyncio
-import base64
-import json
 import os
-import shutil
 import time
 import logging
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import cv2
 import numpy as np
 import redis
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, Response
 
@@ -60,11 +55,6 @@ from streams import (
     TELEGRAM_ACCESS_LOG as _TG_ACCESS_LOG,
     stream_key,
 )
-
-
-# Geometry helpers (bbox IoU + dead-zone test) — extracted to helpers/geometry.py.
-# These are used 7 times inside the WebSocket overlay loop below.
-from helpers.geometry import bbox_iou as _bbox_iou, in_dead_zone as _in_dead_zone
 
 
 # ---------------------------------------------------------------------------
