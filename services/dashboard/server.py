@@ -62,49 +62,9 @@ from streams import (
 )
 
 
-# ---------------------------------------------------------------------------
-# IoU helper — used by WebSocket overlay to match bboxes consistently
-# ---------------------------------------------------------------------------
-def _bbox_iou(box_a: list, box_b: list) -> float:
-    """Compute IoU between two [x1, y1, x2, y2] bounding boxes."""
-    xa = max(box_a[0], box_b[0])
-    ya = max(box_a[1], box_b[1])
-    xb = min(box_a[2], box_b[2])
-    yb = min(box_a[3], box_b[3])
-
-    inter = max(0, xb - xa) * max(0, yb - ya)
-    if inter == 0:
-        return 0.0
-
-    area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
-    area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
-    union = area_a + area_b - inter
-
-    return inter / union if union > 0 else 0.0
-
-
-def _in_dead_zone(bbox: list, frame_w: int, frame_h: int, zone_cache: dict) -> bool:
-    """
-    Check if a bbox center falls inside any dead_zone.
-    Delegates to contracts/time_rules.py point_in_polygon (single source of truth).
-    """
-    from contracts.time_rules import point_in_polygon
-
-    if not zone_cache or len(bbox) != 4:
-        return False
-
-    cx = ((bbox[0] + bbox[2]) / 2) / frame_w
-    cy = ((bbox[1] + bbox[3]) / 2) / frame_h
-
-    for zone in zone_cache.values():
-        if zone.get("alert_level") != "dead_zone":
-            continue
-        pts = zone.get("points", [])
-        if len(pts) < 3:
-            continue
-        if point_in_polygon(cx, cy, pts):
-            return True
-    return False
+# Geometry helpers (bbox IoU + dead-zone test) — extracted to helpers/geometry.py.
+# These are used 7 times inside the WebSocket overlay loop below.
+from helpers.geometry import bbox_iou as _bbox_iou, in_dead_zone as _in_dead_zone
 
 
 # ---------------------------------------------------------------------------

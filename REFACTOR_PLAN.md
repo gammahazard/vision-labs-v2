@@ -483,7 +483,7 @@ If any step breaks, we revert the last change and figure out why before continui
 |-------|--------|-------|-------|
 | 0 — Inventory | ✅ done | — | This document |
 | 1 — Bug fixes | ✅ done (`0536d39`) | claude | metrics.py was using r.get() on a hash + wrong key. Verified: vl_active_persons now reflects num_people |
-| 2 — Constants module | ⬜ pending | claude | Pure additive |
+| 2 — Constants module | ✅ done (`e0e93ee`) | claude | services/dashboard/constants.py created; 13 literals removed; needed Dockerfile COPY constants.py |
 | 3 — Helper module | ⬜ pending | claude | Pure additive |
 | 4.1 — Reminder poller | ⬜ pending | claude | Smallest first |
 | 4.2 — Ollama warmup | ⬜ pending | claude | |

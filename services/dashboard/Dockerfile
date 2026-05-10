@@ -30,6 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 COPY ai_db.py .
 COPY constants.py .
+COPY helpers/ helpers/
 COPY routes/ routes/
 
 # Copy frontend files
