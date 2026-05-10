@@ -1019,12 +1019,14 @@ async def websocket_live(ws: WebSocket):
                 except Exception:
                     pass
 
-                # Get tracker state for action labels and person IDs
+                # Get tracker state for action labels and person IDs.
+                # state:* is a hash written by tracker with HSET; "people" is the JSON list.
+                # (The old code had a `"persons"` fallback — tracker never writes that key.)
                 tracker_persons = []
                 try:
                     state = r.hgetall(STATE_KEY)
                     if state:
-                        tracker_persons = json.loads(state.get("persons", state.get("people", "[]")))
+                        tracker_persons = json.loads(state.get("people", "[]"))
                 except Exception:
                     pass
 

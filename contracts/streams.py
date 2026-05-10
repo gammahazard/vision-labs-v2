@@ -8,13 +8,14 @@ PURPOSE:
 
 RELATIONSHIPS:
     - camera-ingester reads RTSP, publishes to FRAME_STREAM
-    - pose-detector (Phase 2) reads FRAME_STREAM, publishes to DETECTION_STREAM
-    - tracker (Phase 2) reads DETECTION_STREAM, publishes to EVENT_STREAM
-    - dashboard (Phase 3) reads EVENT_STREAM + STATE_KEY for live display
-    - rule engine (Phase 4) reads EVENT_STREAM, publishes to ALERT_STREAM
+    - pose-detector reads FRAME_STREAM, publishes to DETECTION_STREAM (pose)
+    - vehicle-detector reads FRAME_STREAM, publishes to DETECTION_STREAM (vehicle)
+    - face-recognizer reads DETECTION_STREAM (pose), publishes to IDENTITY_STREAM + IDENTITY_KEY
+    - tracker reads DETECTION_STREAM (pose+vehicle), publishes to EVENT_STREAM + STATE_KEY
+    - dashboard reads EVENT_STREAM + STATE_KEY + IDENTITY_KEY for live display + Telegram alerts
 
 DATA FLOW:
-    Camera → FRAME_STREAM → DETECTION_STREAM → EVENT_STREAM → ALERT_STREAM
+    Camera → FRAME_STREAM → DETECTION_STREAM → EVENT_STREAM
                                                      ↓
                                                 STATE_KEY (current scene snapshot)
 """
@@ -35,13 +36,13 @@ from typing import Optional
 FRAME_STREAM = "frames:{camera_id}"
 
 # Detection results from AI models — one stream per detector per camera.
-# Published by: pose-detector, face-detector, emotion-detector
-# Consumed by: tracker
+# Published by: pose-detector ("pose"), vehicle-detector ("vehicle")
+# Consumed by: tracker, face-recognizer (pose only)
 DETECTION_STREAM = "detections:{detector_type}:{camera_id}"
 
-# High-level events (person appeared, person left, loitering, etc.)
+# High-level events (person_appeared, person_left, person_identified, vehicle_detected, vehicle_idle).
 # Published by: tracker
-# Consumed by: rule engine, dashboard event feed, archive worker
+# Consumed by: dashboard event poller (Telegram broadcast + snapshot save + JSONL journal)
 EVENT_STREAM = "events:{camera_id}"
 
 # Current state of what the camera sees RIGHT NOW (latest detections).

@@ -119,13 +119,13 @@ async def monitoring_health():
     try:
         r = ctx.r
 
-        # Active persons from state key
+        # Active persons from state hash (tracker writes via HSET with num_people + people JSON).
+        # Was: r.get() on a hash + state.get("persons") — both wrong, silently returned 0.
         active = 0
         try:
-            state_raw = r.get(ctx.STATE_KEY)
-            if state_raw:
-                state = json.loads(state_raw)
-                active = len(state.get("persons", []))
+            num_people_raw = r.hget(ctx.STATE_KEY, "num_people")
+            if num_people_raw is not None:
+                active = int(num_people_raw)
         except Exception:
             pass
 
@@ -299,13 +299,10 @@ async def start_metrics_collector():
                 pass
 
             # ------ Active persons ------
+            # state:* is a hash (tracker uses HSET); read num_people field directly.
             try:
-                state_raw = r.get(ctx.STATE_KEY)
-                if state_raw:
-                    state = json.loads(state_raw)
-                    vl_active_persons.set(len(state.get("persons", [])))
-                else:
-                    vl_active_persons.set(0)
+                num_people_raw = r.hget(ctx.STATE_KEY, "num_people")
+                vl_active_persons.set(int(num_people_raw) if num_people_raw is not None else 0)
             except Exception:
                 pass
 

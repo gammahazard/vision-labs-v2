@@ -29,8 +29,10 @@ TRACKING METHOD:
     - If no match, it's a new person → assign a new ID
     - If a tracked person has no match for N seconds → emit "person_left" event
 
-    This is intentionally simple. Phase 5 adds face-based re-identification
-    for recognizing people who leave and come back.
+    This is intentionally simple. Face-based re-identification for recognizing
+    people who leave and come back lives in the face-recognizer service —
+    identities flow into this tracker via the `identity_state:{camera_id}` Redis
+    hash and get linked to tracked persons by IoU match.
 
 CONFIG (environment variables):
     CAMERA_ID           — Which camera to track (default: "front_door")
