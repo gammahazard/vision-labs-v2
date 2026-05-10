@@ -494,7 +494,7 @@ If any step breaks, we revert the last change and figure out why before continui
 | 6 — server.py shape | ✅ done | — | **344 lines** (74% smaller than baseline 1313). Pure wiring file now. |
 | 7 — Camera registry | ✅ done | claude | cameras.py + routes/cameras.py; seeded front_door from env on first boot |
 | 7b — Camera management UI | ✅ done (`8aa110e`) | claude | cameras.html admin page + test-rtsp ffprobe endpoint |
-| 7c — Slot-based per-camera services | ⬜ pending | claude | Pre-defined cam2/cam3/cam4 slots in compose. User runs `docker compose --profile camN up -d` after Save. **Chosen over auto-spawn — see decision log below.** |
+| 7c — Slot-based per-camera services | ✅ done (cam2; cam3/cam4 = copy-paste later) (`ad0e1be`) | claude | cam2 slot ready; ingester reads RTSP from registry; detectors honor detect_X flags |
 | 7d — Auto-discovery (ONVIF + Pi mDNS) | ⏸️ later | claude | Nice-to-have on top of 7c |
 | 7e — Auto-spawn via Docker socket | ⏸️ deferred (intentionally) | — | Mount /var/run/docker.sock in dashboard, spawn containers automatically on Save. Cleaner UX but adds attack surface. See decision log. |
 | 8 — TV dashboard | ⬜ future | claude | tv.html — works with 1 camera too |

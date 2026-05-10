@@ -218,7 +218,9 @@ async def auth_middleware(request: Request, call_next):
         from fastapi.responses import JSONResponse
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
-    return RedirectResponse("/login.html")
+    # 303 (See Other) forces browsers to GET the redirect target — safer than
+    # the default 307 which can confuse browsers if the original was POST/etc.
+    return RedirectResponse("/login.html", status_code=303)
 
 
 # ---------------------------------------------------------------------------
