@@ -41,11 +41,17 @@ function renderCameras(cameras) {
         const subUrl = (c.rtsp_sub || '').replace(/:[^@/]+@/, ':***@');
         const loc = (c.location_lat && c.location_lon) ? `${c.location_lat}, ${c.location_lon}` : 'no location';
         const enabled = c.enabled !== false;
+        const dets = [];
+        if (c.detect_persons !== false) dets.push('persons');
+        if (c.detect_vehicles !== false) dets.push('vehicles');
+        if (c.detect_faces !== false) dets.push('faces');
+        const detStr = dets.length ? dets.join(' · ') : 'no detectors';
         return `
             <div class="cam-item">
                 <div class="cam-item-info">
                     <div class="cam-item-name">${escape(c.name || c.id)} <span style="color:#64748b;font-weight:400;font-size:0.75rem;">· ${escape(c.id)}</span></div>
-                    <div class="cam-item-meta">${escape(subUrl)} · ${escape(loc)} · ${enabled ? 'enabled' : 'disabled'}</div>
+                    <div class="cam-item-meta">${escape(subUrl)}</div>
+                    <div class="cam-item-meta" style="margin-top:0.15rem;">${escape(loc)} · ${enabled ? 'enabled' : 'disabled'} · ${escape(detStr)}</div>
                 </div>
                 <div class="cam-item-actions">
                     <button class="cam-btn cam-btn-danger" onclick="handleDelete('${escape(c.id)}', '${escape(c.name || c.id)}')">Delete</button>
@@ -106,6 +112,9 @@ async function handleAddCamera(event) {
         if (rtsp_main) body.rtsp_main = rtsp_main;
         if (lat) body.location_lat = lat;
         if (lon) body.location_lon = lon;
+        body.detect_persons = $('camDetectPersons').checked;
+        body.detect_vehicles = $('camDetectVehicles').checked;
+        body.detect_faces = $('camDetectFaces').checked;
 
         const res = await fetch('/api/cameras', {
             method: 'POST',

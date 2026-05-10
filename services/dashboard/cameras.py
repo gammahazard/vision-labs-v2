@@ -16,6 +16,11 @@ DATA SHAPE per entry:
         "location_lon": -82.4540,         # optional
         "gpu_id": 0,                       # which GPU detectors should run on
         "enabled": true,                   # if false, services skip it
+        # Per-camera detector selection — saves GPU time when a camera doesn't
+        # need a given detector. Defaults match the original full-stack behaviour.
+        "detect_persons": true,            # pose-detector + tracker
+        "detect_vehicles": true,           # vehicle-detector (drop for indoor cams)
+        "detect_faces": true,              # face-recognizer
         "created_at": "2026-05-10T22:00:00Z"
     }
 
@@ -113,6 +118,12 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
         entry["updated_at"] = _now_iso()
         entry.setdefault("enabled", True)
         entry.setdefault("gpu_id", 0)
+        # Detector selection defaults — keep the all-on behaviour the system
+        # had before this field existed, so single-camera deployments don't
+        # silently lose detection types.
+        entry.setdefault("detect_persons", True)
+        entry.setdefault("detect_vehicles", True)
+        entry.setdefault("detect_faces", True)
         ctx.r.hset(REGISTRY_KEY, cid, json.dumps(entry))
         logger.info(f"Registry upsert: {cid} ({entry.get('name', cid)})")
         return True, None
