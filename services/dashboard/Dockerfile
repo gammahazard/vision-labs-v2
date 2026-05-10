@@ -30,6 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 COPY ai_db.py .
 COPY constants.py .
+COPY websocket.py .
 COPY helpers/ helpers/
 COPY pollers/ pollers/
 COPY routes/ routes/

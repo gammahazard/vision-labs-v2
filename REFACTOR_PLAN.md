@@ -485,11 +485,11 @@ If any step breaks, we revert the last change and figure out why before continui
 | 1 — Bug fixes | ✅ done (`0536d39`) | claude | metrics.py was using r.get() on a hash + wrong key. Verified: vl_active_persons now reflects num_people |
 | 2 — Constants module | ✅ done (`e0e93ee`) | claude | services/dashboard/constants.py created; 13 literals removed; needed Dockerfile COPY constants.py |
 | 3 — Helper module | ✅ done (`3b2a767`) | claude | helpers/geometry.py — bbox_iou + in_dead_zone. server.py -41 net lines |
-| 4.1 — Reminder poller | ⬜ pending | claude | Smallest first |
-| 4.2 — Ollama warmup | ⬜ pending | claude | |
-| 4.3 — ComfyUI cleanup | ⬜ pending | claude | |
-| 4.4 — Retention | ⬜ pending | claude | Includes liveness log fix |
-| 4.5 — Event poller | ⬜ pending | claude | Biggest poller — careful with closures |
+| 4.1 — Reminder poller | ✅ done (`8e45147`) | claude | First extraction; pattern validated |
+| 4.2 — Ollama warmup | ✅ done (`7763166`) | claude | |
+| 4.3 — ComfyUI cleanup | ✅ done (`3655c52`) | claude | Uses constants.COMFYUI_HOST |
+| 4.4 — Retention | ✅ done (`8948755`) | claude | Liveness log added at startup |
+| 4.5 — Event poller | ✅ done (`eee1b4e`) | claude | 280 lines moved cleanly; nested fns preserved |
 | 5 — WebSocket | ⬜ pending | claude | Highest risk; sticky-identity fix free |
 | 6 — server.py shape | ⬜ pending | claude | Outcome of 4+5 (target: ~250 lines) |
 | 7 — Camera registry | ⬜ pending | claude | Scaffolds multi-cam |
