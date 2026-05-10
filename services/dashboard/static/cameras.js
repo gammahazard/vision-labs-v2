@@ -123,8 +123,19 @@ async function handleAddCamera(event) {
         });
         const data = await res.json();
         if (data.ok) {
-            showMsg(`✓ Saved camera "${name}". Note: detector services for this camera will be spawned in Phase 7b.`, 'ok');
+            if (data.activation_cmd) {
+                // Show the docker compose command in a long-lived banner the
+                // user can copy. Keep it visible until they dismiss / refresh.
+                const el = $('camMsg');
+                el.className = 'cam-msg show ok';
+                el.innerHTML = `✓ Saved camera "<b>${escape(name)}</b>" as slot <code>${escape(id)}</code>. To start its detection services, run:<br>
+                    <code style="display:block;margin-top:0.5rem;padding:0.5rem;background:#0f172a;border-radius:4px;font-size:0.85rem;user-select:all;">${escape(data.activation_cmd)}</code>`;
+            } else {
+                showMsg(`✓ Saved camera "${name}". (Custom ID — you'll need to add this camera's services to docker-compose.yml manually.)`, 'ok');
+            }
             $('addCameraForm').reset();
+            // Re-fetch next slot to auto-fill the ID field for the next add
+            loadNextSlot();
             loadCameras();
         } else {
             showMsg(`✗ Save failed: ${data.error || 'unknown error'}`, 'err');
@@ -153,4 +164,23 @@ async function handleDelete(id, name) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadCameras);
+async function loadNextSlot() {
+    // Pre-fill the Camera ID field with the next available pre-defined slot
+    // (cam2/cam3/...). User can override if they want a custom slot name and
+    // manually add their own services to compose.
+    try {
+        const res = await fetch('/api/cameras/next-slot');
+        const data = await res.json();
+        if (data.slot) {
+            $('camId').value = data.slot;
+            $('camId').placeholder = data.slot;
+        } else {
+            $('camId').placeholder = 'all slots used';
+        }
+    } catch (e) { /* best-effort */ }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadCameras();
+    loadNextSlot();
+});

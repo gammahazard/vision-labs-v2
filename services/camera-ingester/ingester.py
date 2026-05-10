@@ -63,6 +63,36 @@ RTSP_URL = os.getenv("RTSP_URL", "")
 RTSP_MAIN_URL = os.getenv("RTSP_MAIN", "")  # High-res main stream for HD viewing
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+
+# If RTSP URLs not in env, try to fetch them from the camera registry (Phase 7c).
+# This is the path used by slot-based cameras (cam2/cam3/cam4) — their docker-
+# compose env only sets CAMERA_ID; the actual URLs live in Redis after the user
+# registers the camera via cameras.html.
+def _load_rtsp_from_registry():
+    """Look up RTSP URLs from cameras:registry hash for this camera_id."""
+    global RTSP_URL, RTSP_MAIN_URL
+    if RTSP_URL:
+        return  # env value wins
+    try:
+        import json
+        _r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        _r.ping()
+        raw = _r.hget("cameras:registry", CAMERA_ID)
+        if raw:
+            entry = json.loads(raw)
+            RTSP_URL = entry.get("rtsp_sub", "")
+            if not RTSP_MAIN_URL:
+                RTSP_MAIN_URL = entry.get("rtsp_main", "")
+            if RTSP_URL:
+                print(f"[ingester] Loaded RTSP from registry for '{CAMERA_ID}': "
+                      f"sub={'set' if RTSP_URL else 'missing'} "
+                      f"main={'set' if RTSP_MAIN_URL else 'missing'}", flush=True)
+    except Exception as e:
+        print(f"[ingester] Registry lookup failed (will fall back to env): {e}", flush=True)
+
+
+_load_rtsp_from_registry()
+
 TARGET_FPS = int(os.getenv("TARGET_FPS", "5"))
 HD_TARGET_FPS = int(os.getenv("HD_TARGET_FPS", "5"))  # Lower FPS for HD to save bandwidth
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))

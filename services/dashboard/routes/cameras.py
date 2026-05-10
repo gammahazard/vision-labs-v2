@@ -129,6 +129,12 @@ async def get_one(camera_id: str):
     return entry
 
 
+@router.get("/next-slot")
+async def next_slot():
+    """Return the next available pre-defined camera slot id, or null if full."""
+    return {"slot": registry.next_available_slot()}
+
+
 @router.post("")
 async def create_or_update(request: Request):
     """Register a new camera, or replace an existing one. Idempotent on `id`."""
@@ -140,7 +146,19 @@ async def create_or_update(request: Request):
     ok, err = registry.upsert_camera(body)
     if not ok:
         return JSONResponse({"error": err}, status_code=400)
-    return {"ok": True, "camera": registry.get_camera(body["id"])}
+
+    # If this camera id matches a pre-defined slot, include the activation
+    # command in the response so the UI can show the user how to start it.
+    cid = body["id"]
+    activation_cmd = None
+    if cid in registry.AVAILABLE_SLOTS:
+        activation_cmd = f"docker compose --profile {cid} up -d"
+
+    return {
+        "ok": True,
+        "camera": registry.get_camera(cid),
+        "activation_cmd": activation_cmd,
+    }
 
 
 @router.put("/{camera_id}")

@@ -540,6 +540,19 @@ def start_api():
 # ---------------------------------------------------------------------------
 # Main Recognition Loop
 # ---------------------------------------------------------------------------
+def _check_camera_wants_detector(r, detector_flag: str) -> bool:
+    """Phase 7c: respect camera-registry detect_<type> flag; True if absent or unreachable."""
+    try:
+        import json as _json
+        raw = r.hget("cameras:registry", CAMERA_ID)
+        if not raw:
+            return True
+        entry = _json.loads(raw if isinstance(raw, str) else raw.decode())
+        return bool(entry.get(detector_flag, True))
+    except Exception:
+        return True
+
+
 def run():
     """
     Main loop: read detections → crop faces → match against known faces → publish.
@@ -565,6 +578,12 @@ def run():
     r.ping()
     r_global = r
     logger.info("Redis connection verified")
+
+    # Phase 7c: skip this service if the camera registry says faces aren't wanted.
+    r_text = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    if not _check_camera_wants_detector(r_text, "detect_faces"):
+        logger.info(f"Camera '{CAMERA_ID}' has detect_faces=false — exiting cleanly")
+        return
 
     # Reconcile: clear any unknowns that now match known faces
     matched = face_db.reconcile_unknowns()

@@ -241,6 +241,24 @@ def format_detections(results, min_keypoints: int = MIN_KEYPOINTS,
 # ---------------------------------------------------------------------------
 # Main Detection Loop
 # ---------------------------------------------------------------------------
+def _check_camera_wants_detector(r, detector_flag: str) -> bool:
+    """
+    Phase 7c: each detector checks the camera-registry entry for its
+    `detect_<type>` flag and exits gracefully if the flag is false.
+    Defaults to True if the registry entry doesn't exist (matches the
+    pre-registry behaviour). Returns True = run, False = exit.
+    """
+    try:
+        import json as _json
+        raw = r.hget("cameras:registry", CAMERA_ID)
+        if not raw:
+            return True  # no entry yet, assume on
+        entry = _json.loads(raw if isinstance(raw, str) else raw.decode())
+        return bool(entry.get(detector_flag, True))
+    except Exception:
+        return True  # registry unreachable → don't accidentally disable
+
+
 def run():
     """
     Main loop: read frames from Redis → run YOLO → publish detections.
@@ -257,6 +275,13 @@ def run():
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
     r.ping()
     logger.info("Redis connection verified")
+
+    # Phase 7c: if the camera registry says this camera doesn't want pose
+    # detection, exit cleanly so the slot doesn't waste GPU.
+    r_text = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    if not _check_camera_wants_detector(r_text, "detect_persons"):
+        logger.info(f"Camera '{CAMERA_ID}' has detect_persons=false — exiting cleanly")
+        return
 
     # Set up consumer group
     setup_consumer_group(r)

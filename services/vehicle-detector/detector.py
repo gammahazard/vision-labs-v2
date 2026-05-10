@@ -154,6 +154,19 @@ def setup_consumer_group(r: redis.Redis) -> None:
 # ---------------------------------------------------------------------------
 # Main Detection Loop
 # ---------------------------------------------------------------------------
+def _check_camera_wants_detector(r, detector_flag: str) -> bool:
+    """Phase 7c: respect camera-registry detect_<type> flag; True if absent or unreachable."""
+    try:
+        import json as _json
+        raw = r.hget("cameras:registry", CAMERA_ID)
+        if not raw:
+            return True
+        entry = _json.loads(raw if isinstance(raw, str) else raw.decode())
+        return bool(entry.get(detector_flag, True))
+    except Exception:
+        return True
+
+
 def run():
     logger.info("=" * 60)
     logger.info("VEHICLE DETECTOR — Starting up")
@@ -177,6 +190,12 @@ def run():
         except redis.ConnectionError:
             logger.warning("Waiting for Redis...")
             time.sleep(2)
+
+    # Phase 7c: skip this detector if the camera registry says it's not wanted.
+    r_text = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    if not _check_camera_wants_detector(r_text, "detect_vehicles"):
+        logger.info(f"Camera '{CAMERA_ID}' has detect_vehicles=false — exiting cleanly")
+        return
 
     if _shutdown:
         return

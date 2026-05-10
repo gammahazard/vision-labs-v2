@@ -408,6 +408,143 @@ services:
       - portainer-data:/data
     restart: unless-stopped
 
+  # ===========================================================================
+  # Camera slot: cam2 (Phase 7c)
+  # ===========================================================================
+  # A pre-defined second-camera slot. Activate by:
+  #   1. Register a camera with id="cam2" via the dashboard (cameras.html)
+  #   2. Run: `docker compose --profile cam2 up -d`
+  # The ingester pulls the RTSP URLs from cameras:registry at startup.
+  # Detectors check the camera's detect_persons/vehicles/faces flags and
+  # exit cleanly if disabled (so unchecking "Vehicles" in the UI saves GPU).
+  # For cam3/cam4: duplicate this block with `cam2` replaced.
+
+  camera-ingester-cam2:
+    build:
+      context: ./services/camera-ingester
+    network_mode: host
+    profiles: ["cam2"]
+    environment:
+      - CAMERA_ID=cam2
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes:
+      - ./contracts:/app/contracts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  pose-detector-cam2:
+    build:
+      context: ./services/pose-detector
+    profiles: ["cam2"]
+    environment:
+      - CAMERA_ID=cam2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  vehicle-detector-cam2:
+    build:
+      context: ./services/vehicle-detector
+    profiles: ["cam2"]
+    environment:
+      - CAMERA_ID=cam2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  face-recognizer-cam2:
+    build:
+      context: ./services/face-recognizer
+    profiles: ["cam2"]
+    expose:
+      - "8081"
+    environment:
+      - CAMERA_ID=cam2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tracker-cam2:
+    build:
+      context: ./services/tracker
+    profiles: ["cam2"]
+    environment:
+      - CAMERA_ID=cam2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes:
+      - ./contracts:/app/contracts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   redis-data:
   face-data:

@@ -49,6 +49,30 @@ logger = logging.getLogger("dashboard.cameras")
 
 REGISTRY_KEY = "cameras:registry"
 
+# Phase 7c: pre-defined camera slots. Each slot has a profile-gated set of
+# services in docker-compose.yml. When a user registers a camera with one of
+# these IDs, running `docker compose --profile <slot> up -d` starts its detectors.
+# To add more slots: duplicate the cam2 block in docker-compose.yml and append here.
+AVAILABLE_SLOTS = ["cam2"]
+
+
+def next_available_slot() -> Optional[str]:
+    """Return the next slot id not currently used by a registered camera, or None."""
+    used = set()
+    try:
+        raw = ctx.r.hgetall(REGISTRY_KEY)
+        for val in raw.values():
+            try:
+                used.add(json.loads(val).get("id", ""))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    for slot in AVAILABLE_SLOTS:
+        if slot not in used:
+            return slot
+    return None
+
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
