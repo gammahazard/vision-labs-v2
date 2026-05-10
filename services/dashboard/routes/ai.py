@@ -49,8 +49,7 @@ from routes.image_gen import set_vram_mode
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 logger = logging.getLogger("dashboard.ai")
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-OLLAMA_MODEL = "qwen3:14b"
+from constants import CHAT_MODEL as OLLAMA_MODEL, OLLAMA_KEEP_ALIVE, OLLAMA_HOST
 TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
 
 
@@ -182,7 +181,7 @@ async def chat(req: ChatRequest):
             tools=TOOLS,
             options={"num_ctx": 8192},
             think=False,
-            keep_alive="5m",
+            keep_alive=OLLAMA_KEEP_ALIVE,
         )
 
         # Handle tool calls if any
@@ -211,7 +210,7 @@ async def chat(req: ChatRequest):
                 tools=TOOLS,
                 options={"num_ctx": 8192},
                 think=False,
-                keep_alive="5m",
+                keep_alive=OLLAMA_KEEP_ALIVE,
             )
 
         # Extract final response text
@@ -419,7 +418,7 @@ async def analyze_image(req: VisionRequest):
                 "images": image_list,
             }],
             options={"num_predict": 800 if is_video else 500},
-            keep_alive="5m",
+            keep_alive=OLLAMA_KEEP_ALIVE,
         )
         text = response.message.content.strip()
         # Strip <think> tags from reasoning models

@@ -684,7 +684,7 @@ async def _describe_scene_multi(frames: list[bytes],
                     "images": frames,
                 }],
                 options={"num_predict": 300},
-                keep_alive="5m",
+                keep_alive=OLLAMA_KEEP_ALIVE,
             )
             text = response.message.content.strip()
             text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
@@ -1206,9 +1206,8 @@ def _build_timelapse(jpg_paths: list[str], fps: int = 3) -> bytes | None:
 # ---------------------------------------------------------------------------
 # /ask — AI assistant via Telegram
 # ---------------------------------------------------------------------------
-# Ollama config (same as ai.py)
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-OLLAMA_MODEL = "qwen3:14b"
+# Ollama config — shared with the rest of dashboard via constants module
+from constants import CHAT_MODEL as OLLAMA_MODEL, OLLAMA_KEEP_ALIVE, OLLAMA_HOST
 
 
 async def _send_long_text(text: str, chat_id: str = ""):
@@ -1301,7 +1300,7 @@ async def _cmd_ask(chat_id: str = "", text: str = "", **kwargs):
                 tools=TOOLS,
                 options={"num_ctx": 8192},
                 think=False,
-                keep_alive="5m",
+                keep_alive=OLLAMA_KEEP_ALIVE,
             ),
         )
 
@@ -1327,7 +1326,7 @@ async def _cmd_ask(chat_id: str = "", text: str = "", **kwargs):
                     tools=TOOLS,
                     options={"num_ctx": 8192},
                     think=False,
-                    keep_alive="5m",
+                    keep_alive=OLLAMA_KEEP_ALIVE,
                 ),
             )
 

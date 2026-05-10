@@ -68,8 +68,7 @@ TELEGRAM_ALLOWED_USERS: set[int] = {
 TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
 
 # Vision model config — for AI scene analysis on detection snapshots
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-VISION_MODEL = os.getenv("VISION_MODEL", "minicpm-v")
+from constants import OLLAMA_HOST, VISION_MODEL, OLLAMA_KEEP_ALIVE
 
 # Rate limiting — reads cooldown from Redis config, falls back to defaults
 _last_person_notification = 0.0
@@ -442,7 +441,7 @@ async def describe_scene(photo_bytes: bytes,
                     "images": [photo_bytes],
                 }],
                 options={"num_predict": 200},
-                keep_alive="5m",
+                keep_alive=OLLAMA_KEEP_ALIVE,
             )
             text = response.message.content.strip()
             # Strip any <think>...</think> tags from reasoning models

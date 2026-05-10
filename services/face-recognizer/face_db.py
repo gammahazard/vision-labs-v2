@@ -23,6 +23,7 @@ SCHEMA:
 import sqlite3
 import numpy as np
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger("face-db")
@@ -30,12 +31,13 @@ logger = logging.getLogger("face-db")
 # Default database path (overridden by env var in Docker)
 DEFAULT_DB_PATH = "/data/faces.db"
 
-# Maximum unknown faces to keep (oldest pruned when exceeded)
-MAX_UNKNOWN_FACES = 100
+# Maximum unknown faces to keep (oldest pruned when exceeded).
+# Env-overridable so we don't have to rebuild to tune.
+MAX_UNKNOWN_FACES = int(os.getenv("MAX_UNKNOWN_FACES", "100"))
 
-# Similarity threshold for deduplicating unknown faces
-# (if a new unknown is >0.6 similar to an existing unknown, it's the same person)
-UNKNOWN_DEDUP_THRESHOLD = 0.6
+# Similarity threshold for deduplicating unknown faces.
+# Higher = stricter (fewer "this is the same person" matches → more entries kept).
+UNKNOWN_DEDUP_THRESHOLD = float(os.getenv("UNKNOWN_DEDUP_THRESHOLD", "0.6"))
 
 
 class FaceDB:

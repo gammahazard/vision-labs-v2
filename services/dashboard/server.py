@@ -399,9 +399,9 @@ async def _ensure_ollama_model():
     """Background task: pull the AI model on first startup if not already cached,
     then send a warm-up message to force GPU load (saved to chat history)."""
     import ollama as ollama_lib
-    import os
-    host = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-    model = "qwen3:14b"
+    from constants import CHAT_MODEL, OLLAMA_HOST, OLLAMA_KEEP_ALIVE
+    host = OLLAMA_HOST
+    model = CHAT_MODEL
     await asyncio.sleep(10)  # Wait for other GPU services to finish CUDA init
     try:
         client = ollama_lib.Client(host=host)
@@ -430,7 +430,7 @@ async def _ensure_ollama_model():
                 messages=[{"role": "user", "content": "The system just restarted. Confirm you are loaded and ready in one short sentence."}],
                 options={"num_predict": 30, "num_ctx": 8192},
                 think=False,
-                keep_alive="5m",
+                keep_alive=OLLAMA_KEEP_ALIVE,
             ))
             # ollama library returns objects, not dicts
             reply = getattr(resp.message, "content", "") or "Model loaded and ready."

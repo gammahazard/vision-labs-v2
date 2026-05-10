@@ -482,7 +482,7 @@ If any step breaks, we revert the last change and figure out why before continui
 | Phase | Status | Owner | Notes |
 |-------|--------|-------|-------|
 | 0 — Inventory | ✅ done | — | This document |
-| 1 — Bug fixes | ⬜ pending | claude | Real bug in metrics + stale docstrings |
+| 1 — Bug fixes | ✅ done (`0536d39`) | claude | metrics.py was using r.get() on a hash + wrong key. Verified: vl_active_persons now reflects num_people |
 | 2 — Constants module | ⬜ pending | claude | Pure additive |
 | 3 — Helper module | ⬜ pending | claude | Pure additive |
 | 4.1 — Reminder poller | ⬜ pending | claude | Smallest first |

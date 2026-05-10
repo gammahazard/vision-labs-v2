@@ -28,6 +28,7 @@ import redis as _redis
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from streams import GPU_PAUSE_KEY
+from constants import CHAT_MODEL, DEFAULT_CHECKPOINT
 
 logger = logging.getLogger("dashboard.generate")
 router = APIRouter()
@@ -132,7 +133,7 @@ def _get_default_model() -> str:
                 return _cached_default_model
     except Exception:
         pass
-    return _cached_default_model or "zillah.safetensors"
+    return _cached_default_model or DEFAULT_CHECKPOINT
 
 
 # ---------------------------------------------------------------------------
@@ -896,7 +897,7 @@ async def restore_vram():
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"{OLLAMA_HOST}/api/generate",
-                json={"model": "qwen3:14b", "prompt": "hi", "stream": False},
+                json={"model": CHAT_MODEL, "prompt": "hi", "stream": False},
                 timeout=120,
             )
         _vram_mode = "chat"
