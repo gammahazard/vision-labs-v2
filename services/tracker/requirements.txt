@@ -1,0 +1,13 @@
+# services/tracker/requirements.txt
+#
+# Dependencies for the person tracker service.
+# Lightweight — no GPU, no heavy ML libraries. Just Redis + math.
+
+# Redis client for reading detections and publishing events.
+redis==5.2.1
+
+# NumPy for bounding box calculations (IoU).
+numpy>=1.24.0
+
+# Astral for sunrise/sunset time calculations (zone rules).
+astral>=3.2

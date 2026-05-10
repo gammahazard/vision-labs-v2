@@ -1,0 +1,428 @@
+# docker-compose.yml — Vision Labs (Phases 0-12)
+#
+# PURPOSE:
+#   Runs the full Vision Labs stack on a single PC (RTX 3090):
+#   Redis, camera ingester, YOLO pose detector, vehicle detector, tracker,
+#   face recognizer, dashboard, Ollama (local LLM), ComfyUI, and recorder.
+#
+# USAGE:
+#   docker compose up --build          # Start everything (first time)
+#   docker compose up -d               # Start in background
+#   docker compose logs -f             # Watch logs
+#   docker compose down                # Stop everything
+#
+# NETWORK:
+#   Camera ingester uses host networking to reach the camera at ${CAMERA_IP}.
+#   All other services run on Docker bridge network and communicate via DNS names.
+#   Redis is accessible at hostname "redis" from bridge-networked containers.
+#
+# DATA:
+#   Redis data persisted in "redis-data" Docker volume (AOF enabled).
+#   Face embeddings + photos persisted in "face-data" Docker volume (SQLite).
+#   Stream is capped at MAX_STREAM_LEN frames to prevent unbounded memory growth.
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Redis — Central message bus
+  # ---------------------------------------------------------------------------
+  # All services communicate through Redis Streams. This is the backbone
+  # of the entire pipeline. Frames, detections, events, alerts — everything
+  # flows through here.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru --auto-aof-rewrite-min-size 64mb
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # Camera Ingester — RTSP to Redis
+  # ---------------------------------------------------------------------------
+  # Reads the Reolink camera's RTSP sub-stream (640x480, low bandwidth),
+  # encodes each frame as JPEG, and publishes to Redis Stream "frames:front_door".
+  #
+  # Uses network_mode: host so it can reach the camera at ${CAMERA_IP}.
+  # This means it also reaches Redis on localhost:6379 directly.
+  camera-ingester:
+    build:
+      context: ./services/camera-ingester
+    network_mode: host
+    volumes:
+      - ./contracts:/app/contracts:ro
+    environment:
+      - CAMERA_ID=front_door
+      - RTSP_URL=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_sub
+      - RTSP_MAIN=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_main
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - TARGET_FPS=15           # ingester throttle (Redis config overrides this dynamically)
+      - JPEG_QUALITY=75         # was 80 — small drop, big CPU win
+      - HD_TARGET_FPS=8         # was 1 (too choppy) and 15 (CPU-bound at 4K). 8 is smooth + sustainable.
+      - HD_JPEG_QUALITY=70      # 4K encode is the CPU hog; q=70 still looks great at 4512x2512
+      - MAX_STREAM_LEN=1000
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Pose Detector — YOLO on GPU
+  # ---------------------------------------------------------------------------
+  # Reads frames from Redis, runs YOLOv8s-pose on the RTX 3090, publishes
+  # bounding boxes + keypoints back to Redis. Uses NVIDIA Container Toolkit
+  # for GPU access inside the container.
+  #
+  # First run downloads the YOLO model weights (~25 MB).
+  pose-detector:
+    build:
+      context: ./services/pose-detector
+    environment:
+      - CAMERA_ID=front_door
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=0  # 5070 Ti
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']  # GPU 0 = 5070 Ti (16GB) — always-on detectors
+              capabilities: [ gpu ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Tracker — Person ID Assignment + Event Publishing
+  # ---------------------------------------------------------------------------
+  # Lightweight CPU service. Reads detections, matches them across frames
+  # using bounding box overlap (IoU), assigns persistent person IDs, and
+  # publishes semantic events (person_appeared, person_left).
+  tracker:
+    build:
+      context: ./services/tracker
+    environment:
+      - CAMERA_ID=front_door
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes:
+      - ./contracts:/app/contracts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Face Recognizer — Known person identification
+  # ---------------------------------------------------------------------------
+  # Matches detected faces against a SQLite database of known people.
+  # Enrollment API on port 8081 (proxied through dashboard).
+  # InsightFace runs on GPU alongside the pose detector.
+  face-recognizer:
+    build:
+      context: ./services/face-recognizer
+    # NOTE: port 8081 deliberately NOT exposed on host — the dashboard proxies
+    # all face-recognizer requests via Docker DNS (`http://face-recognizer:8081`),
+    # so there's no reason for it to be reachable from outside the bridge net.
+    # Exposing it would let any LAN client enroll/delete faces without auth.
+    expose:
+      - "8081"
+    environment:
+      - CAMERA_ID=front_door
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=0  # 5070 Ti
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']  # GPU 0 = 5070 Ti (16GB) — always-on detectors
+              capabilities: [ gpu ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Vehicle Detector — YOLOv8 vehicle detection (Phase 6.2)
+  # ---------------------------------------------------------------------------
+  # Detects vehicles (car, truck, bus, motorcycle) in camera frames.
+  # Reads the same frame stream as pose-detector but outputs to a separate
+  # vehicle detection stream for the tracker to consume.
+  vehicle-detector:
+    build:
+      context: ./services/vehicle-detector
+    environment:
+      - CAMERA_ID=front_door
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=0  # 5070 Ti
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']  # GPU 0 = 5070 Ti (16GB) — always-on detectors
+              capabilities: [ gpu ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Ollama — Local LLM inference (Qwen 3 14B)
+  # ---------------------------------------------------------------------------
+  # Runs the Ollama model server with GPU access. The model weights are
+  # downloaded on first startup (~9.3 GB) and cached in a Docker volume.
+  # Dashboard routes AI chat requests to http://ollama:11434.
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - NVIDIA_VISIBLE_DEVICES=1  # 3090
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']  # GPU 1 = 3090 (24GB) — heavy on-demand workloads
+              capabilities: [ gpu ]
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "ollama", "list" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # ComfyUI — Local image generation (Stable Diffusion, Flux, etc.)
+  # ---------------------------------------------------------------------------
+  # Runs ComfyUI with GPU access for on-demand image/video generation.
+  # Drop .safetensors files into ./models/comfyui/checkpoints/ to add models.
+  # Dashboard proxies requests to http://comfyui:8188.
+  comfyui:
+    build:
+      context: ./services/comfyui
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1  # 3090
+    volumes:
+      - comfyui-data:/app/output
+      - ./models/comfyui:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']  # GPU 1 = 3090 (24GB) — heavy on-demand workloads
+              capabilities: [ gpu ]
+    shm_size: '8gb'
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8188/system_stats')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Dashboard — Live monitoring UI
+  # ---------------------------------------------------------------------------
+  # Web dashboard accessible at http://localhost:8080. Shows live camera feed
+  # with detection overlays, adjustable settings (confidence, IoU, lost timeout),
+  # event feed, and face enrollment UI.
+  dashboard:
+    build:
+      context: ./services/dashboard
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./models/comfyui:/app/models:ro # WAN LoRA listing + model access
+      - auth-data:/data
+      - qnap-snapshots:/data/snapshots
+      - qnap-events:/data/events
+      - qnap-telegram:/data/telegram
+      - qnap-generations:/data/generations
+      - comfyui-data:/data/comfyui-output:ro
+      - qnap-videos:/data/videos
+      - qnap-clips:/data/clips
+      - qnap-recordings:/data/recordings:ro
+    environment:
+      - CAMERA_ID=front_door
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DASHBOARD_PORT=8080
+      - FACE_API_URL=http://face-recognizer:8081
+      - AUTH_DB_PATH=/data/auth.db
+      - OLLAMA_HOST=http://ollama:11434
+      - COMFYUI_HOST=http://comfyui:8188
+
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Recorder — Continuous DVR recording to QNAP NAS
+  # ---------------------------------------------------------------------------
+  # Records the RTSP sub-stream directly to 1-hour MP4 segments.
+  # Uses ffmpeg copy (no transcode) — very low CPU usage.
+  # 28-day rolling retention with automatic cleanup.
+  recorder:
+    build:
+      context: ./services/recorder
+    network_mode: host
+    profiles: ["nas"]  # only starts when running with --profile nas (requires QNAP)
+    volumes:
+      - qnap-recordings:/recordings
+    environment:
+      - CAMERA_ID=front_door
+      - RTSP_URL=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_sub
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=28
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  # ─── Monitoring Stack ───────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    network_mode: host
+    volumes:
+      - prometheus-data:/prometheus
+      - ./services/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.listen-address=:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    network_mode: host
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./services/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./services/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=visionlabs
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SERVER_HTTP_PORT=3000
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    network_mode: host
+    environment:
+      - REDIS_ADDR=redis://127.0.0.1:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # both GPUs — exporter scrapes metrics from all cards
+              capabilities: [ gpu ]
+    cap_add:
+      - SYS_ADMIN
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Portainer — Docker management UI (replaces Docker Desktop dashboard)
+  # ---------------------------------------------------------------------------
+  # HTTPS UI at https://localhost:9443 — first visit creates the admin user.
+  # Mounts the Docker socket so it can manage everything on this host.
+  portainer:
+    image: portainer/portainer-ce:latest
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  face-data:
+  yolo-models:
+  insightface-models:
+  auth-data:
+  ollama-models:
+  comfyui-data:
+
+  prometheus-data:
+  grafana-data:
+  portainer-data:
+
+  # Storage volumes (local by default — overridden to CIFS via docker-compose.qnap.yml)
+  # See docker-compose.qnap.yml for the QNAP/CIFS-backed versions of these.
+  qnap-snapshots:
+  qnap-recordings:
+  qnap-events:
+  qnap-telegram:
+  qnap-generations:
+  qnap-videos:
+  qnap-clips:

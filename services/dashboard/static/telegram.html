@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision Labs — Telegram Access</title>
+    <meta name="description" content="Manage Telegram bot users and view access logs">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ─── Telegram Access page styles ─── */
+        .tg-page {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 1.5rem 1rem;
+        }
+
+        .tg-page h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #f1f5f9;
+            margin-bottom: 0.5rem;
+        }
+
+        .tg-page h1 span {
+            font-size: 1.3rem;
+            margin-right: 0.4rem;
+        }
+
+        .tg-subtitle {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* ─── Cards ─── */
+        .tg-card {
+            background: #1a2235;
+            border: 1px solid #2d3748;
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .tg-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .tg-card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #e2e8f0;
+        }
+
+        .tg-card-badge {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+
+        .tg-badge-green {
+            background: rgba(74, 222, 128, 0.15);
+            color: #4ade80;
+        }
+
+        .tg-badge-amber {
+            background: rgba(251, 191, 36, 0.15);
+            color: #fbbf24;
+        }
+
+        /* ─── Add User Form ─── */
+        .tg-add-form {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .tg-add-form input {
+            flex: 1;
+            min-width: 120px;
+            padding: 0.5rem 0.75rem;
+            background: #0f172a;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            color: #f1f5f9;
+            font-size: 0.85rem;
+            font-family: inherit;
+        }
+
+        .tg-add-form input::placeholder {
+            color: #64748b;
+        }
+
+        .tg-add-form input:focus {
+            outline: none;
+            border-color: #4ade80;
+            box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15);
+        }
+
+        .tg-btn {
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            border: none;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-family: inherit;
+        }
+
+        .tg-btn-primary {
+            background: #4ade80;
+            color: #0f172a;
+        }
+
+        .tg-btn-primary:hover {
+            background: #22c55e;
+        }
+
+        .tg-btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .tg-btn-danger:hover {
+            background: rgba(239, 68, 68, 0.25);
+        }
+
+        .tg-btn-small {
+            padding: 0.3rem 0.6rem;
+            font-size: 0.78rem;
+        }
+
+        .tg-btn-approve {
+            background: rgba(74, 222, 128, 0.15);
+            color: #4ade80;
+            border: 1px solid rgba(74, 222, 128, 0.3);
+        }
+
+        .tg-btn-approve:hover {
+            background: rgba(74, 222, 128, 0.25);
+        }
+
+        /* ─── Users Table ─── */
+        .tg-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .tg-table th {
+            text-align: left;
+            padding: 0.5rem 0.75rem;
+            color: #94a3b8;
+            font-weight: 500;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid #2d3748;
+        }
+
+        .tg-table td {
+            padding: 0.6rem 0.75rem;
+            color: #e2e8f0;
+            border-bottom: 1px solid rgba(45, 55, 72, 0.5);
+        }
+
+        .tg-table tr:hover td {
+            background: rgba(74, 222, 128, 0.03);
+        }
+
+        .tg-uid {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+
+        .tg-empty {
+            text-align: center;
+            color: #64748b;
+            padding: 2rem;
+            font-size: 0.9rem;
+        }
+
+        /* ─── Access Log ─── */
+        .tg-log-scroll {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .tg-log-entry {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.55rem 0.75rem;
+            border-bottom: 1px solid rgba(45, 55, 72, 0.3);
+            font-size: 0.83rem;
+        }
+
+        .tg-log-entry:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .tg-log-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .tg-log-dot.approved {
+            background: #4ade80;
+        }
+
+        .tg-log-dot.denied {
+            background: #ef4444;
+        }
+
+        .tg-log-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .tg-log-who {
+            color: #e2e8f0;
+            font-weight: 500;
+        }
+
+        .tg-log-action {
+            color: #94a3b8;
+            font-size: 0.78rem;
+        }
+
+        .tg-log-time {
+            color: #64748b;
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
+
+        .tg-log-actions {
+            flex-shrink: 0;
+        }
+
+        /* ─── Responsive ─── */
+        @media (max-width: 600px) {
+            .tg-add-form {
+                flex-direction: column;
+            }
+
+            .tg-table th:nth-child(5),
+            .tg-table td:nth-child(5) {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="navbar-left">
+            <a href="/" class="navbar-brand">
+                <span class="navbar-logo">◉</span> Vision Labs
+            </a>
+            <div class="navbar-links">
+                <a href="/" class="nav-link">🏠 Home</a>
+                <a href="/ai.html" class="nav-link">🤖 AI</a>
+                <a href="/telegram.html" class="nav-link nav-link--active">🔐 Telegram</a>
+                <a href="/monitoring.html" class="nav-link">📊 Monitoring</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="tg-page">
+        <h1><span>🔐</span> Telegram Access Manager</h1>
+        <p class="tg-subtitle">Manage who can interact with the Telegram bot. Approved users receive alerts and can send
+            commands.</p>
+
+        <!-- ─── Approved Users ─── -->
+        <div class="tg-card">
+            <div class="tg-card-header">
+                <span class="tg-card-title">✅ Approved Users</span>
+                <span class="tg-card-badge tg-badge-green" id="userCount">0 users</span>
+            </div>
+
+            <!-- Add user form -->
+            <div class="tg-add-form" style="margin-bottom: 1rem;">
+                <input type="text" id="addUserId" placeholder="Telegram User ID" pattern="[0-9]*" inputmode="numeric">
+                <input type="text" id="addChatId" placeholder="Chat ID (auto-filled from log)">
+                <input type="text" id="addUserName" placeholder="Display name">
+                <input type="text" id="addUsername" placeholder="@username (optional)">
+                <button class="tg-btn tg-btn-primary" onclick="addUser()">Add User</button>
+            </div>
+
+            <!-- Users table -->
+            <table class="tg-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>User ID</th>
+                        <th>Chat ID</th>
+                        <th>Role</th>
+                        <th>Approved</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="usersBody">
+                    <tr>
+                        <td colspan="6" class="tg-empty">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ─── Access Log ─── -->
+        <div class="tg-card">
+            <div class="tg-card-header">
+                <span class="tg-card-title">📋 Access Log</span>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <span class="tg-card-badge tg-badge-amber" id="logCount">0 entries</span>
+                    <button class="tg-btn tg-btn-danger tg-btn-small" onclick="clearLog()">Clear</button>
+                </div>
+            </div>
+
+            <div class="tg-log-scroll" id="logScroll">
+                <div class="tg-empty">Loading access log...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="telegram_access.js"></script>
+</body>
+
+</html>

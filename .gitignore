@@ -1,0 +1,50 @@
+# Secrets
+.env
+
+# Planning docs with personal info
+v1.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Databases (contain face embeddings, auth credentials)
+*.db
+clips /
+# Test / Debug artifacts
+.pytest_cache/
+*.log
+*_logs.txt
+test_results.txt
+gpu_test.txt
+
+# Snapshots
+snapshots/
+
+# Models & weights (multi-GB files)
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# Temp / debug files
+test_output.txt
+test_counts.txt
+line_counts.txt

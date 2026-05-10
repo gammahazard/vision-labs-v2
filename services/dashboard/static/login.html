@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision Labs — Login</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-panel: rgba(26, 34, 53, 0.85);
+            --border: #2d3748;
+            --border-active: #4ade80;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #4ade80;
+            --accent-dim: #22c55e;
+            --accent-bg: rgba(74, 222, 128, 0.1);
+            --danger: #ef4444;
+        }
+
+        *,
+        *::before,
+        *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* ---- Live camera snapshot background ---- */
+        #cameraBg {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background-size: cover;
+            background-position: center;
+            filter: blur(18px) brightness(0.55) saturate(0.6);
+            will-change: transform;
+        }
+
+        /* ---- Subtle grid overlay ---- */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(74, 222, 128, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(74, 222, 128, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: 1;
+            will-change: transform;
+        }
+
+        /* ---- Particle + matrix canvas ---- */
+        #particleCanvas,
+        #matrixCanvas {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        #particleCanvas {
+            z-index: 3;
+            will-change: transform;
+        }
+
+        #matrixCanvas {
+            z-index: 2;
+            opacity: 0.12;
+            will-change: transform;
+        }
+
+        /* ---- Login container ---- */
+        .login-container {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            max-width: 520px;
+            padding: 0 20px;
+        }
+
+        /* ---- SVG Eye ---- */
+        .eye-container {
+            text-align: center;
+            margin-bottom: 32px;
+            animation: fadeInDown 0.8s ease forwards;
+        }
+
+        .eye-svg-wrap {
+            display: inline-block;
+            width: 100px;
+            height: 60px;
+            filter: drop-shadow(0 0 20px rgba(74, 222, 128, 0.4));
+            animation: eyePulse 2.5s ease-in-out infinite;
+        }
+
+        .brand-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-top: 16px;
+            letter-spacing: 0.5px;
+        }
+
+        .brand-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        /* ---- Login card ---- */
+        .login-panel {
+            border: 1px solid rgba(74, 222, 128, 0.3);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .login-card {
+            background: var(--bg-panel);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            padding: 36px 32px;
+            position: relative;
+            overflow: hidden;
+            opacity: 0;
+            transform: translateY(16px);
+            animation: fadeInUp 0.7s ease 0.5s forwards;
+        }
+
+        /* ---- Scan line sweep ---- */
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            opacity: 0;
+            animation: scanReveal 1.5s ease 0.5s forwards;
+        }
+
+        /* ---- Form elements ---- */
+        .form-group {
+            margin-bottom: 20px;
+            opacity: 0;
+            transform: translateY(10px);
+        }
+
+        .form-group:nth-child(1) {
+            animation: fadeInUp 0.5s ease 0.8s forwards;
+        }
+
+        .form-group:nth-child(2) {
+            animation: fadeInUp 0.5s ease 1.0s forwards;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(17, 24, 39, 0.7);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 15px;
+            font-family: inherit;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            outline: none;
+        }
+
+        .form-group input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-bg);
+        }
+
+        .form-group input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* ---- Submit button ---- */
+        .login-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, var(--accent-dim), var(--accent));
+            border: none;
+            border-radius: 8px;
+            color: #0a0e17;
+            font-size: 15px;
+            font-weight: 700;
+            font-family: inherit;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            transition: transform 0.15s ease, box-shadow 0.2s ease;
+            opacity: 0;
+            transform: translateY(10px);
+            animation: fadeInUp 0.5s ease 1.2s forwards;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 4px 20px rgba(74, 222, 128, 0.3);
+        }
+
+        .login-btn:active {
+            transform: translateY(0) !important;
+        }
+
+        .login-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        /* ---- Error message ---- */
+        .error-msg {
+            text-align: center;
+            color: var(--danger);
+            font-size: 13px;
+            font-weight: 500;
+            margin-top: 16px;
+            min-height: 20px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .error-msg.visible {
+            opacity: 1;
+        }
+
+        /* ---- Mini terminal ---- */
+        .terminal-divider {
+            height: 1px;
+            background: rgba(74, 222, 128, 0.3);
+        }
+
+        .status-terminal {
+            background: rgba(10, 14, 23, 0.85);
+            opacity: 0;
+            animation: fadeInUp 0.5s ease 1.4s forwards;
+        }
+
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(17, 24, 39, 0.8);
+            border-bottom: 1px solid rgba(45, 55, 72, 0.4);
+            font-size: 10px;
+            color: var(--text-muted);
+            font-family: 'Courier New', monospace;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .terminal-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: blink 2s ease-in-out infinite;
+        }
+
+        .terminal-body {
+            height: 72px;
+            overflow-y: auto;
+            padding: 8px 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+            color: rgba(148, 163, 184, 0.85);
+            letter-spacing: 0.3px;
+        }
+
+        .terminal-body::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .terminal-body::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .terminal-body::-webkit-scrollbar-thumb {
+            background: rgba(74, 222, 128, 0.2);
+            border-radius: 2px;
+        }
+
+        .terminal-line {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .terminal-line .ts {
+            color: var(--accent);
+            opacity: 0.6;
+        }
+
+        /* ---- Glitch effect on failed login ---- */
+        @keyframes glitch {
+            0% {
+                transform: translate(0);
+                filter: none;
+            }
+
+            10% {
+                transform: translate(-4px, 2px);
+                filter: hue-rotate(90deg) brightness(1.5);
+            }
+
+            20% {
+                transform: translate(4px, -2px);
+                filter: hue-rotate(-90deg);
+            }
+
+            30% {
+                transform: translate(-2px, -1px);
+                filter: brightness(0.8);
+            }
+
+            40% {
+                transform: translate(3px, 1px);
+                filter: hue-rotate(45deg) brightness(1.3);
+            }
+
+            50% {
+                transform: translate(-1px, 2px);
+                filter: none;
+            }
+
+            60% {
+                transform: translate(2px, -1px);
+                filter: hue-rotate(-45deg);
+            }
+
+            70% {
+                transform: translate(0);
+                filter: none;
+            }
+
+            100% {
+                transform: translate(0);
+                filter: none;
+            }
+        }
+
+        /* ---- Cinematic success overlay ---- */
+        .success-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-primary);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.6s ease;
+        }
+
+        .success-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .success-eye {
+            width: 220px;
+            height: 140px;
+            filter: drop-shadow(0 0 40px rgba(74, 222, 128, 0.6));
+            opacity: 0;
+            transform: scale(0.5);
+            transition: opacity 0.8s ease, transform 0.8s ease;
+        }
+
+        .success-overlay.active .success-eye {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .success-label {
+            margin-top: 24px;
+            font-size: 14px;
+            color: var(--accent);
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            font-family: 'Courier New', monospace;
+            opacity: 0;
+            transition: opacity 0.5s ease 0.4s;
+        }
+
+        .success-overlay.active .success-label {
+            opacity: 1;
+        }
+
+        .success-overlay.blackout {
+            background: #000;
+            transition: background 0.3s ease;
+        }
+
+        /* ---- Keyframes ---- */
+        @keyframes eyePulse {
+
+            0%,
+            100% {
+                filter: drop-shadow(0 0 20px rgba(74, 222, 128, 0.4));
+            }
+
+            50% {
+                filter: drop-shadow(0 0 35px rgba(74, 222, 128, 0.7));
+            }
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(16px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        @keyframes cursorBlink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        @keyframes scanReveal {
+            0% {
+                opacity: 0;
+                top: 0;
+            }
+
+            30% {
+                opacity: 0.8;
+            }
+
+            100% {
+                opacity: 0;
+                top: 100%;
+            }
+        }
+
+        /* ---- Mobile ---- */
+        @media (max-width: 480px) {
+            .login-card {
+                padding: 28px 24px;
+            }
+
+            .eye-svg-wrap {
+                width: 80px;
+                height: 48px;
+            }
+
+            .brand-title {
+                font-size: 19px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Live camera snapshot background -->
+    <div id="cameraBg"></div>
+
+    <!-- Particle network canvas -->
+    <canvas id="particleCanvas"></canvas>
+
+    <!-- Subtle matrix rain canvas -->
+    <canvas id="matrixCanvas"></canvas>
+
+    <!-- Cinematic success overlay (big eye blink → blackout) -->
+    <div class="success-overlay" id="successOverlay">
+        <svg class="success-eye" viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <clipPath id="successEyeClip">
+                    <path id="successClipPath" d="M5 30 Q50 -5 95 30 Q50 65 5 30Z" />
+                </clipPath>
+            </defs>
+            <!-- Eye outline (animates with blink) -->
+            <path id="successOutline" d="M5 30 Q50 -5 95 30 Q50 65 5 30Z" fill="none" stroke="#4ade80"
+                stroke-width="2.5" />
+            <!-- Everything inside clipped by eye shape -->
+            <g clip-path="url(#successEyeClip)">
+                <circle cx="50" cy="30" r="14" fill="none" stroke="#4ade80" stroke-width="1.5" opacity="0.7" />
+                <circle cx="50" cy="30" r="7" fill="#4ade80" opacity="0.9" />
+                <circle cx="46" cy="26" r="2.5" fill="white" opacity="0.5" />
+                <g opacity="0.25" stroke="#4ade80" stroke-width="0.5">
+                    <line x1="50" y1="16" x2="50" y2="20" />
+                    <line x1="50" y1="40" x2="50" y2="44" />
+                    <line x1="36" y1="30" x2="40" y2="30" />
+                    <line x1="60" y1="30" x2="64" y2="30" />
+                    <line x1="40" y1="21" x2="43" y2="24" />
+                    <line x1="57" y1="36" x2="60" y2="39" />
+                    <line x1="40" y1="39" x2="43" y2="36" />
+                    <line x1="57" y1="24" x2="60" y2="21" />
+                </g>
+            </g>
+        </svg>
+        <div class="success-label">ACCESS GRANTED</div>
+    </div>
+
+    <div class="login-container">
+        <div class="eye-container">
+            <!-- SVG Eye that tracks cursor -->
+            <div class="eye-svg-wrap">
+                <svg id="eyeSvg" viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <clipPath id="eyeClip">
+                            <path id="eyeClipPath" d="M5 30 Q50 -5 95 30 Q50 65 5 30Z" />
+                        </clipPath>
+                    </defs>
+                    <!-- Eye outline (animates with blink) -->
+                    <path id="eyeOutline" d="M5 30 Q50 -5 95 30 Q50 65 5 30Z" fill="none" stroke="#4ade80"
+                        stroke-width="2" opacity="0.8" />
+                    <!-- Everything inside clipped by eye shape -->
+                    <g clip-path="url(#eyeClip)">
+                        <circle cx="50" cy="30" r="14" fill="none" stroke="#4ade80" stroke-width="1.5" opacity="0.6" />
+                        <circle id="eyePupil" cx="50" cy="30" r="7" fill="#4ade80" opacity="0.9">
+                            <animate attributeName="r" values="7;6;7" dur="2.5s" repeatCount="indefinite" />
+                        </circle>
+                        <circle id="eyeHighlight" cx="47" cy="27" r="2" fill="white" opacity="0.5" />
+                        <g opacity="0.2" stroke="#4ade80" stroke-width="0.5">
+                            <line x1="50" y1="16" x2="50" y2="20" />
+                            <line x1="50" y1="40" x2="50" y2="44" />
+                            <line x1="36" y1="30" x2="40" y2="30" />
+                            <line x1="60" y1="30" x2="64" y2="30" />
+                            <line x1="40" y1="21" x2="43" y2="24" />
+                            <line x1="57" y1="36" x2="60" y2="39" />
+                            <line x1="40" y1="39" x2="43" y2="36" />
+                            <line x1="57" y1="24" x2="60" y2="21" />
+                        </g>
+                    </g>
+                </svg>
+            </div>
+            <div class="brand-title">Vision Labs</div>
+            <div class="brand-subtitle">Security Dashboard</div>
+        </div>
+
+        <div class="login-panel">
+            <div class="login-card">
+                <form id="loginForm" onsubmit="handleLogin(event)">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" placeholder="Enter username"
+                            autocomplete="username" required autofocus>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" placeholder="Enter password"
+                            autocomplete="current-password" required>
+                    </div>
+                    <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+                    <div class="error-msg" id="errorMsg"></div>
+                </form>
+
+                <!-- Forced password-rotation form: shown only when the server
+                     signals must_change_password (i.e. user is still on admin/admin). -->
+                <form id="forceChangeForm" onsubmit="handleForceChange(event)" style="display:none;">
+                    <div style="margin-bottom: 14px; padding: 10px 12px; background: rgba(220, 38, 38, 0.12); border: 1px solid rgba(220, 38, 38, 0.4); border-radius: 6px; color: #fecaca; font-size: 13px; line-height: 1.4;">
+                        <strong>Set a new password to continue.</strong>
+                        <div id="forceChangeReason" style="margin-top: 4px; opacity: 0.85;"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="forceNewPassword">New password</label>
+                        <input type="password" id="forceNewPassword" placeholder="Min 8 characters" autocomplete="new-password" minlength="8" required autofocus>
+                    </div>
+                    <div class="form-group">
+                        <label for="forceConfirmPassword">Confirm password</label>
+                        <input type="password" id="forceConfirmPassword" placeholder="Repeat new password" autocomplete="new-password" minlength="8" required>
+                    </div>
+                    <button type="submit" class="login-btn" id="forceChangeBtn">Set Password & Continue</button>
+                    <div class="error-msg" id="forceChangeMsg"></div>
+                </form>
+            </div>
+
+            <div class="terminal-divider"></div>
+
+            <div class="status-terminal">
+                <div class="terminal-header">
+                    <span class="terminal-dot"></span>
+                    system log
+                </div>
+                <div class="terminal-body" id="terminalBody"></div>
+            </div>
+        </div> <!-- /login-panel -->
+    </div>
+
+    <script>
+        // ===================================================================
+        // 1. SVG Eye — pupil tracks cursor
+        // ===================================================================
+        (function initEyeTracking() {
+            const pupil = document.getElementById('eyePupil');
+            const highlight = document.getElementById('eyeHighlight');
+            const svg = document.getElementById('eyeSvg');
+            const maxMove = 6; // max pixel offset from center
+
+            document.addEventListener('mousemove', (e) => {
+                const rect = svg.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const dx = e.clientX - cx;
+                const dy = e.clientY - cy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const clamp = Math.min(dist / 150, 1);
+                const ox = (dx / (dist || 1)) * maxMove * clamp;
+                const oy = (dy / (dist || 1)) * maxMove * clamp;
+
+                pupil.setAttribute('cx', 50 + ox);
+                pupil.setAttribute('cy', 30 + oy);
+                highlight.setAttribute('cx', 47 + ox * 0.7);
+                highlight.setAttribute('cy', 27 + oy * 0.7);
+            });
+        })();
+
+        // ===================================================================
+        // 2. Floating particle network
+        // ===================================================================
+        (function initParticles() {
+            const c = document.getElementById('particleCanvas');
+            const ctx = c.getContext('2d');
+            let W, H;
+            const particles = [];
+            const COUNT = 50;
+            const CONNECT_DIST = 120;
+
+            function resize() {
+                W = c.width = window.innerWidth;
+                H = c.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            for (let i = 0; i < COUNT; i++) {
+                particles.push({
+                    x: Math.random() * W,
+                    y: Math.random() * H,
+                    vx: (Math.random() - 0.5) * 0.4,
+                    vy: (Math.random() - 0.5) * 0.4,
+                    r: Math.random() * 2 + 1,
+                });
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Draw connections
+                for (let i = 0; i < particles.length; i++) {
+                    for (let j = i + 1; j < particles.length; j++) {
+                        const dx = particles[i].x - particles[j].x;
+                        const dy = particles[i].y - particles[j].y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < CONNECT_DIST) {
+                            ctx.beginPath();
+                            ctx.moveTo(particles[i].x, particles[i].y);
+                            ctx.lineTo(particles[j].x, particles[j].y);
+                            ctx.strokeStyle = `rgba(74, 222, 128, ${0.12 * (1 - dist / CONNECT_DIST)})`;
+                            ctx.lineWidth = 0.5;
+                            ctx.stroke();
+                        }
+                    }
+                }
+
+                // Draw particles
+                for (const p of particles) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    if (p.x < 0 || p.x > W) p.vx *= -1;
+                    if (p.y < 0 || p.y > H) p.vy *= -1;
+
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(74, 222, 128, 0.3)';
+                    ctx.fill();
+                }
+
+                // Throttle to ~30fps to avoid GPU compositing thrash
+                setTimeout(draw, 33);
+            }
+            draw();
+        })();
+
+        // ===================================================================
+        // 3. Subtle matrix rain (very faint)
+        // ===================================================================
+        (function initMatrix() {
+            const c = document.getElementById('matrixCanvas');
+            const ctx = c.getContext('2d');
+            let W, H, columns, drops;
+            const chars = '01アイウエオカキクケコVISION';
+            const fontSize = 14;
+
+            function resize() {
+                W = c.width = window.innerWidth;
+                H = c.height = window.innerHeight;
+                columns = Math.floor(W / fontSize);
+                drops = new Array(columns).fill(0).map(() => Math.random() * H / fontSize);
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            function draw() {
+                // IMPORTANT: fully clear canvas each frame — the old approach
+                // accumulated opacity via fillRect, which built up to a solid
+                // dark layer covering the camera background behind it.
+                ctx.clearRect(0, 0, W, H);
+                ctx.fillStyle = 'rgba(74, 222, 128, 0.25)';
+                ctx.font = `${fontSize}px monospace`;
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = chars[Math.floor(Math.random() * chars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > H && Math.random() > 0.985) {
+                        drops[i] = 0;
+                    }
+                    drops[i] += 0.3; // Slow fall speed
+                }
+                // Throttle to ~15fps — matrix rain is subtle, doesn't need 60fps
+                setTimeout(draw, 66);
+            }
+            draw();
+        })();
+
+        // ===================================================================
+        // 4. Terminal log — appends scrolling messages
+        // ===================================================================
+        (function initTerminal() {
+            const body = document.getElementById('terminalBody');
+            const MAX_LINES = 20;
+
+            function pad(n) { return String(n).padStart(2, '0'); }
+
+            function nowTs() {
+                const d = new Date();
+                return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+            }
+
+            function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+            const generators = [
+                () => `tracker: person_appeared { zone: "front_yard" }`,
+                () => `telegram: notification_sent { chat_id: "***" }`,
+                () => `pose-detector: inference_ok { latency: ${randInt(18, 45)}ms }`,
+                () => `vehicle-detector: scanning frame #${randInt(10000, 99999)}`,
+                () => `face-recognizer: 0 unknown faces`,
+                () => `ingester: rtsp stream healthy { fps: ${randInt(14, 16)} }`,
+                () => `recorder: segment saved { size: ${randInt(28, 64)}MB }`,
+                () => `redis: streams ok { memory: ${randInt(120, 340)}MB }`,
+                () => `tracker: vehicle_idle { class: "sedan", dur: ${randInt(60, 300)}s }`,
+                () => `dashboard: ws_clients: 0 | uptime: ${randInt(1, 72)}h`,
+                () => `system: health check ok (${randInt(40, 120)} events today)`,
+                () => `qnap: dvr write ok { path: /recordings/${pad(new Date().getHours())}-${pad(new Date().getMinutes())}.mp4 }`,
+                () => `time_rules: period=overnight | suppression=off`,
+                () => `system: heartbeat ok`,
+            ];
+
+            function shuffle(arr) {
+                for (let i = arr.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [arr[i], arr[j]] = [arr[j], arr[i]];
+                }
+                return arr;
+            }
+
+            let queue = [];
+            function nextMessage() {
+                if (queue.length === 0) queue = shuffle([...generators]);
+                return queue.pop()();
+            }
+
+            function addLine() {
+                const line = document.createElement('div');
+                line.className = 'terminal-line';
+                line.innerHTML = `<span class="ts">[${nowTs()}]</span> ${nextMessage()}`;
+                body.appendChild(line);
+
+                // Trim old lines
+                while (body.children.length > MAX_LINES) {
+                    body.removeChild(body.firstChild);
+                }
+
+                // Auto-scroll to bottom
+                body.scrollTop = body.scrollHeight;
+
+                // Next line in 2-4s
+                setTimeout(addLine, 2000 + Math.random() * 2000);
+            }
+
+            // Start after 1.5s
+            setTimeout(addLine, 1500);
+        })();
+
+        // ===================================================================
+        // 5. Live camera background (refreshes every 10s)
+        // ===================================================================
+        (function initCameraBg() {
+            const bg = document.getElementById('cameraBg');
+            const img = new Image();
+            img.onload = () => {
+                bg.style.backgroundImage = `url(${img.src})`;
+            };
+            img.src = '/api/login-bg?t=' + Date.now();
+        })();
+
+        // ===================================================================
+        // 6. Glitch helper — locks visible state then applies glitch animation
+        // ===================================================================
+        function triggerGlitch(card) {
+            // Lock the card visible: fadeInUp's `forwards` fill gives opacity:1,
+            // but replacing animation removes that fill. Set inline styles to
+            // keep the card visible permanently.
+            card.style.opacity = '1';
+            card.style.transform = 'translateY(0)';
+            // Play glitch
+            card.style.animation = 'none';
+            void card.offsetWidth; // force reflow
+            card.style.animation = 'glitch 0.5s ease';
+            card.style.borderColor = 'var(--danger)';
+            card.style.boxShadow = '0 0 20px rgba(239, 68, 68, 0.3)';
+            setTimeout(() => {
+                // IMPORTANT: set to 'none', NOT '' — setting '' would re-trigger
+                // the CSS fadeInUp animation causing a disappear/reappear flash
+                card.style.animation = 'none';
+                card.style.borderColor = '';
+                card.style.boxShadow = '';
+            }, 600);
+        }
+
+        // ===================================================================
+        // 7. Reusable eye shape animator — morphs SVG paths for natural blink
+        // ===================================================================
+        function animateEyeShape(clipEl, outlineEl, toTopY, toBotY, duration, onDone) {
+            // Read current control points from the clip path
+            const d = clipEl.getAttribute('d');
+            const match = d.match(/Q50\s+([\d.-]+)\s+95\s+30\s+Q50\s+([\d.-]+)/);
+            const fromTop = match ? parseFloat(match[1]) : -5;
+            const fromBot = match ? parseFloat(match[2]) : 65;
+
+            const steps = 12;
+            const interval = duration / steps;
+            let step = 0;
+
+            const timer = setInterval(() => {
+                step++;
+                const t = step / steps;
+                // Ease-in-out quad
+                const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+                const topY = fromTop + (toTopY - fromTop) * ease;
+                const botY = fromBot + (toBotY - fromBot) * ease;
+                const path = `M5 30 Q50 ${topY} 95 30 Q50 ${botY} 5 30Z`;
+                clipEl.setAttribute('d', path);
+                if (outlineEl) outlineEl.setAttribute('d', path);
+
+                if (step >= steps) {
+                    clearInterval(timer);
+                    if (onDone) onDone();
+                }
+            }, interval);
+        }
+
+        // ===================================================================
+        // 8. Periodic blink on the small tracking eye
+        // ===================================================================
+        (function initPeriodicBlink() {
+            const clip = document.getElementById('eyeClipPath');
+            const outline = document.getElementById('eyeOutline');
+            if (!clip || !outline) return;
+
+            function doBlink() {
+                // Close (150ms)
+                animateEyeShape(clip, outline, 30, 30, 150, () => {
+                    // Open (200ms)
+                    animateEyeShape(clip, outline, -5, 65, 200);
+                });
+                // Schedule next blink randomly 3-7s
+                setTimeout(doBlink, 3000 + Math.random() * 4000);
+            }
+            // First blink after 2-4s
+            setTimeout(doBlink, 2000 + Math.random() * 2000);
+        })();
+
+        // ===================================================================
+        // 9. Login handler — glitch fail + cinematic eye-blink success
+        // ===================================================================
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const errEl = document.getElementById('errorMsg');
+            const card = document.querySelector('.login-card');
+            const container = document.querySelector('.login-container');
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            btn.disabled = true;
+            btn.textContent = 'Authenticating...';
+            errEl.classList.remove('visible');
+            errEl.textContent = '';
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    // Force a password rotation if the user is still on
+                    // default admin/admin credentials. Server has issued a
+                    // session cookie that lets us call /change-password.
+                    if (data.must_change_password) {
+                        showForceChangeForm(data.reason || 'You must change your password before continuing.');
+                        btn.disabled = false;
+                        btn.textContent = 'Sign In';
+                        return;
+                    }
+
+                    // === Cinematic success sequence ===
+                    // Step 1: Fade out entire login container
+                    container.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                    container.style.opacity = '0';
+                    container.style.transform = 'translateY(-20px)';
+
+                    // Step 2: Show big eye
+                    setTimeout(() => {
+                        const overlay = document.getElementById('successOverlay');
+                        overlay.classList.add('active');
+
+                        const sClip = document.getElementById('successClipPath');
+                        const sOutline = document.getElementById('successOutline');
+
+                        // Step 3: Eye blinks shut (natural SVG path morph)
+                        setTimeout(() => {
+                            animateEyeShape(sClip, sOutline, 30, 30, 400, () => {
+                                // Step 4: Go full black
+                                overlay.classList.add('blackout');
+                                overlay.querySelector('.success-label').style.opacity = '0';
+                                overlay.querySelector('.success-label').style.transition = 'opacity 0.3s ease';
+
+                                // Step 5: Redirect
+                                setTimeout(() => {
+                                    window.location.href = '/';
+                                }, 400);
+                            });
+                        }, 1400);
+                    }, 600);
+
+                } else {
+                    // === Fail: glitch + red flash ===
+                    triggerGlitch(card);
+
+                    errEl.textContent = data.error || 'Authentication failed';
+                    errEl.classList.add('visible');
+                    btn.disabled = false;
+                    btn.textContent = 'Sign In';
+                    document.getElementById('password').value = '';
+                    document.getElementById('password').focus();
+                }
+            } catch (err) {
+                triggerGlitch(card);
+                errEl.textContent = 'Connection error — try again';
+                errEl.classList.add('visible');
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Forced password-rotation flow (admin still on default credentials)
+        // -----------------------------------------------------------------
+        function showForceChangeForm(reason) {
+            const loginForm = document.getElementById('loginForm');
+            const forceForm = document.getElementById('forceChangeForm');
+            const reasonEl = document.getElementById('forceChangeReason');
+            if (reason) reasonEl.textContent = reason;
+            loginForm.style.display = 'none';
+            forceForm.style.display = '';
+            document.getElementById('forceNewPassword').focus();
+        }
+
+        async function handleForceChange(e) {
+            e.preventDefault();
+            const newPw = document.getElementById('forceNewPassword').value;
+            const confirmPw = document.getElementById('forceConfirmPassword').value;
+            const msgEl = document.getElementById('forceChangeMsg');
+            const btn = document.getElementById('forceChangeBtn');
+
+            if (newPw.length < 8) {
+                msgEl.textContent = 'Password must be at least 8 characters';
+                msgEl.classList.add('visible');
+                return;
+            }
+            if (newPw !== confirmPw) {
+                msgEl.textContent = 'Passwords do not match';
+                msgEl.classList.add('visible');
+                return;
+            }
+            if (newPw === 'admin') {
+                msgEl.textContent = 'Cannot reuse the default password';
+                msgEl.classList.add('visible');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Updating...';
+            msgEl.classList.remove('visible');
+
+            try {
+                const res = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ current_password: 'admin', new_password: newPw }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    window.location.href = '/';
+                } else {
+                    msgEl.textContent = data.error || 'Update failed';
+                    msgEl.classList.add('visible');
+                    btn.disabled = false;
+                    btn.textContent = 'Set Password & Continue';
+                }
+            } catch (err) {
+                msgEl.textContent = 'Connection error — try again';
+                msgEl.classList.add('visible');
+                btn.disabled = false;
+                btn.textContent = 'Set Password & Continue';
+            }
+        }
+    </script>
+</body>
+
+</html>

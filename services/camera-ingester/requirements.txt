@@ -1,0 +1,11 @@
+# services/camera-ingester/requirements.txt
+#
+# Dependencies for the camera ingester service.
+# Keep this minimal — the ingester only reads RTSP and publishes to Redis.
+
+# OpenCV headless — no GUI needed in a Docker container.
+# We only use it for RTSP capture and JPEG encoding.
+opencv-python-headless==4.10.0.84
+
+# Redis client for publishing frames to Redis Streams.
+redis==5.2.1

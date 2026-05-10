@@ -1,0 +1,14 @@
+# Auto-provision dashboards from JSON files on disk.
+# Grafana reads this on first boot and imports all JSON files from the path below.
+apiVersion: 1
+
+providers:
+  - name: "Vision Labs"
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

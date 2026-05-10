@@ -1,0 +1,58 @@
+# docker-compose.qnap.yml — QNAP NAS overlay
+#
+# Use this override when QNAP is online and configured to attach the seven
+# qnap-* volumes as CIFS/SMB mounts instead of local Docker volumes.
+#
+# USAGE:
+#   docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
+#
+# Requires .env to have QNAP_IP, QNAP_USER, QNAP_PASSWORD set, and the QNAP
+# itself to have a "vision-labs" share with these subfolders:
+#   snapshots/  recordings/  events/  telegram/  generations/  videos/  clips/
+#
+# When this overlay is active, --profile nas also brings up the recorder
+# service which depends on qnap-recordings.
+
+volumes:
+  qnap-snapshots:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${QNAP_IP}/vision-labs/snapshots
+      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
+  qnap-recordings:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${QNAP_IP}/vision-labs/recordings
+      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
+  qnap-events:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${QNAP_IP}/vision-labs/events
+      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
+  qnap-telegram:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${QNAP_IP}/vision-labs/telegram
+      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
+  qnap-generations:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${QNAP_IP}/vision-labs/generations
+      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
+  qnap-videos:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${QNAP_IP}/vision-labs/videos
+      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
+  qnap-clips:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${QNAP_IP}/vision-labs/clips
+      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"

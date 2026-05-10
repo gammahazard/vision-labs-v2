@@ -1,0 +1,334 @@
+/* ─── monitoring.css — Styles for the System Monitor page ─── */
+
+/* ─── Page Layout ─── */
+.monitoring-page {
+    background: var(--bg-primary, #0a0f1a);
+    min-height: 100vh;
+}
+
+.mon-page {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem;
+}
+
+/* ─── Header ─── */
+.mon-header {
+    margin-bottom: 1.5rem;
+}
+
+.mon-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.mon-header h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin: 0;
+}
+
+.mon-header h1 span {
+    font-size: 1.3rem;
+    margin-right: 0.4rem;
+}
+
+.mon-subtitle {
+    color: #94a3b8;
+    font-size: 0.85rem;
+    margin-top: 0.35rem;
+    margin-bottom: 0;
+}
+
+.mon-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.mon-refresh-btn {
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    border: 1px solid #374151;
+    background: rgba(255, 255, 255, 0.04);
+    color: #94a3b8;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+
+.mon-refresh-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: #4b5563;
+    color: #e2e8f0;
+}
+
+.mon-grafana-link {
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: #818cf8;
+    font-size: 0.82rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.15s ease;
+}
+
+.mon-grafana-link:hover {
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+}
+
+/* ─── Health Summary Cards ─── */
+.mon-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.mon-card {
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    transition: all 0.2s ease;
+}
+
+.mon-card:hover {
+    border-color: #334155;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 1));
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.mon-card-icon {
+    font-size: 1.6rem;
+    flex-shrink: 0;
+}
+
+.mon-card-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.mon-card-value {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #f1f5f9;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+}
+
+.mon-card-label {
+    font-size: 0.72rem;
+    color: #64748b;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 0.15rem;
+}
+
+/* Card semantic colors */
+.mon-card--ok .mon-card-value {
+    color: #4ade80;
+}
+
+.mon-card--warn .mon-card-value {
+    color: #fbbf24;
+}
+
+.mon-card--danger .mon-card-value {
+    color: #f87171;
+}
+
+/* ─── Grafana Iframe Container ─── */
+.mon-iframe-container {
+    background: #1a2235;
+    border: 1px solid #2d3748;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.mon-iframe-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 1rem;
+    background: rgba(15, 23, 42, 0.6);
+    border-bottom: 1px solid #2d3748;
+}
+
+.mon-iframe-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+.mon-iframe-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.mon-time-select {
+    padding: 0.3rem 0.6rem;
+    background: #0f172a;
+    border: 1px solid #374151;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.mon-time-select:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.mon-iframe-expand-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    border: 1px solid #374151;
+    background: rgba(255, 255, 255, 0.04);
+    color: #94a3b8;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.mon-iframe-expand-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: #4b5563;
+    color: #e2e8f0;
+}
+
+.mon-iframe-wrapper {
+    position: relative;
+    width: 100%;
+    height: 700px;
+}
+
+.mon-iframe-wrapper iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #0a0f1a;
+}
+
+/* Fullscreen mode */
+.mon-iframe-wrapper.mon-fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 9999;
+    background: #0a0f1a;
+    border-radius: 0;
+}
+
+/* Loading overlay */
+.mon-iframe-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    background: rgba(10, 15, 26, 0.95);
+    color: #94a3b8;
+    font-size: 0.9rem;
+    z-index: 2;
+    transition: opacity 0.3s ease;
+}
+
+.mon-iframe-loading.mon-hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.mon-iframe-hint {
+    font-size: 0.78rem;
+    color: #475569;
+    margin-top: 0.25rem;
+}
+
+.mon-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(99, 102, 241, 0.2);
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: monSpin 0.8s linear infinite;
+}
+
+@keyframes monSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 768px) {
+    .mon-page {
+        padding: 1rem 0.75rem;
+    }
+
+    .mon-cards {
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.5rem;
+    }
+
+    .mon-card {
+        padding: 0.75rem;
+    }
+
+    .mon-card-icon {
+        font-size: 1.3rem;
+    }
+
+    .mon-card-value {
+        font-size: 1.1rem;
+    }
+
+    .mon-iframe-wrapper {
+        height: 500px;
+    }
+
+    .mon-title-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 480px) {
+    .mon-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .mon-iframe-wrapper {
+        height: 400px;
+    }
+}

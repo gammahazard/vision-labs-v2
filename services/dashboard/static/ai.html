@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision Labs — AI Assistant</title>
+    <meta name="description" content="AI-powered security assistant for Vision Labs">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="ai.css">
+    <link rel="stylesheet" href="generate.css">
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body class="ai-page">
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="navbar-left">
+            <a href="/" class="navbar-brand">
+                <span class="navbar-logo">◉</span> Vision Labs
+            </a>
+            <div class="navbar-links">
+                <a href="/" class="nav-link">🏠 Home</a>
+                <a href="/ai.html" class="nav-link nav-link--active">🤖 AI</a>
+                <a href="/telegram.html" class="nav-link">🔐 Telegram</a>
+                <a href="/monitoring.html" class="nav-link">📊 Monitoring</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Onboarding Wizard (shown when AI not enabled) -->
+    <div id="wizardContainer" class="wizard-container" style="display: none;">
+        <!-- Step 1: Welcome -->
+        <div id="wizardStep1" class="wizard-card">
+            <span class="wizard-icon">🤖</span>
+            <h2>AI Assistant</h2>
+            <p>
+                Activate your personal AI assistant. It runs entirely on your hardware —
+                no data ever leaves this machine. Ask about security events, set reminders,
+                or just chat.
+            </p>
+            <div class="wizard-actions">
+                <button class="btn-primary" onclick="wizardNext(2)">Enable AI Assistant</button>
+            </div>
+        </div>
+
+        <!-- Step 2: User name -->
+        <div id="wizardStep2" class="wizard-card" style="display: none;">
+            <span class="wizard-icon">👋</span>
+            <h2>What should I call you?</h2>
+            <p>Give me a name to use, or skip and I'll just say "hey".</p>
+            <input type="text" class="wizard-input" id="userName" placeholder="Your name..." maxlength="30"
+                autocomplete="off">
+            <div class="wizard-actions">
+                <button class="btn-secondary" onclick="wizardNext(3)">Skip</button>
+                <button class="btn-primary" onclick="wizardNext(3)">Continue</button>
+            </div>
+        </div>
+
+        <!-- Step 3: AI name -->
+        <div id="wizardStep3" class="wizard-card" style="display: none;">
+            <span class="wizard-icon">✨</span>
+            <h2>Name your assistant</h2>
+            <p>Pick a suggestion or type your own name for me.</p>
+            <div class="name-suggestions">
+                <button class="name-chip" onclick="selectAIName(this, 'Atlas')">Atlas</button>
+                <button class="name-chip" onclick="selectAIName(this, 'Sentinel')">Sentinel</button>
+                <button class="name-chip" onclick="selectAIName(this, 'Iris')">Iris</button>
+                <button class="name-chip" onclick="selectAIName(this, 'Nova')">Nova</button>
+                <button class="name-chip" onclick="selectAIName(this, 'Sage')">Sage</button>
+            </div>
+            <input type="text" class="wizard-input" id="aiName" placeholder="Or type a custom name..." maxlength="30"
+                autocomplete="off">
+            <div class="wizard-actions">
+                <button class="btn-secondary" onclick="wizardNext(2)">Back</button>
+                <button class="btn-primary" onclick="finishWizard()">Activate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Interface (shown when AI is enabled) -->
+    <div id="chatContainer" class="chat-container" style="display: none;">
+        <!-- Chat header -->
+        <div class="chat-header">
+            <div class="ai-avatar" id="aiAvatar">🤖</div>
+            <div class="chat-header-info">
+                <h3 id="aiNameDisplay">Atlas</h3>
+                <span>Local AI · Qwen 3 14B</span>
+            </div>
+            <div class="chat-header-actions">
+                <button class="chat-settings-btn" onclick="resetAssistant()" title="Reset AI Assistant">⚙️</button>
+                <div class="chat-status-dot"></div>
+            </div>
+        </div>
+
+        <!-- Model Tabs -->
+        <div class="model-tabs">
+            <button class="model-tab model-tab--active" data-tab="chat" onclick="switchModelTab('chat')">
+                <span class="model-tab-icon">💬</span> Qwen 3 Chat
+            </button>
+            <button class="model-tab" data-tab="vision" onclick="switchModelTab('vision')">
+                <span class="model-tab-icon">👁️</span> MiniCPM-V Vision
+                <span class="vision-status-dot" id="visionStatusDot" title="Checking..."></span>
+            </button>
+            <button class="model-tab" data-tab="generate" onclick="switchModelTab('generate')">
+                <span class="model-tab-icon">🎨</span> Generate
+            </button>
+
+            <button class="model-tab" data-tab="recordings" onclick="switchModelTab('recordings')">
+                <span class="model-tab-icon">📹</span> DVR
+            </button>
+        </div>
+
+        <!-- Tab: Qwen Chat -->
+        <div id="tabChat" class="tab-panel tab-panel--active">
+            <!-- Ollama loading overlay -->
+            <div id="ollamaOverlay" class="ollama-overlay" style="display: none;">
+                <div class="ollama-overlay-content">
+                    <div class="ollama-spinner"></div>
+                    <h3>Loading AI Model</h3>
+                    <p id="ollamaStatus">Connecting to Ollama...</p>
+                </div>
+            </div>
+
+            <!-- Error banner -->
+            <div class="ai-error" id="aiError"></div>
+
+            <!-- Messages -->
+            <div class="chat-messages" id="chatMessages">
+                <!-- Messages rendered by JS -->
+            </div>
+
+            <!-- Suggestion chips (shown when chat is empty) -->
+            <div class="suggestion-chips" id="suggestionChips">
+                <button class="suggestion-chip" onclick="useSuggestion(this)">📷 What's happening on camera?</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">👤 Show me enrolled faces</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">📊 How accurate are my alerts?</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">🧠 Retrain the alert model</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">⚙️ What's the system status?</button>
+            </div>
+
+            <!-- Input -->
+            <div class="chat-input-area">
+                <div class="chat-input-wrapper">
+                    <textarea id="chatInput" placeholder="Ask me anything..." rows="1" autofocus></textarea>
+                    <button id="sendBtn" onclick="sendMessage()" title="Send">↑</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: MiniCPM-V Vision -->
+        <div id="tabVision" class="tab-panel" style="display: none;">
+            <div class="vision-panel">
+                <!-- Model info bar -->
+                <div class="vision-info-bar">
+                    <div class="vision-model-info">
+                        <span class="vision-model-icon">👁️</span>
+                        <div>
+                            <strong>MiniCPM-V</strong>
+                            <span class="vision-model-desc">Multi-image and video understanding</span>
+                        </div>
+                    </div>
+                    <div class="vision-model-status" id="visionModelStatus">
+                        <span class="vision-status-indicator" id="visionStatusIndicator"></span>
+                        <span id="visionStatusText">Checking...</span>
+                    </div>
+                </div>
+
+                <!-- Drop zone -->
+                <div class="vision-drop-zone" id="visionDropZone">
+                    <div class="vision-drop-content" id="visionDropContent">
+                        <span class="vision-drop-icon">📸</span>
+                        <h3>Drop an image or video here</h3>
+                        <p>or click to browse — supports JPEG, PNG, WebP, MP4, WebM</p>
+                        <input type="file" id="visionFileInput" accept="image/*,video/mp4,video/webm,video/quicktime"
+                            style="display:none;">
+                    </div>
+                    <!-- Preview (shown after image selected) -->
+                    <div class="vision-preview" id="visionPreview" style="display:none;">
+                        <img id="visionPreviewImg" alt="Preview">
+                        <button class="vision-clear-btn" onclick="clearVisionImage()" title="Clear">✕</button>
+                    </div>
+                    <!-- Video preview -->
+                    <div class="vision-video-preview" id="visionVideoPreview" style="display:none;">
+                        <video id="visionPreviewVideo" controls muted></video>
+                        <div class="vision-frame-badge" id="visionFrameBadge"></div>
+                        <button class="vision-clear-btn" onclick="clearVisionImage()" title="Clear">✕</button>
+                    </div>
+                </div>
+
+                <!-- Prompt input -->
+                <div class="vision-prompt-area">
+                    <div class="vision-prompt-wrapper">
+                        <textarea id="visionPrompt" placeholder="Describe this image in detail..." rows="2"></textarea>
+                        <button id="visionAnalyzeBtn" onclick="analyzeVisionImage()" title="Analyze" disabled>
+                            <span class="vision-analyze-icon">🔍</span> Analyze
+                        </button>
+                    </div>
+                    <div class="vision-preset-prompts">
+                        <button class="vision-preset" onclick="setVisionPrompt(this)">📋 Describe everything</button>
+                        <button class="vision-preset" onclick="setVisionPrompt(this)">👤 Describe people</button>
+                        <button class="vision-preset" onclick="setVisionPrompt(this)">🚗 Describe vehicles</button>
+                        <button class="vision-preset" onclick="setVisionPrompt(this)">📝 Read all text</button>
+                        <button class="vision-preset" onclick="setVisionPrompt(this)">⚠️ Security analysis</button>
+                    </div>
+                </div>
+
+                <!-- Results -->
+                <div class="vision-results" id="visionResults" style="display:none;">
+                    <div class="vision-results-header">
+                        <span>🤖 Analysis Result</span>
+                        <button class="vision-copy-btn" onclick="copyVisionResult()" title="Copy">📋</button>
+                    </div>
+                    <div class="vision-results-text" id="visionResultsText"></div>
+                </div>
+
+                <!-- Loading -->
+                <div class="vision-loading" id="visionLoading" style="display:none;">
+                    <div class="vision-loading-spinner"></div>
+                    <span>Analyzing image...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Image Generation -->
+        <div id="tabGenerate" class="tab-panel" style="display: none;">
+            <div class="generate-panel">
+                <!-- Status bar -->
+                <div class="generate-status-bar">
+                    <div class="status-left">
+                        <span class="status-icon">🎨</span>
+                        <div class="status-label">
+                            <strong>ComfyUI Image Generator</strong>
+                            <span>Local Stable Diffusion / Flux</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <button class="vram-toggle-btn" id="vramToggleBtn" onclick="toggleVram()">⚡ Free VRAM</button>
+                        <span class="generate-status-dot" id="genStatusDot"></span>
+                        <span id="genStatusText" style="color:#71717a;font-size:0.82em;">Checking...</span>
+                    </div>
+                </div>
+                <div class="vram-warning" id="vramWarning" style="display:none;">
+                    ⚠️ AI Chat is unloaded to free VRAM for image generation. Click "Restore AI Chat" when done.
+                </div>
+
+                <!-- Controls -->
+                <div class="generate-controls">
+                    <div class="generate-control-group">
+                        <label>Model</label>
+                        <select id="genModel">
+                            <option>Loading...</option>
+                        </select>
+                    </div>
+                    <div class="generate-control-group">
+                        <label>Batch Count</label>
+                        <select id="genBatch">
+                            <option value="1">1 image</option>
+                            <option value="2">2 images</option>
+                            <option value="3">3 images</option>
+                            <option value="4">4 images</option>
+                            <option value="8">8 images</option>
+                            <option value="16">16 images</option>
+                            <option value="32">32 images</option>
+                            <option value="50">50 images</option>
+                            <option value="100">100 images</option>
+                        </select>
+                    </div>
+                    <div class="generate-control-group">
+                        <label>Dimensions</label>
+                        <div class="dimension-presets">
+                            <button class="dimension-preset" data-dim="512x512">512²</button>
+                            <button class="dimension-preset" data-dim="768x768">768²</button>
+                            <button class="dimension-preset active" data-dim="1024x1024">1024²</button>
+                            <button class="dimension-preset" data-dim="1280x1280">1280²</button>
+                            <button class="dimension-preset" data-dim="1536x1536">1536²</button>
+                            <button class="dimension-preset" data-dim="1024x768">1024×768</button>
+                            <button class="dimension-preset" data-dim="768x1024">768×1024</button>
+                            <button class="dimension-preset" data-dim="832x1216">832×1216</button>
+                            <button class="dimension-preset" data-dim="1216x832">1216×832</button>
+                            <button class="dimension-preset" data-dim="1344x768">1344×768</button>
+                            <button class="dimension-preset" data-dim="1920x1080">1920×1080</button>
+                            <button class="dimension-preset" data-dim="1080x1920">1080×1920</button>
+                        </div>
+                    </div>
+                    <div class="generate-control-group">
+                        <label>Seed</label>
+                        <div class="seed-input-row">
+                            <input type="number" id="genSeed" value="-1" min="-1">
+                            <button class="seed-random-btn" id="genSeedRandom" title="Random">🎲</button>
+                        </div>
+                    </div>
+                    <div class="generate-control-group">
+                        <label>Steps</label>
+                        <div class="generate-range-row">
+                            <input type="range" id="genSteps" min="1" max="50" value="20">
+                            <span class="generate-range-value" id="genStepsValue">20</span>
+                        </div>
+                    </div>
+                    <div class="generate-control-group">
+                        <label>CFG Scale</label>
+                        <div class="generate-range-row">
+                            <input type="range" id="genCfg" min="1" max="20" step="0.5" value="7">
+                            <span class="generate-range-value" id="genCfgValue">7.0</span>
+                        </div>
+                    </div>
+                    <!-- LoRA row -->
+                    <div class="generate-lora-group">
+                        <div class="generate-control-group">
+                            <label>LoRA</label>
+                            <select id="genLora">
+                                <option value="">None</option>
+                            </select>
+                        </div>
+                        <div class="generate-control-group">
+                            <label>LoRA Strength</label>
+                            <div class="generate-range-row">
+                                <input type="range" id="genLoraStrength" min="0" max="1" step="0.05" value="0.80">
+                                <span class="generate-range-value" id="genLoraStrengthValue">0.80</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- img2img Upload -->
+                <div class="generate-img2img-section">
+                    <div class="img2img-dropzone" id="img2imgDropzone">
+                        <input type="file" id="img2imgFile" accept="image/*" style="display:none"
+                            onchange="window._genImg2imgSelected(this)">
+                        <div class="img2img-placeholder" id="img2imgPlaceholder"
+                            onclick="document.getElementById('img2imgFile').click()">
+                            <span class="img2img-icon">📷</span>
+                            <span>Drop an image here or click to upload</span>
+                            <span class="img2img-hint">Optional — generates variations of your image</span>
+                        </div>
+                        <div class="img2img-preview" id="img2imgPreview" style="display:none;">
+                            <img id="img2imgThumb" src="" alt="Source">
+                            <div class="img2img-preview-info">
+                                <span id="img2imgName">image.png</span>
+                                <button class="img2img-clear-btn" onclick="window._genImg2imgClear()">✕ Clear</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="generate-control-group img2img-denoise-group" id="img2imgDenoiseGroup"
+                        style="display:none;">
+                        <label>Denoise Strength <span style="color:#71717a;font-weight:400">(lower = more
+                                similar)</span></label>
+                        <div class="generate-range-row">
+                            <input type="range" id="genDenoise" min="0.1" max="1.0" step="0.05" value="0.65">
+                            <span class="generate-range-value" id="genDenoiseValue">0.65</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prompt -->
+                <div class="generate-prompt-area">
+                    <div class="generate-prompt-wrapper">
+                        <textarea id="genPrompt" placeholder="Describe the image you want to create..."></textarea>
+                    </div>
+                    <div class="generate-prompt-wrapper generate-negative-wrapper">
+                        <textarea id="genNegative"
+                            placeholder="Negative prompt (what to avoid)...">ugly, blurry, low quality, deformed, watermark, text</textarea>
+                    </div>
+                </div>
+
+                <!-- Generate + Gallery buttons -->
+                <div class="generate-actions-row">
+                    <button class="generate-btn" id="generateBtn" onclick="generateImage()" disabled>
+                        <span>🎨</span> Generate
+                    </button>
+                    <button class="generate-cancel-btn" id="genCancelBtn" onclick="window._genCancel()"
+                        style="display:none">
+                        ✕ Cancel
+                    </button>
+                    <button class="gallery-btn sweep-btn" id="sweepToggleBtn" onclick="window._genToggleSweep()"
+                        disabled>
+                        🧪 Sweep
+                    </button>
+                    <button class="gallery-btn" onclick="toggleGallery()">
+                        📂 Gallery
+                    </button>
+                    <button class="gallery-btn prompt-history-btn" onclick="window._genShowHistory()">
+                        📜 Prompt History
+                    </button>
+                </div>
+
+                <!-- Sweep Config Panel -->
+                <div class="sweep-panel" id="sweepPanel" style="display:none;">
+                    <div class="sweep-panel-header">
+                        <span>🧪 Parameter Sweep</span>
+                        <span class="sweep-panel-hint">Auto-vary settings to compare results</span>
+                    </div>
+                    <div class="sweep-params">
+                        <div class="sweep-param-row">
+                            <label class="sweep-checkbox">
+                                <input type="checkbox" id="sweepStepsEnabled" checked>
+                                <span>Steps</span>
+                            </label>
+                            <input type="text" id="sweepStepsValues" class="sweep-values-input" value="10, 20, 30, 40"
+                                placeholder="e.g. 10, 20, 30">
+                        </div>
+                        <div class="sweep-param-row">
+                            <label class="sweep-checkbox">
+                                <input type="checkbox" id="sweepCfgEnabled" checked>
+                                <span>CFG Scale</span>
+                            </label>
+                            <input type="text" id="sweepCfgValues" class="sweep-values-input" value="3, 5, 7, 9"
+                                placeholder="e.g. 3, 5, 7, 9">
+                        </div>
+                        <div class="sweep-param-row">
+                            <label class="sweep-checkbox">
+                                <input type="checkbox" id="sweepLoraEnabled">
+                                <span>LoRA Strength</span>
+                            </label>
+                            <select id="sweepLoraSelect" class="sweep-lora-select">
+                                <option value="">(use main selection)</option>
+                            </select>
+                            <input type="text" id="sweepLoraValues" class="sweep-values-input" value="0, 0.4, 0.8"
+                                placeholder="e.g. 0, 0.4, 0.8 (0=off)">
+                        </div>
+                    </div>
+                    <div class="sweep-footer">
+                        <span class="sweep-combo-count" id="sweepComboCount">16 combinations</span>
+                        <div class="sweep-batch-group">
+                            <label for="sweepBatchCount">Images per combo:</label>
+                            <input type="number" id="sweepBatchCount" min="1" max="4" value="1"
+                                class="sweep-batch-input">
+                        </div>
+                        <div class="sweep-batch-group">
+                            <label class="video-checkbox-label" style="padding-top:0;">
+                                <input type="checkbox" id="sweepRandomSeed"> Random seed per combo
+                            </label>
+                        </div>
+                        <button class="generate-btn sweep-run-btn" id="sweepRunBtn" onclick="window._genRunSweep()"
+                            disabled>▶
+                            Run Sweep</button>
+                    </div>
+
+                </div>
+
+                <!-- Output -->
+                <div class="generate-output" id="genOutput">
+                    <div class="generate-output-placeholder">
+                        <span class="placeholder-icon">🎨</span>
+                        <span>Your generated images will appear here</span>
+                    </div>
+                </div>
+
+                <!-- Prompt History Modal -->
+                <div class="prompt-history-overlay" id="promptHistoryModal" style="display:none;"
+                    onclick="window._genCloseHistory(event)">
+                    <div class="prompt-history-modal">
+                        <div class="prompt-history-header">
+                            <span>📜 Prompt History</span>
+                            <div>
+                                <button class="prompt-history-clear-btn" onclick="window._genClearHistory()">Clear
+                                    All</button>
+                                <button class="prompt-history-close-btn" onclick="window._genCloseHistory()">✕</button>
+                            </div>
+                        </div>
+                        <div class="prompt-history-list" id="promptHistoryList">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+
+
+
+
+        <!-- Tab: DVR Recordings -->
+        <div id="tabRecordings" class="tab-panel" style="display: none;">
+            <div class="video-section">
+                <h3 style="margin:0 0 12px; color:var(--text-primary,#e0e0e0); font-size:1.1em;">📹 DVR Recordings</h3>
+                <div class="video-controls" style="margin-bottom:12px;">
+                    <div class="video-control-group">
+                        <label>Date</label>
+                        <select id="recDatePicker" onchange="window._loadRecSegments(this.value)">
+                            <option value="">Loading dates...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Segment Grid -->
+                <div id="recSegmentGrid"
+                    style="display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:8px; margin-bottom:16px;">
+                    <div style="color:var(--text-secondary,#888); grid-column:1/-1; text-align:center; padding:20px;">
+                        Select a date to view recordings</div>
+                </div>
+
+                <!-- Video Player -->
+                <div id="recPlayerWrap" style="display:none; margin-top:12px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <span id="recPlayerLabel" style="color:var(--text-primary,#e0e0e0); font-weight:600;"></span>
+                        <button onclick="window._closeRecPlayer()"
+                            style="background:none; border:1px solid var(--border,#444); color:var(--text-secondary,#aaa); border-radius:4px; padding:2px 10px; cursor:pointer;">✕
+                            Close</button>
+                    </div>
+                    <video id="recPlayer" controls
+                        style="width:100%; max-height:500px; border-radius:8px; background:#000;"></video>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gallery Modal -->
+    <div class="gallery-modal-overlay" id="galleryModal" style="display:none;">
+        <div class="gallery-modal">
+            <div class="gallery-modal-header">
+                <span class="gallery-modal-title">📸 Generation Gallery</span>
+                <div class="gallery-modal-actions">
+                    <span id="galleryCount" class="gallery-count"></span>
+                    <button class="gallery-modal-close" onclick="window._genCloseGallery()">✕</button>
+                </div>
+            </div>
+            <div class="gallery-modal-body" id="galleryModalBody"></div>
+            <div class="gallery-modal-footer" id="galleryModalFooter" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Lightbox Modal (full-size image viewer) -->
+    <div class="lightbox-overlay" id="lightboxModal" style="display:none;" onclick="window._closeLightbox(event)">
+        <button class="lightbox-close" onclick="window._closeLightbox()">✕</button>
+        <button class="lightbox-nav lightbox-prev" id="lightboxPrev"
+            onclick="event.stopPropagation(); window._lightboxNav(-1)">‹</button>
+        <img class="lightbox-img" id="lightboxImg" src="" alt="">
+        <button class="lightbox-nav lightbox-next" id="lightboxNext"
+            onclick="event.stopPropagation(); window._lightboxNav(1)">›</button>
+        <div class="lightbox-info" id="lightboxInfo"></div>
+        <div class="lightbox-counter" id="lightboxCounter"></div>
+    </div>
+
+
+    <!-- Clip Gallery Modal -->
+    <div class="gallery-modal-overlay" id="clipGalleryModal" style="display:none;"
+        onclick="if(event.target===this)window._closeClipGallery()">
+        <div class="gallery-modal">
+            <div class="gallery-modal-header">
+                <span class="gallery-modal-title">🎬 Clip Gallery</span>
+                <div class="gallery-modal-actions">
+                    <span id="clipGalleryCount" class="gallery-count"></span>
+                    <button class="gallery-modal-close" onclick="window._closeClipGallery()">✕</button>
+                </div>
+            </div>
+            <div class="gallery-modal-body" id="clipGalleryBody"></div>
+            <div class="gallery-modal-footer" id="clipGalleryFooter" style="display:none;"></div>
+        </div>
+    </div>
+
+    <script src="ai.js"></script>
+    <script src="generate.js"></script>
+
+</body>
+
+</html>

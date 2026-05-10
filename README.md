@@ -1,0 +1,304 @@
+# Vision Labs — AI-Powered Security Camera System
+
+> **Real hardware. Real-time inference. Fully self-hosted.**
+
+A self-hosted security platform that processes a live RTSP camera feed through multiple AI models in real-time. Person detection, face recognition, vehicle tracking, and intelligent notifications — all running locally via Docker Compose with zero cloud dependencies.
+
+Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubuntu 24.04 inside WSL2 on Windows. Single-GPU works fine too; the compose file pins GPUs by device_id and is easy to flatten.
+
+---
+
+## What It Does
+
+| Feature | Details |
+|---------|---------|
+| **Person detection** | YOLOv8s-pose detects people with keypoint-based action classification (standing, sitting, crouching, lying) |
+| **Face recognition** | InsightFace identifies known people — names stick to bounding boxes even when they turn away |
+| **Vehicle tracking** | YOLOv8s detects cars, trucks, buses, motorcycles with idle timer alerts |
+| **Telegram notifications** | Real-time photo alerts with AI scene descriptions, broadcast to all approved users |
+| **AI assistant** | Qwen 3 14B local LLM with 18 tool functions — query events, send alerts, capture snapshots, set reminders |
+| **Vision analysis** | MiniCPM-V multimodal model analyzes camera snapshots and user-uploaded images |
+| **Image generation** | ComfyUI + SDXL for on-device txt2img/img2img with LoRA support, batch generation, gallery |
+| **DVR recording** | ffmpeg-copy 1-hour `.ts` segments with rolling retention. Profile-gated; requires QNAP NAS to enable |
+| **Zone management** | Draw detection/alert/dead zones on the camera view — configurable per time-of-day |
+| **Local retention** | Daily prune of `/data/snapshots` and `/data/events` (default 4 days, configurable). Disabled by setting `SNAPSHOT_RETENTION_DAYS=0` |
+| **System monitoring** | Prometheus + Grafana dashboards with GPU, Redis, and inference metrics |
+
+---
+
+## Architecture
+
+```
+Camera (RTSP)
+    │
+    ▼
+Ingester ──▶ Redis Streams ──▶ YOLO Pose Detector ──▶ Tracker ──▶ Events
+                            ──▶ YOLO Vehicle Detector ────────────^
+                            ──▶ InsightFace ──▶ Face Identity
+                            ──▶ Dashboard (WebSocket ──▶ Browser)
+
+Events ──▶ Notification Poller ──▶ Telegram Bot API
+       ──▶ Event Journal (JSONL — local /data/events, or QNAP if enabled)
+
+Ollama (Qwen 3 14B + MiniCPM-V) ◀──▶ Dashboard AI Chat
+ComfyUI (SDXL) ◀──▶ Dashboard Image Generation
+Recorder (profile-gated) ──▶ DVR segments on QNAP NAS ──▶ Dashboard Playback
+Portainer ◀──▶ https://localhost:9443 (Docker management UI)
+```
+
+### Services
+
+| Service | GPU | Purpose |
+|---------|:---:|---------|
+| **redis** | — | Central message bus — all inter-service communication via Redis Streams |
+| **camera-ingester** | — | Reads RTSP sub-stream + main stream, publishes JPEG frames to Redis. Hot-reloads `target_fps` from Redis config |
+| **pose-detector** | ✅ GPU 0 (5070 Ti) | YOLOv8s-pose inference (~44ms), publishes person bounding boxes + keypoints. Pauses on `gpu:generation_active` |
+| **vehicle-detector** | ✅ GPU 0 (5070 Ti) | YOLOv8s inference, publishes vehicle bounding boxes (car/truck/bus/motorcycle) |
+| **tracker** | — | IoU matching across frames, assigns persistent IDs, publishes semantic events |
+| **face-recognizer** | ✅ GPU 0 (5070 Ti) | InsightFace embedding + SQLite enrollment DB, publishes identity matches. **Port not exposed on host** — access via dashboard proxy at `/api/faces` |
+| **dashboard** | — | FastAPI backend + static frontend — WebSocket live view (authenticated), REST APIs, background pollers, retention prune |
+| **ollama** | ✅ GPU 1 (3090) | Local LLM server — Qwen 3 14B (chat + tools) and MiniCPM-V (vision) |
+| **comfyui** | ✅ GPU 1 (3090) | Stable Diffusion inference — SDXL txt2img/img2img with LoRA support |
+| **recorder** | — | ffmpeg RTSP→`.ts` copy (no transcode), 1-hour segments. **Profile-gated** — only runs with `--profile nas` |
+| **prometheus** | — | Metrics collection (GPU, Redis, inference timing) |
+| **grafana** | — | Monitoring dashboards embedded in the system monitor page |
+| **redis-exporter** | — | Exports Redis metrics to Prometheus |
+| **dcgm-exporter** | ✅ both | Exports NVIDIA GPU metrics to Prometheus |
+| **portainer** | — | Web UI for managing the Docker stack at `https://localhost:9443` |
+
+**GPU split** (configurable in `docker-compose.yml`): the always-on detector trio runs on GPU 0; the heavy on-demand workloads (Ollama, ComfyUI) get GPU 1's headroom. Verify the device_ids match `nvidia-smi -L` output if you have a different physical layout.
+
+---
+
+## Requirements
+
+- **NVIDIA GPU(s)** with driver supporting CUDA 12.8 (R555+). Tested on RTX 5070 Ti (Blackwell sm_120) + RTX 3090 (Ampere sm_86)
+- **Docker Engine inside WSL2** (Ubuntu 24.04 recommended) — NOT Docker Desktop. See [MANUAL_SETUP.md](MANUAL_SETUP.md) for the install steps
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) configured for Docker
+- **RTSP-capable IP camera** (tested with Reolink RLC-1240A over PoE)
+- **QNAP NAS** (optional — only needed for DVR + persistent NAS storage)
+
+### Setup (short version — see MANUAL_SETUP.md for the full walkthrough)
+
+```bash
+# 1. Move into WSL2 ext4 (not /mnt/c — bind mounts on 9p are dramatically slower)
+mkdir -p ~/projects && cd ~/projects
+git clone <repo> vision-labs && cd vision-labs
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your camera IP, credentials, Telegram bot token, etc.
+
+# 3. Verify GPU passthrough into a container
+docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
+# Should list all your GPUs
+
+# 4. Build and run
+docker compose build               # ~15-30 min on first build (ComfyUI is the slow one)
+docker compose up                  # without NAS
+# OR
+docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
+                                   # with NAS (enables the recorder service)
+
+# 5. Browse
+# Dashboard:   http://localhost:8080   (admin/admin on first run — you'll be forced to set a new password)
+# Portainer:   https://localhost:9443  (first visit creates admin user)
+# Grafana:     http://localhost:3000
+# Prometheus:  http://localhost:9090
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|:--------:|-------------|
+| `CAMERA_IP` | Yes | IP address of the RTSP camera |
+| `CAMERA_USER` | Yes | Camera login username |
+| `CAMERA_PASSWORD` | Yes | Camera login password |
+| `RTSP_MAIN` | Auto | Built from CAMERA_* in `.env`; HD main stream URL |
+| `RTSP_SUB` | Auto | Built from CAMERA_* in `.env`; SD sub-stream URL |
+| `TARGET_FPS` | No | Ingester sub-stream target FPS (default 15; **Redis config `target_fps` overrides this dynamically**) |
+| `HD_TARGET_FPS` | No | HD main-stream update rate to Redis (default 8) |
+| `JPEG_QUALITY` | No | Sub-stream JPEG quality 1-100 (default 75) |
+| `HD_JPEG_QUALITY` | No | HD JPEG quality 1-100 (default 70 — 4K encoding is CPU-heavy) |
+| `MAX_STREAM_LEN` | No | Max frames in `frames:*` Redis stream (default 1000) |
+| `SNAPSHOT_RETENTION_DAYS` | No | Local prune of `/data/snapshots` + `/data/events` (default 4; set 0 to disable) |
+| `TELEGRAM_BOT_TOKEN` | No | Telegram bot token for notifications and commands |
+| `TELEGRAM_CHAT_ID` | No | Default Telegram chat ID for alerts |
+| `TELEGRAM_ALLOWED_USERS` | No | Comma-separated Telegram user IDs allowed to use the bot |
+| `OPENWEATHER_API_KEY` | No | OpenWeatherMap API key for the conditions panel |
+| `LOCATION_NAME` | No | Location label shown in dashboard |
+| `LOCATION_REGION` | No | Region/state label (for astral library lookup) |
+| `LOCATION_LAT` | No | Latitude for sunrise/sunset (default Toronto) |
+| `LOCATION_LON` | No | Longitude for sunrise/sunset (default Toronto) |
+| `LOCATION_TIMEZONE` | No | IANA timezone (default: `America/Toronto`) |
+| `QNAP_ENABLED` | No | Set `true` to layer in the NAS profile (informational; the profile flag is what actually enables it) |
+| `QNAP_IP` | No | QNAP NAS IP for CIFS volume mounts (used when `--profile nas`) |
+| `QNAP_USER` | No | QNAP login username |
+| `QNAP_PASSWORD` | No | QNAP login password |
+
+---
+
+## Dashboard Pages
+
+### Live View (`index.html`)
+The main page — shows the live camera feed with real-time overlays:
+- **Bounding boxes**: cyan for identified people, green for unknown, orange for vehicles
+- **Face labels**: recognized names displayed on bounding boxes with sticky identity (persists when face turns away)
+- **Action labels**: classified poses (standing, sitting, crouching, lying)
+- **Zone overlays**: drawn zones with color-coded alert levels
+- **Settings panel**: adjustable confidence threshold, IoU, lost timeout, vehicle confidence, idle timeout, notification toggles
+- **Event feed**: real-time detection events with inline snapshot photos
+- **Zone editor**: draw/edit/delete detection zones with per-time-period alert rules
+- **Face enrollment**: capture and label known people for recognition
+- **Browse panel**: vehicle snapshots organized by day + enrolled faces gallery
+- **Conditions panel**: current time period, sunrise/sunset, live weather
+
+### AI Assistant (`ai.html`)
+Three-tab interface:
+- **Chat tab**: conversational AI assistant (Qwen 3 14B) with 18 tool functions
+- **Vision tab**: upload images or capture live frames for MiniCPM-V analysis
+- **DVR tab**: browse and play back recorded camera footage by date/segment (requires QNAP profile)
+
+### Image Generation (`ai.html` — Generate tab)
+ComfyUI-powered. Drop SDXL `.safetensors` files into `models/comfyui/checkpoints/` to enable — none are auto-downloaded.
+
+### System Monitor (`monitoring.html`)
+People count, inference time, GPU status, Redis memory cards, plus embedded Grafana dashboard with adjustable time range.
+
+### Telegram Access Manager (`telegram.html`)
+Approve/revoke bot users with role-based access (admin/user). Access log viewer for all incoming bot interactions.
+
+### Login (`login.html`)
+Session-based authentication with blurred camera background. **On first login with the default `admin/admin`, the UI forces a password rotation before letting you into the dashboard.**
+
+---
+
+## Telegram Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/snapshot` | Send a live camera photo with AI scene description |
+| `/clip [N]` | Capture and send a video clip (5-40 seconds, default 5) with AI analysis |
+| `/status` | System health summary — services, GPU, people count, uptime |
+| `/ask <question>` | Ask the Qwen 3 14B AI assistant directly |
+| `/arm` | Enable all notifications (admin only) |
+| `/disarm` | Disable all notifications (admin only) |
+| `/who` | Report who/what is currently in the camera frame |
+| `/events [N]` | Show recent detection events with snapshot images |
+| `/zones` | Snapshot with all zone overlays drawn |
+| `/rules` | Overview of time-of-day zone alert rules |
+| `/night` | Night override status |
+| `/faces` | List enrolled faces |
+| `/timelapse [YYYY-MM-DD]` | Build a day timelapse from snapshots |
+| `/analyze` | Analyze the live camera frame with MiniCPM-V |
+| `/help` | List available commands |
+| *Send a photo* | Analyze any user-sent photo with MiniCPM-V vision model |
+
+The bot is **authorized via `TELEGRAM_ALLOWED_USERS` env + dashboard Telegram Access Manager**. Unauthorized commands are silently dropped and logged. The Telegram update offset is persisted to Redis so dashboard restarts don't replay old commands.
+
+---
+
+## AI Assistant Tools (18)
+
+The Qwen 3 14B model has access to these function-calling tools:
+
+| Tool | What it does |
+|------|-------------|
+| `query_events` | Search recent security events by type |
+| `query_events_by_date` | Search events for a specific date range |
+| `query_event_patterns` | Analyze detection patterns and trends |
+| `query_faces` | List enrolled people and recognition stats |
+| `query_unknowns` | List unidentified face captures |
+| `query_zones` | List configured detection zones |
+| `query_notification_history` | Recent Telegram notification log |
+| `query_activity_heatmap` | Hourly detection frequency breakdown |
+| `browse_vehicles` | Browse vehicle snapshots by date |
+| `get_live_scene` | Describe what's currently in the camera frame |
+| `get_system_status` | System health and resource usage |
+| `get_weather` | Current weather conditions |
+| `capture_snapshot` | Take and send a camera snapshot |
+| `capture_clip` | Record and send a short video clip |
+| `send_telegram` | Send a message to Telegram |
+| `schedule_reminder` | Set a timed reminder |
+| `show_faces` | Display enrolled face photos inline |
+| `analyze_image` | Analyze a specific image with MiniCPM-V |
+
+---
+
+## Data Flow
+
+### Redis Streams (real-time pipeline)
+
+```
+frames:front_door             ← Ingester publishes JPEG frames (sub-stream)
+detections:pose:front_door    ← Pose detector publishes person bboxes + keypoints
+detections:vehicle:front_door ← Vehicle detector publishes vehicle bboxes + embedded frame
+events:front_door             ← Tracker publishes semantic events
+identities:front_door         ← Face recognizer publishes identity matches
+telegram:access_log           ← Bot commands: full audit trail of access attempts
+```
+
+### Redis Keys (state)
+
+```
+state:front_door                ← Tracker: current scene snapshot (who's in frame)
+identity_state:front_door       ← Face recognizer: currently recognized faces (cleared on empty scene)
+config:front_door               ← Dashboard: live config (thresholds, FPS, cooldowns) — hot-reloaded by services
+zones:front_door                ← Dashboard: zone definitions
+frame_hd:front_door             ← Ingester: latest HD frame, 5s TTL
+detection_frame:pose:front_door ← Pose detector: the exact frame current bboxes were computed from
+detection_frame:vehicle:*       ← Vehicle detector: same pattern
+gpu:generation_active           ← Dashboard: lock flag during image generation. Pose/vehicle/face-recognizer all pause when set
+gpu:generation_lock             ← Dashboard: mutex preventing concurrent generations. Cleared on dashboard startup
+telegram:users                  ← Dashboard: approved Telegram users
+telegram:last_offset            ← Dashboard: persisted Telegram update offset (so restart doesn't replay updates)
+person_snapshot:*               ← Tracker: detection-time frame captures (2h TTL)
+vehicle_snapshot:*              ← Tracker: vehicle detection snapshots (24h TTL)
+```
+
+### Storage Layout
+
+Without QNAP, all of `/data/*` is backed by local Docker volumes (data persists across container restarts, lives inside the WSL VM disk):
+
+```
+/data/snapshots/           ← Person + vehicle event snapshots (pruned by SNAPSHOT_RETENTION_DAYS)
+/data/snapshots/vehicles/  ← Vehicle snapshots organized by day
+/data/events/              ← Event journal (daily JSONL files, pruned)
+/data/telegram/            ← Per-user Telegram command audit trail
+/data/generations/         ← ComfyUI output images
+/data/clips/               ← Captured video clips
+/data/recordings/          ← DVR recordings (only populated when QNAP profile is on)
+/data/auth.db              ← Session/auth SQLite DB
+/data/ai.db                ← AI chat history SQLite DB
+/data/faces.db             ← InsightFace enrollments
+```
+
+With QNAP (`--profile nas` + override file), the seven CIFS-backed paths route to `//QNAP_IP/vision-labs/<subdir>` instead.
+
+---
+
+## Contracts
+
+Shared code lives in `contracts/` and is mounted read-only into every service:
+
+| File | Purpose |
+|------|---------|
+| `streams.py` | Redis stream/key name templates — single source of truth |
+| `actions.py` | Keypoint-based action classification (standing, sitting, crouching, lying, arms_raised) |
+| `time_rules.py` | Time period calculation (daytime/twilight/night/late_night), zone alert rules, point-in-polygon test |
+
+---
+
+## Security notes
+
+- WebSocket `/ws/live` is authenticated; cookie-less connections are closed with code 4401
+- Face-recognizer port 8081 is **not exposed on the host** — only reachable from inside the bridge net via the dashboard proxy at `/api/faces`
+- Default `admin/admin` credentials force a password change on first login
+- HTTP logging is set to WARNING for the `httpx` library so Telegram bot tokens don't leak into stdout
+- Local LAN deployment assumed — Prometheus `/metrics` and Grafana are accessible without auth (acceptable for `localhost`-only; do not port-forward 8080/3000/9090 without adding a reverse proxy + auth)
+
+---
+
+## License
+
+This project is for personal/educational use.

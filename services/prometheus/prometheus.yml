@@ -1,0 +1,32 @@
+# services/prometheus/prometheus.yml — Prometheus scrape configuration
+#
+# PURPOSE:
+#   Defines what endpoints Prometheus pulls metrics from.
+#   Scrapes the dashboard app, Redis exporter, and DCGM GPU exporter.
+#
+# NOTE:
+#   All services use network_mode: host, so we use localhost addresses.
+#
+# USAGE:
+#   Mounted into the Prometheus container by docker-compose.yml.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Dashboard application metrics (detections, events, GPU pause, notifications)
+  - job_name: "dashboard"
+    static_configs:
+      - targets: ["localhost:8080"]
+    metrics_path: "/metrics"
+
+  # Redis health metrics (memory, clients, commands/sec, stream lengths)
+  - job_name: "redis"
+    static_configs:
+      - targets: ["localhost:9121"]
+
+  # NVIDIA GPU metrics (VRAM usage, utilization, temperature, power)
+  - job_name: "gpu"
+    static_configs:
+      - targets: ["localhost:9400"]

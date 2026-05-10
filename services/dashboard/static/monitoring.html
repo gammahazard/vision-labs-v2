@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision Labs — System Monitor</title>
+    <meta name="description" content="Real-time system monitoring with Grafana dashboards for Vision Labs">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="monitoring.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body class="monitoring-page">
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="navbar-left">
+            <a href="/" class="navbar-brand">
+                <span class="navbar-logo">◉</span> Vision Labs
+            </a>
+            <div class="navbar-links">
+                <a href="/" class="nav-link">🏠 Home</a>
+                <a href="/ai.html" class="nav-link">🤖 AI</a>
+                <a href="/telegram.html" class="nav-link">🔐 Telegram</a>
+                <a href="/monitoring.html" class="nav-link nav-link--active">📊 Monitoring</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="mon-page">
+        <div class="mon-header">
+            <div class="mon-title-row">
+                <h1><span>📊</span> System Monitor</h1>
+                <div class="mon-header-actions">
+                    <button class="mon-refresh-btn" id="healthRefreshBtn" onclick="window._monRefreshHealth()"
+                        title="Refresh">↻ Refresh</button>
+                    <a id="grafanaDirectLink" href="http://localhost:3000" target="_blank" class="mon-grafana-link"
+                        title="Open Grafana in new tab">↗ Open Grafana</a>
+                </div>
+            </div>
+            <p class="mon-subtitle">Live system health and performance metrics powered by Prometheus + Grafana</p>
+        </div>
+
+        <!-- Health Summary Cards -->
+        <div class="mon-cards" id="monCards">
+            <div class="mon-card" id="cardPersons">
+                <span class="mon-card-icon">👤</span>
+                <div class="mon-card-body">
+                    <span class="mon-card-value" id="cardPersonsValue">--</span>
+                    <span class="mon-card-label">Active People</span>
+                </div>
+            </div>
+            <div class="mon-card" id="cardInference">
+                <span class="mon-card-icon">⚡</span>
+                <div class="mon-card-body">
+                    <span class="mon-card-value" id="cardInferenceValue">--</span>
+                    <span class="mon-card-label">Inference (ms)</span>
+                </div>
+            </div>
+            <div class="mon-card" id="cardGpu">
+                <span class="mon-card-icon">🎮</span>
+                <div class="mon-card-body">
+                    <span class="mon-card-value" id="cardGpuValue">--</span>
+                    <span class="mon-card-label">GPU Status</span>
+                </div>
+            </div>
+            <div class="mon-card" id="cardRedis">
+                <span class="mon-card-icon">💾</span>
+                <div class="mon-card-body">
+                    <span class="mon-card-value" id="cardRedisValue">--</span>
+                    <span class="mon-card-label">Redis Memory</span>
+                </div>
+            </div>
+            <div class="mon-card" id="cardEvents">
+                <span class="mon-card-icon">📋</span>
+                <div class="mon-card-body">
+                    <span class="mon-card-value" id="cardEventsValue">--</span>
+                    <span class="mon-card-label">Total Events</span>
+                </div>
+            </div>
+            <div class="mon-card" id="cardAccuracy">
+                <span class="mon-card-icon">🎯</span>
+                <div class="mon-card-body">
+                    <span class="mon-card-value" id="cardAccuracyValue">--</span>
+                    <span class="mon-card-label">Alert Accuracy</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Grafana Embed -->
+        <div class="mon-iframe-container">
+            <div class="mon-iframe-toolbar">
+                <span class="mon-iframe-title">📈 Grafana Dashboard</span>
+                <div class="mon-iframe-actions">
+                    <select id="monTimeRange" class="mon-time-select" onchange="window._monUpdateTimeRange(this.value)">
+                        <option value="now-15m">Last 15 min</option>
+                        <option value="now-1h" selected>Last 1 hour</option>
+                        <option value="now-3h">Last 3 hours</option>
+                        <option value="now-6h">Last 6 hours</option>
+                        <option value="now-12h">Last 12 hours</option>
+                        <option value="now-24h">Last 24 hours</option>
+                        <option value="now-7d">Last 7 days</option>
+                    </select>
+                    <button class="mon-iframe-expand-btn" id="monExpandBtn" onclick="window._monToggleFullscreen()"
+                        title="Toggle fullscreen">⛶</button>
+                </div>
+            </div>
+            <div class="mon-iframe-wrapper" id="monIframeWrapper">
+                <iframe id="grafanaFrame" src="" frameborder="0" allowfullscreen></iframe>
+                <div class="mon-iframe-loading" id="monIframeLoading">
+                    <div class="mon-spinner"></div>
+                    <span>Connecting to Grafana...</span>
+                    <p class="mon-iframe-hint">Make sure Grafana is running on port 3000</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="monitoring.js?v=1"></script>
+</body>
+
+</html>
