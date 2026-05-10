@@ -306,7 +306,8 @@ async def startup():
     asyncio.create_task(warm_ollama())
 
     # Clear stale ComfyUI queue and GPU pause flag from previous session
-    asyncio.create_task(_clear_comfyui_queue_on_startup())
+    from pollers.comfyui_cleanup import clear_comfyui_queue
+    asyncio.create_task(clear_comfyui_queue())
 
     # Daily prune of /data/snapshots and /data/events (configurable retention)
     asyncio.create_task(_retention_poller())
@@ -315,46 +316,6 @@ async def startup():
     asyncio.create_task(start_metrics_collector())
 
     logger.info(f"Dashboard ready at http://localhost:{DASHBOARD_PORT}")
-
-
-async def _clear_comfyui_queue_on_startup():
-    """Clear any stale ComfyUI queue items and GPU pause flag from previous session."""
-    import httpx
-    comfyui_host = os.environ.get("COMFYUI_HOST", "http://comfyui:8188")
-    # Wait up to 60s for ComfyUI to come online
-    for attempt in range(12):
-        try:
-            async with httpx.AsyncClient() as client:
-                # Interrupt any running job
-                await client.post(f"{comfyui_host}/interrupt", timeout=5)
-                # Clear pending queue
-                queue_resp = await client.get(f"{comfyui_host}/queue", timeout=5)
-                if queue_resp.status_code == 200:
-                    queue_data = queue_resp.json()
-                    pending = queue_data.get("queue_pending", [])
-                    if pending:
-                        pending_ids = [item[1] for item in pending if len(item) > 1]
-                        if pending_ids:
-                            await client.post(
-                                f"{comfyui_host}/queue",
-                                json={"delete": pending_ids},
-                                timeout=5,
-                            )
-                            logger.info(f"Startup: cleared {len(pending_ids)} stale ComfyUI queue items")
-                    else:
-                        logger.info("Startup: ComfyUI queue is clean")
-            # Clear GPU pause flag AND stale generation lock from Redis.
-            # Without clearing the lock, an unclean shutdown mid-generation blocks
-            # the first new generation for up to 6 min (the lock's SETEX TTL).
-            try:
-                r.delete("gpu:generation_active", "gpu:generation_lock")
-                logger.info("Startup: cleared GPU pause flag and stale generation lock")
-            except Exception:
-                pass
-            return
-        except Exception:
-            await asyncio.sleep(5)
-    logger.warning("Startup: ComfyUI not reachable after 60s — skipping queue cleanup")
 
 
 async def _retention_poller():
