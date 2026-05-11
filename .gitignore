@@ -35,6 +35,9 @@ gpu_test.txt
 # Snapshots
 snapshots/
 
+# Bind-mounted runtime data (recordings + future per-camera data folders)
+data/
+
 # Models & weights (multi-GB files)
 models/
 *.safetensors

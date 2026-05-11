@@ -284,7 +284,10 @@ services:
       - comfyui-data:/data/comfyui-output:ro
       - qnap-videos:/data/videos
       - qnap-clips:/data/clips
-      - qnap-recordings:/data/recordings:ro
+      # Bind mount: recordings live on the WSL host so you can browse them
+      # from Windows Explorer (\\wsl$\<distro>\home\mongo\projects\vision-labs\data\recordings)
+      # without sudo. Other volumes stay as Docker-managed for now.
+      - ./data/recordings:/data/recordings:ro
     environment:
       - CAMERA_ID=front_door
       - REDIS_HOST=redis
@@ -330,7 +333,7 @@ services:
       context: ./services/recorder
     network_mode: host
     volumes:
-      - qnap-recordings:/recordings
+      - ./data/recordings:/recordings
     environment:
       - CAMERA_ID=front_door
       - RTSP_URL=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_sub
@@ -349,7 +352,7 @@ services:
     network_mode: host
     profiles: ["cam2"]
     volumes:
-      - qnap-recordings:/recordings
+      - ./data/recordings:/recordings
     environment:
       - CAMERA_ID=cam2
       - RTSP_URL=${CAM2_RTSP_URL:-rtsp://192.168.5.45:8554/basement}
@@ -584,8 +587,9 @@ volumes:
 
   # Storage volumes (local by default — overridden to CIFS via docker-compose.qnap.yml)
   # See docker-compose.qnap.yml for the QNAP/CIFS-backed versions of these.
+  # qnap-recordings is no longer a named volume — recordings are bind-mounted
+  # to ./data/recordings on the WSL host for easy Windows Explorer access.
   qnap-snapshots:
-  qnap-recordings:
   qnap-events:
   qnap-telegram:
   qnap-generations:
