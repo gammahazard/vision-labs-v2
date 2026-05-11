@@ -7,6 +7,10 @@
     <title>Vision Labs — Camera Grid</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Inherit panel/button styling from the existing dashboard CSS so the
+         Conditions and Faces panels look consistent. Grid-specific styles below
+         override or add to it. -->
+    <link rel="stylesheet" href="style.css">
     <style>
         :root {
             --bg-primary: #0a0e17;
@@ -221,6 +225,23 @@
             .tile-footer { font-size: 0.65rem; padding: 0.4rem 0.6rem; }
             .modal-header { padding: env(safe-area-inset-top, 0.5rem) 0.75rem 0.5rem; }
         }
+
+        /* ---- Bottom panels (Conditions + Faces) ---- */
+        /* Reuses .panel styles from style.css; wraps them in a 2-col grid on desktop. */
+        .home-panels {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 0.75rem;
+            padding: 0 0.75rem 1.25rem;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+        @media (min-width: 900px) {
+            .home-panels { grid-template-columns: 1fr 1fr; gap: 1rem; padding: 0 1rem 1.5rem; }
+        }
+        /* style.css's .panel takes a min-width when it's inside a sidebar context;
+           reset that here so panels can shrink to the grid cells. */
+        .home-panels .panel { min-width: 0; margin: 0; }
     </style>
 </head>
 
@@ -241,6 +262,91 @@
         <div class="empty">Loading cameras...</div>
     </div>
 
+    <!-- Global panels (Conditions + Face Enrollment) — these are NOT camera-specific.
+         Per-camera things (Settings, Events, Zones, Browse) live in /single.html?camera=X
+         which you reach by clicking a tile + 'Open full controls'. -->
+    <div class="home-panels">
+
+        <!-- Conditions: time of day, sunrise/sunset, weather -->
+        <section class="panel conditions-panel" id="conditionsPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>🌤️ Conditions</h2>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="conditions-period" id="conditionsPeriod">--</span>
+                    <span class="night-watch-icon" id="nightWatchIcon" aria-label="Person detections alerted during night and late night">👁️</span>
+                    <span class="panel-toggle">▼</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <div class="conditions-grid" id="conditionsGrid">
+                    <div class="condition-item" style="grid-column: span 2;">
+                        <span class="condition-icon">📅</span>
+                        <span class="condition-label">Date</span>
+                        <span class="condition-value" id="condDate">--</span>
+                    </div>
+                    <div class="condition-item">
+                        <span class="condition-icon">🌅</span>
+                        <span class="condition-label">Sunrise</span>
+                        <span class="condition-value" id="condSunrise">--</span>
+                    </div>
+                    <div class="condition-item">
+                        <span class="condition-icon">🌇</span>
+                        <span class="condition-label">Sunset</span>
+                        <span class="condition-value" id="condSunset">--</span>
+                    </div>
+                    <div class="condition-item">
+                        <span class="condition-icon">📏</span>
+                        <span class="condition-label">Day Length</span>
+                        <span class="condition-value" id="condDayLength">--</span>
+                    </div>
+                    <div class="condition-item" id="condFeelsLikeItem" style="display: none;">
+                        <span class="condition-icon">🤷</span>
+                        <span class="condition-label">Feels Like</span>
+                        <span class="condition-value" id="condFeelsLikeValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condHumidityItem" style="display: none;">
+                        <span class="condition-icon">💧</span>
+                        <span class="condition-label">Humidity</span>
+                        <span class="condition-value" id="condHumidityValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condCloudsItem" style="display: none;">
+                        <span class="condition-icon">☁️</span>
+                        <span class="condition-label">Cloud Cover</span>
+                        <span class="condition-value" id="condCloudsValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condWeatherItem" style="display: none;">
+                        <span class="condition-icon" id="condWeatherIcon">🌡️</span>
+                        <span class="condition-label" id="condWeatherLabel">Weather</span>
+                        <span class="condition-value" id="condWeatherValue">--</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Faces: shared across all cameras (one face DB, recognized by any camera) -->
+        <section class="panel faces-panel" id="facesPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>👤 Known Faces</h2>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="face-count" id="faceCount">0 enrolled</span>
+                    <span class="panel-toggle">▼</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <div class="enroll-form">
+                    <input type="text" id="enrollName" placeholder="Enter name..." class="enroll-input" maxlength="50">
+                    <button id="enrollBtn" class="enroll-btn" onclick="startEnrollWizard()">
+                        📸 Enroll
+                    </button>
+                </div>
+                <p class="setting-hint">Multi-angle capture — 5 angles for better recognition. Faces are shared across all cameras.</p>
+                <div class="face-gallery" id="faceGallery">
+                    <div class="empty-state">No faces enrolled yet</div>
+                </div>
+            </div>
+        </section>
+    </div>
+
     <!-- Full-screen camera modal -->
     <div class="modal" id="modal" onclick="closeModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
@@ -259,7 +365,28 @@
         </div>
     </div>
 
+    <!-- Tiny togglePanel for the collapsible panel headers (extracted from app.js
+         which we don't load here — app.js is for the single-cam dashboard). -->
+    <script>
+        function togglePanel(headerEl) {
+            const panel = headerEl.closest('.panel');
+            if (panel) panel.classList.toggle('collapsed');
+        }
+    </script>
+
+    <!-- Grid view logic (must run before the panel scripts so we don't block). -->
     <script src="grid.js"></script>
+
+    <!-- Conditions + Faces — both fetch global (non-camera-specific) data. -->
+    <script src="conditions.js"></script>
+    <script src="faces.js"></script>
+    <!-- Manual init: faces.js usually waits for app.js DOMContentLoaded hook;
+         here we trigger the gallery load directly. -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            if (typeof loadFaces === 'function') loadFaces();
+        });
+    </script>
 </body>
 
 </html>
