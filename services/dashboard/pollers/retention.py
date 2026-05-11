@@ -40,19 +40,22 @@ logger = logging.getLogger("dashboard.retention")
 
 
 async def retention_poller():
-    """Daily prune of /data/snapshots and /data/events older than the configured retention."""
+    """Daily prune of /data/snapshots and /data/events older than configured retention."""
     retention_days = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "4"))
+    # Clips are bigger than person snapshots — separate (shorter) retention.
+    clip_retention_days = int(os.getenv("CLIP_RETENTION_DAYS", "3"))
     if retention_days <= 0:
         logger.info("Local retention disabled (SNAPSHOT_RETENTION_DAYS=0)")
         return
 
     SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
     EVENT_DIR = os.environ.get("EVENT_JOURNAL_DIR", "/data/events")
+    CLIPS_DIR = os.path.join(SNAPSHOT_DIR, "clips")
 
-    # Liveness log — proves the poller actually started (was missing pre-refactor)
     logger.info(
-        f"Local retention enabled — pruning files older than {retention_days}d "
-        f"(snapshots={SNAPSHOT_DIR}, events={EVENT_DIR})"
+        f"Local retention enabled — snapshots/events {retention_days}d, "
+        f"clips {clip_retention_days}d (snapshots={SNAPSHOT_DIR}, "
+        f"clips={CLIPS_DIR}, events={EVENT_DIR})"
     )
 
     await asyncio.sleep(60)  # let the rest of startup finish
@@ -61,8 +64,23 @@ async def retention_poller():
         try:
             cutoff_ts = time.time() - (retention_days * 86400)
             cutoff_date = (datetime.now() - timedelta(days=retention_days)).date()
+            clip_cutoff_ts = time.time() - (clip_retention_days * 86400)
             removed_files = 0
             removed_bytes = 0
+
+            # Prune clips (AI assistant + /clip Telegram outputs)
+            if os.path.isdir(CLIPS_DIR):
+                for entry in os.scandir(CLIPS_DIR):
+                    if not entry.is_file():
+                        continue
+                    try:
+                        st = entry.stat()
+                        if st.st_mtime < clip_cutoff_ts:
+                            os.remove(entry.path)
+                            removed_files += 1
+                            removed_bytes += st.st_size
+                    except Exception:
+                        pass
 
             # 1a. Legacy flat /data/snapshots/*.jpg (pre-fan-out snapshots)
             # 1b. Per-camera /data/snapshots/{camera_id}/*.jpg (current layout)

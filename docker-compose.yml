@@ -316,16 +316,19 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Recorder — Continuous DVR recording to QNAP NAS
+  # Recorders — Continuous DVR (per-camera, local disk for now)
   # ---------------------------------------------------------------------------
-  # Records the RTSP sub-stream directly to 1-hour MP4 segments.
-  # Uses ffmpeg copy (no transcode) — very low CPU usage.
-  # 28-day rolling retention with automatic cleanup.
+  # One recorder service per camera. Each records the camera's RTSP sub-stream
+  # directly to 1-hour MPEG-TS segments via ffmpeg copy (no transcode).
+  # Storage layout:
+  #   /recordings/{camera_id}/YYYY-MM-DD/HH-MM.ts
+  # Retention is short (RETENTION_DAYS=3) because we're on local disk.
+  # When the QNAP arrives, change the `qnap-recordings` volume to an NFS mount
+  # and bump RETENTION_DAYS — no code changes needed.
   recorder:
     build:
       context: ./services/recorder
     network_mode: host
-    profiles: ["nas"]  # only starts when running with --profile nas (requires QNAP)
     volumes:
       - qnap-recordings:/recordings
     environment:
@@ -333,7 +336,26 @@ services:
       - RTSP_URL=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_sub
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=28
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  # cam2 (basement Pi + C922) — RTSP from mediamtx on the Pi.
+  # Profile-gated to "cam2" so it only runs when the slot is active.
+  recorder-cam2:
+    build:
+      context: ./services/recorder
+    network_mode: host
+    profiles: ["cam2"]
+    volumes:
+      - qnap-recordings:/recordings
+    environment:
+      - CAMERA_ID=cam2
+      - RTSP_URL=${CAM2_RTSP_URL:-rtsp://192.168.5.45:8554/basement}
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped

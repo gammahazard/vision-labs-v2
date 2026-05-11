@@ -183,21 +183,22 @@ async def poll_telegram_callbacks():
             await client.post(
                 f"{TELEGRAM_API}/setMyCommands",
                 json={"commands": [
-                    {"command": "snapshot", "description": "Live camera photo"},
-                    {"command": "clip", "description": "Video clip (5-40s)"},
-                    {"command": "status", "description": "System health"},
-                    {"command": "ask", "description": "Ask the AI assistant"},
-                    {"command": "arm", "description": "Enable notifications (admin)"},
-                    {"command": "disarm", "description": "Disable notifications (admin)"},
-                    {"command": "who", "description": "Who's in frame now"},
-                    {"command": "events", "description": "Recent detections (1-20)"},
-                    {"command": "zones", "description": "Snapshot with zone overlays"},
-                    {"command": "rules", "description": "Time rules overview"},
-                    {"command": "night", "description": "Night override status"},
-                    {"command": "faces", "description": "Enrolled faces list"},
-                    {"command": "timelapse", "description": "Day timelapse [YYYY-MM-DD]"},
-                    {"command": "analyze", "description": "AI vision analysis of live frame"},
-                    {"command": "help", "description": "List all commands"},
+                    {"command": "snapshot", "description": "📸 Live photo · [camera]"},
+                    {"command": "clip", "description": "🎬 Video clip · [5-40s] [camera]"},
+                    {"command": "status", "description": "📊 System health · [camera]"},
+                    {"command": "who", "description": "👁️ Who's in frame · [camera]"},
+                    {"command": "events", "description": "📋 Recent detections · [1-20] [camera]"},
+                    {"command": "zones", "description": "🗺️ Zone overlays · [camera]"},
+                    {"command": "analyze", "description": "👁️ AI vision · [camera] [prompt]"},
+                    {"command": "cameras", "description": "📷 List configured cameras"},
+                    {"command": "timelapse", "description": "⏩ Day timelapse · [YYYY-MM-DD]"},
+                    {"command": "rules", "description": "📜 Notification rules"},
+                    {"command": "night", "description": "🌙 Night override status"},
+                    {"command": "faces", "description": "👤 Enrolled faces"},
+                    {"command": "ask", "description": "🧠 Ask the AI assistant"},
+                    {"command": "arm", "description": "🟢 Enable notifications (admin)"},
+                    {"command": "disarm", "description": "🔴 Disable notifications (admin)"},
+                    {"command": "help", "description": "ℹ️ List all commands"},
                 ]},
                 timeout=10,
             )
@@ -817,7 +818,7 @@ async def _cmd_help(chat_id: str = "", **kwargs):
         "/rules — 📜 Time rules overview\n"
         "/night — 🌙 Night mode status\n"
         "/faces — 👤 Enrolled faces\n"
-        "/timelapse [YYYY-MM-DD] — ⏩ Timelapse from snapshots\n"
+        "/timelapse [YYYY-MM-DD] [camera] — ⏩ Timelapse from snapshots\n"
         "/ask [question] — 🧠 Ask the AI assistant\n\n"
         + multi_note +
         "📷 <b>Send a photo</b> to get AI vision analysis\n\n"
