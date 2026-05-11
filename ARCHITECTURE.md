@@ -267,30 +267,39 @@ The main FastAPI app is now a **thin wiring file**. The 1300-line original was s
 | `event_notification_poller` | `pollers/events.py` | Poll events, save snapshots, journal, send Telegram |
 | `websocket_live` | `websocket.py` | Stream frames with overlays; accepts `?camera=<id>` for multi-camera |
 
-### Route Modules (20 files in `routes/`)
+### Route Modules (in `routes/`)
 
-| Module | Prefix | Purpose |
-|--------|--------|---------|
-| `ai.py` | `/api/ai` | Chat, vision analysis, history, reminders, model status |
-| `ai_tools.py` | — | 18 LLM tool definitions + executor functions |
-| `ai_prompts.py` | — | System prompt builder with live context |
-| `ai_state.py` | — | Shared AI state (DB refs, GPU flag, pending media) |
-| `notifications.py` | `/api` | Telegram API helpers, scene analysis, snapshot drawing |
-| `bot_commands.py` | — | Telegram polling loop, 11 command handlers, audit logging |
-| `image_gen.py` | `/api/generate` | ComfyUI proxy, txt2img, img2img, gallery, prompt history |
-| `recordings.py` | `/api/recordings` | DVR playback — list dates, segments, stream video |
-| `events.py` | `/api/events` | Event feed retrieval from Redis stream |
-| `config.py` | `/api/config` | Read/write detection config to Redis |
-| `zones.py` | `/api/zones` | Zone CRUD (create, update, delete, list) |
-| `faces.py` | `/api/faces` | Face enrollment proxy to face-recognizer service |
-| `unknowns.py` | `/api/unknowns` | Unknown face management (list, label, delete) |
-| `browse.py` | `/api/browse` | Vehicle snapshot browser, enrolled faces gallery |
-| `clips.py` | `/api/clips` | Video clip listing, serving, deletion |
-| `conditions.py` | `/api/conditions` | Time period, sunrise/sunset, weather data |
-| `metrics.py` | `/api/metrics` | Prometheus metrics endpoint for dashboard stats |
-| `auth.py` | `/api/auth` | Login, logout, session management |
-| `telegram_access.py` | `/api/telegram` | Telegram user approval, role management, access log |
-| `__init__.py` | — | Shared state (Redis clients, key names, defaults) |
+Routes marked **✅ multi-camera** accept an optional `?camera=<id>` query
+parameter. Empty/missing camera falls back to the dashboard's primary camera
+(env `CAMERA_ID`); the literal value `all` aggregates across every enabled
+camera (where it makes semantic sense — events, system status).
+
+| Module | Prefix | Purpose | Multi-camera |
+|--------|--------|---------|---|
+| `ai.py` | `/api/ai` | Chat, vision analysis, history, reminders, model status | n/a (per-message) |
+| `ai_tools.py` | — | 18 LLM tool definitions + executors; all tools accept `camera` arg via `_resolve_camera()` helper | ✅ all 18 tools |
+| `ai_prompts.py` | — | System prompt builder; injects camera registry list into LLM context | ✅ |
+| `ai_state.py` | — | Shared AI state (DB refs, GPU flag, pending media) | n/a |
+| `notifications.py` | `/api` | Telegram API helpers, scene analysis, snapshot drawing, `build_clip(camera_id=…)` | ✅ |
+| `bot_commands.py` | — | Telegram polling loop, 15+ command handlers w/ `[camera]` token parsing, inline-keyboard camera picker, `/cameras` helper command | ✅ |
+| `image_gen.py` | `/api/generate` | ComfyUI proxy, txt2img, img2img, gallery, prompt history | n/a (generation is global) |
+| `recordings.py` | `/api/recordings` | DVR playback: `/dates`, `/segments`, `/stream/{date}/{segment}` all accept `?camera`. New `/cameras` endpoint lists every camera that has recordings on disk | ✅ |
+| `events.py` | `/api/events` | Event feed; `?camera=` filters or `all`/empty merges streams newest-first; per-event `camera_id` field; `resolve_event_snapshot_path()` helper walks per-camera dirs w/ legacy-flat fallback | ✅ |
+| `config.py` | `/api/config` | Per-camera config hash (`config:{camera_id}`); detection thresholds, notification toggles | ✅ |
+| `zones.py` | `/api/zones` | Per-camera zone CRUD (`zones:{camera_id}` hash) | ✅ |
+| `cameras.py` | `/api/cameras` | Camera registry: list/get/upsert/delete; `POST /test-rtsp` runs ffprobe; `GET /next-slot` for compose slot allocation | ✅ |
+| `faces.py` | `/api/faces` | Face enrollment proxy to face-recognizer service (port 8081 not host-exposed) | shared DB |
+| `unknowns.py` | `/api/unknowns` | Unknown face management (list, label, delete) | shared DB |
+| `browse.py` | `/api/browse` | Vehicle snapshot browser; `/days`, `/days/{date}`, `/snapshot/{camera}/{date}/{filename}` (also `/{date}/{filename}` legacy form) | ✅ |
+| `clips.py` | `/api/clips` | Video clip listing, serving, deletion | n/a |
+| `conditions.py` | `/api/conditions` | Time period, sunrise/sunset, weather (global) | n/a (global) |
+| `metrics.py` | `/api/metrics` | Prometheus metrics endpoint | per-camera (planned) |
+| `auth.py` | `/api/auth` | Login, logout, session, password rotation | n/a |
+| `telegram_access.py` | `/api/telegram` | Telegram user approval, role management, access log | n/a |
+| `__init__.py` | — | Shared state (Redis clients, key names, defaults) | n/a |
+
+**Known non-camera-aware endpoints (low priority):**
+- `/api/login-bg` — login background image, always pulls from `frame_hd:{primary}`.
 
 ---
 
@@ -300,8 +309,8 @@ The main FastAPI app is now a **thin wiring file**. The 1300-line original was s
 
 | File | URL | Purpose |
 |------|-----|---------|
-| `index.html` | `/` | **Multi-camera grid view** (default home page since May 2026). Mobile-responsive tiles, click to expand modal. Global panels: Conditions + Known Faces. |
-| `single.html` | `/single.html?camera=X` | Per-camera detailed dashboard with all side panels (events, zones, faces enrollment, browse, conditions, settings). The old index.html before the route swap. |
+| `index.html` | `/` | **Multi-camera grid view** (default home since May 2026). Mobile-responsive tiles, click → modal. Below the grid: Conditions, **Recent Activity** (aggregate event feed across all cameras with per-row 📷 camera badge), and Known Faces panels. |
+| `single.html` | `/single.html?camera=X` | Per-camera detailed dashboard. URL param scopes WebSocket + REST calls (config, zones, events, stats). Page title shows the camera's friendly name. `app.js` reads the param into `window.CAMERA_ID` and exposes `withCamera(url)` helper used by `zones.js`, `events.js`, etc. |
 | `cameras.html` | `/cameras.html` | Camera registry admin: list/add/edit/delete cameras + Test Connection button (ffprobe) |
 | `ai.html` | `/ai.html` | AI chat + vision + DVR + image generation |
 | `monitoring.html` | `/monitoring.html` | System health + embedded Grafana |
@@ -403,15 +412,33 @@ User message → build system prompt with live context
 
 ### System Context (injected each message)
 - Current date/time, location, weather
-- People currently in frame (from state key)
+- **Registered cameras list** (id=name, e.g. `cam1=front_door · cam2=basement`) so the LLM knows valid camera arg values
+- People currently in frame across all cameras (from state keys)
 - Known faces list
-- Active zones
+- Active zones (per camera)
 - Recent events summary
 - Notification status
 - System health
 
-### 18 Tool Functions
-See `routes/ai_tools.py` — each returns a JSON string the LLM uses to formulate its response. Tools can stash media (snapshots, clips, images) via `ai_state` for embedding in the reply.
+### 18 Tool Functions (all multi-camera-aware)
+See `routes/ai_tools.py` — each returns a JSON string. Tools that touch
+per-camera data accept an optional `camera` arg:
+- `""` or absent → primary camera (env `CAMERA_ID`)
+- `"<id>"`        → specific camera, must exist in registry
+- `"all"`         → aggregate across every enabled camera
+
+Resolution via `_resolve_camera()` helper (ai_tools.py:66+). Per-camera Redis
+keys built via `_camera_key()` from `contracts.streams` templates.
+
+Multi-camera-aware tools: `query_events`, `query_events_by_date`,
+`query_zones`, `query_event_patterns`, `query_activity_heatmap`,
+`get_live_scene`, `get_system_status`, `capture_snapshot`, `capture_clip`,
+`browse_vehicles`. Global tools (faces, weather, telegram, reminders,
+schedule, notification history, show_faces, analyze_image) don't take
+`camera` because the data is camera-agnostic.
+
+Tools stash media (snapshots, clips, images) via `ai_state` for embedding in
+the reply.
 
 ---
 
@@ -544,30 +571,56 @@ The `contracts/` directory is mounted read-only into every service container:
 
 ---
 
-## NAS Storage Layout
+## Storage Layout
 
-When the QNAP profile is enabled (`docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up`), the seven `qnap-*` volumes are backed by CIFS mounts to `//$QNAP_IP/vision-labs/<subdir>`. Without the profile, the same volume names are plain local Docker volumes and the recorder service doesn't start.
+All persistent state lives under `/data/` (and `/recordings/` for the recorder
+services). Everything except recordings is in Docker-managed named volumes;
+recordings are bind-mounted to `./data/recordings/` on the WSL host so they're
+browsable from Windows Explorer without sudo.
 
 ```
-/data/
-├── snapshots/              ← Person detection snapshots
-│   └── vehicles/           ← Vehicle snapshots organized by YYYY-MM-DD/
-│       └── 2026-02-28/
-│           └── 14-30-45_car.jpg
-├── events/                 ← Event journal (daily JSONL)
-│   └── 2026-02-28.jsonl
-├── recordings/             ← DVR segments (read-only in dashboard)
-│   └── front_door/
-│       └── 2026-02-28/
-│           └── 14-00-00.mp4
-├── telegram/               ← Per-user bot command audit trail
-│   └── username_12345/
-│       ├── commands.log
-│       └── media/
-├── generations/            ← ComfyUI output images
-├── clips/                  ← Captured video clips
-└── auth.db                 ← Session/auth SQLite database
+./data/recordings/                                ← BIND MOUNT (./data/ on host)
+└── {camera_id}/                                  ← e.g. front_door/, cam2/
+    └── YYYY-MM-DD/
+        └── HH-MM.ts                              ← MPEG-TS, ffmpeg copy (no transcode)
+                                                  ← 1h segments, 3-day retention
+
+/data/snapshots/                                  ← Docker volume qnap-snapshots
+├── {camera_id}/                                  ← per-camera event snapshots
+│   └── {event_id}.jpg                            ← {redis_stream_id}.jpg
+├── vehicles/                                     ← vehicle snapshots
+│   └── {camera_id}/                              ← per-camera (added by phase 9b iter 3)
+│       └── YYYY-MM-DD/
+│           └── HH-MM-SS_car.jpg
+├── clips/                                        ← AI + Telegram /clip outputs
+│   └── YYYYMMDD_HHMMSS_{camera}_{uuid}.mp4       ← 3-day retention
+└── (legacy flat *.jpg pre-fan-out)               ← still readable via fallback
+
+/data/events/                                     ← Docker volume qnap-events
+└── YYYY-MM-DD.jsonl                              ← each entry has "camera" field
+                                                  ← (added by phase 9b iter 2)
+
+/data/telegram/                                   ← Docker volume qnap-telegram
+└── {username_userid}/
+    ├── commands.log
+    └── media/
+
+/data/generations/                                ← Docker volume qnap-generations
+                                                  ← ComfyUI output images
+
+/data/auth.db                                     ← Docker volume auth-data
+                                                  ← SQLite: sessions, users, password rotation
 ```
+
+**Future QNAP migration:** when a QNAP shows up, swap individual volumes
+(snapshots, events, telegram, generations) from Docker-managed → NFS/CIFS
+mounts pointing at the QNAP — no code changes needed. The recorder bind mount
+becomes either a QNAP NFS mount or stays local with shorter retention.
+
+**Retention** (defaults; configurable via env on the dashboard service):
+- `SNAPSHOT_RETENTION_DAYS=4`  → person + vehicle event snapshots, event journal
+- `CLIP_RETENTION_DAYS=3`       → AI/Telegram clips at `/data/snapshots/clips/`
+- `RETENTION_DAYS=3` (recorder)  → continuous DVR segments per camera
 
 ---
 
@@ -591,14 +644,16 @@ When the QNAP profile is enabled (`docker compose -f docker-compose.yml -f docke
 | `prometheus-data` | Docker | Prometheus TSDB |
 | `grafana-data` | Docker | Grafana state |
 | `portainer-data` | Docker | Portainer state |
-| `qnap-snapshots`, `qnap-recordings`, `qnap-events`, `qnap-telegram`, `qnap-generations`, `qnap-videos`, `qnap-clips` | Local Docker by default; CIFS when `docker-compose.qnap.yml` overlay + `--profile nas` is used | 7 storage volumes that can flip between local and NAS-backed at runtime |
+| `qnap-snapshots`, `qnap-events`, `qnap-telegram`, `qnap-generations`, `qnap-videos`, `qnap-clips` | Local Docker by default; CIFS when `docker-compose.qnap.yml` overlay is used | 6 storage volumes that can flip between local and NAS-backed at runtime |
+| `./data/recordings` (bind mount) | Bind mount to WSL host path (since `ed2c3c2`) | DVR recordings — browseable from Windows Explorer without sudo; will be swapped to NFS mount when QNAP arrives, code paths unchanged |
 
 ### Profiles + Overlay Files
 
 | Trigger | Effect |
 |---------|--------|
-| `docker compose up` (no profile) | Base file only. Recorder doesn't start. The 7 `qnap-*` volumes are plain local Docker volumes |
-| `docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up` | Overlay rewrites the 7 volumes to CIFS mounts; `--profile nas` activates the recorder service. Requires QNAP at `QNAP_IP` with a `vision-labs` share + 7 subfolders |
+| `docker compose up` (no profile) | Base file. Recorder runs (since `aa13d25`) with local bind mount + 3-day retention. The 6 `qnap-*` volumes are plain local Docker volumes |
+| `docker compose --profile cam2 up` | Activates the cam2 slot: ingester, pose-detector, vehicle-detector, tracker, recorder all spin up for the basement camera |
+| `docker compose -f docker-compose.yml -f docker-compose.qnap.yml up` | Overlay rewrites the 6 `qnap-*` volumes to CIFS mounts pointing at QNAP. Requires QNAP at `QNAP_IP` with a `vision-labs` share + 6 subfolders. Recordings stay local-disk by default until you swap that mount too |
 
 ### GPU Sharing — split across two cards
 **GPU 0 (5070 Ti — always-on detectors):**
