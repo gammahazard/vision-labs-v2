@@ -30,6 +30,80 @@ TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
 
 
 # ---------------------------------------------------------------------------
+# Multi-camera helpers (Phase 9a)
+# ---------------------------------------------------------------------------
+# Tools that take a `camera` arg use these helpers to:
+#   - resolve "all" / specific id / missing into a concrete list of camera ids
+#   - build Redis keys for any camera (not just ctx.* which is the dashboard's
+#     primary CAMERA_ID env)
+#
+# Conventions for the `camera` tool arg:
+#   "all"          -> every registered camera, aggregated
+#   "<id>"         -> just that one camera (must exist in cameras:registry)
+#   missing/empty  -> the dashboard's primary camera (ctx.CAMERA_ID env)
+#                     This matches pre-multicam behavior for backward compat.
+#
+# Helper returns a LIST of camera ids; tools loop over the list or take [0].
+
+def _get_camera_list() -> list:
+    """Return all enabled cameras from the registry, sorted by id."""
+    try:
+        raw = ctx.r.hgetall("cameras:registry") or {}
+        out = []
+        for cid, val in raw.items():
+            try:
+                entry = json.loads(val)
+                if entry.get("enabled", True):
+                    out.append(entry)
+            except Exception:
+                continue
+        out.sort(key=lambda c: c.get("id", ""))
+        return out
+    except Exception:
+        return []
+
+
+def _resolve_camera(arg: str = "") -> list:
+    """
+    Resolve a tool's `camera` arg into a concrete list of camera ids.
+
+    Returns:
+        list[str] of camera ids. Empty list if `arg` was a specific id that
+        doesn't exist (caller should error gracefully on empty).
+    """
+    arg = (arg or "").strip()
+    cams = _get_camera_list()
+    cam_ids = [c["id"] for c in cams]
+
+    if not arg or arg.lower() == "primary":
+        # Default to the dashboard's primary; fall back to first enabled
+        if ctx.CAMERA_ID in cam_ids:
+            return [ctx.CAMERA_ID]
+        return cam_ids[:1] if cam_ids else [ctx.CAMERA_ID]
+    if arg.lower() == "all":
+        return cam_ids if cam_ids else [ctx.CAMERA_ID]
+    # Specific id
+    if arg in cam_ids:
+        return [arg]
+    return []  # invalid id
+
+
+def _camera_key(template: str, camera_id: str, **extra) -> str:
+    """Build a Redis key for any camera using contracts/streams.py templates.
+    Lazy import to avoid circular issues at module load time."""
+    from contracts.streams import stream_key
+    return stream_key(template, camera_id=camera_id, **extra)
+
+
+# Lookup for friendly camera names (used in aggregated outputs)
+def _camera_name(camera_id: str) -> str:
+    for c in _get_camera_list():
+        if c.get("id") == camera_id:
+            return c.get("name") or camera_id
+    return camera_id
+
+
+# ---------------------------------------------------------------------------
 # Tool definitions for the LLM
 # ---------------------------------------------------------------------------
 TOOLS = [
@@ -37,7 +111,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "query_events",
-            "description": "Search recent security events (person detected, person identified, vehicle idle). Returns the most recent events.",
+            "description": "Search recent security events (person detected, person identified, vehicle idle). Returns the most recent events. Pass `camera` to filter to one camera, or 'all' for every camera (default = primary).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -48,6 +122,10 @@ TOOLS = [
                     "event_type": {
                         "type": "string",
                         "description": "Filter by event type: person_appeared, person_identified, person_left, vehicle_idle. Leave empty for all.",
+                    },
+                    "camera": {
+                        "type": "string",
+                        "description": "Camera id to query (e.g. 'front_door', 'cam2'), or 'all' for every camera. Default = primary camera.",
                     },
                 },
                 "required": [],
@@ -247,10 +325,15 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "capture_snapshot",
-            "description": "Capture the current camera frame and show it in the chat. Returns context data (weather, scene) for you to describe.",
+            "description": "Capture the current camera frame and show it in the chat. Returns context data (weather, scene) for you to describe. Pass `camera` to pick one (default = primary).",
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "camera": {
+                        "type": "string",
+                        "description": "Camera id to capture (e.g. 'front_door', 'cam2'). Omit for the primary camera.",
+                    },
+                },
                 "required": [],
             },
         },
@@ -370,7 +453,7 @@ async def execute_tool(name: str, args: dict) -> str:
         elif name == "query_event_patterns":
             return _tool_query_event_patterns(args)
         elif name == "capture_snapshot":
-            return await _tool_capture_snapshot()
+            return await _tool_capture_snapshot(args)
         elif name == "capture_clip":
             return _tool_capture_clip()
         elif name == "query_notification_history":
@@ -392,64 +475,99 @@ async def execute_tool(name: str, args: dict) -> str:
 # Tool implementations
 # ---------------------------------------------------------------------------
 def _tool_query_events(args: dict) -> str:
-    """Query recent events from Redis."""
+    """Query recent events from Redis. Supports multi-camera via `camera` arg."""
+    from contracts.streams import EVENT_STREAM as _EVT_TMPL
     count = min(int(args.get("count", 20)), 50)
     event_type = args.get("event_type", "")
+    camera_arg = args.get("camera", "")
+
+    cam_ids = _resolve_camera(camera_arg)
+    if not cam_ids:
+        return json.dumps({"error": f"Unknown camera id: '{camera_arg}'", "available": [c["id"] for c in _get_camera_list()]})
 
     try:
-        events_raw = ctx.r.xrevrange(ctx.EVENT_STREAM, count=count)
-        events = []
-        for msg_id, data in events_raw:
-            evt = {k: v for k, v in data.items()}
-            evt["event_id"] = msg_id
-            if event_type and evt.get("event_type") != event_type:
-                continue
-            events.append(evt)
-        return json.dumps({"events": events, "total": len(events)})
+        all_events = []
+        for cid in cam_ids:
+            stream = _camera_key(_EVT_TMPL, cid)
+            events_raw = ctx.r.xrevrange(stream, count=count)
+            for msg_id, data in events_raw:
+                evt = {k: v for k, v in data.items()}
+                evt["event_id"] = msg_id
+                evt["camera_id"] = cid
+                evt["camera_name"] = _camera_name(cid)
+                if event_type and evt.get("event_type") != event_type:
+                    continue
+                all_events.append(evt)
+        # Sort newest first across cameras, then cap to `count`
+        all_events.sort(key=lambda e: e.get("event_id", ""), reverse=True)
+        return json.dumps({"events": all_events[:count], "total": len(all_events[:count]), "cameras_queried": cam_ids})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
 def _tool_get_live_scene() -> str:
-    """Get the current live scene from the tracker state."""
-    try:
-        state = ctx.r.hgetall(ctx.STATE_KEY)
-        if not state:
-            return json.dumps({"scene": "No data — tracker may not be running or no activity detected."})
+    """Aggregate the current scene from every registered camera.
 
-        num_people = int(state.get("num_people", "0"))
-        persons_raw = state.get("people", "[]")
+    Always multi-camera-aware — no `camera` arg. The LLM gets a per-camera
+    breakdown ('Front: 2 people · Basement: 0') so it can pick which one to
+    talk about without needing to call this tool multiple times.
+    """
+    from contracts.streams import (
+        STATE_KEY as _STATE_TMPL,
+        IDENTITY_KEY as _IDKEY_TMPL,
+    )
+    cam_ids = _resolve_camera("all")
+    if not cam_ids:
+        # Fallback: at least show the primary camera even if registry is empty
+        cam_ids = [ctx.CAMERA_ID]
+
+    cameras_data = []
+    total_people = 0
+    for cid in cam_ids:
+        state_key = _camera_key(_STATE_TMPL, cid)
+        id_key = _camera_key(_IDKEY_TMPL, cid)
+        cam_block = {"id": cid, "name": _camera_name(cid)}
         try:
-            persons = json.loads(persons_raw)
-        except (json.JSONDecodeError, TypeError):
-            persons = []
-
-        scene_data = {
-            "people_in_frame": num_people,
-            "camera": ctx.CAMERA_ID,
-        }
-
-        # Only include person/identity details when someone is actually in frame.
-        # The identity state in Redis is NOT cleared when people leave, so it
-        # would show stale "Unknown" entries and confuse the AI.
-        if num_people > 0:
-            scene_data["persons"] = persons
-
-            identity_state = ctx.r.hgetall(ctx.IDENTITY_KEY)
-            identities = []
-            if identity_state:
+            state = ctx.r.hgetall(state_key)
+            if state:
+                n = int(state.get("num_people", "0"))
+                cam_block["num_people"] = n
+                total_people += n
+                # Decode person list if present
                 try:
-                    identities = json.loads(identity_state.get("identities", "[]"))
+                    persons = json.loads(state.get("people", "[]"))
+                    if persons:
+                        cam_block["persons"] = persons
                 except (json.JSONDecodeError, TypeError):
-                    identities = []
-            if identities:
-                scene_data["identified_faces"] = identities
-        else:
-            scene_data["summary"] = "No people currently in frame. The scene is clear."
+                    pass
+            else:
+                cam_block["num_people"] = 0
+            # Add identity overlay if face-recognizer wrote one
+            id_state = ctx.r.hgetall(id_key)
+            if id_state and id_state.get("identities"):
+                try:
+                    cam_block["identities"] = json.loads(id_state["identities"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        except Exception as e:
+            cam_block["error"] = str(e)
+        cameras_data.append(cam_block)
 
-        return json.dumps(scene_data)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    if not cameras_data:
+        return json.dumps({"scene": "No camera data available — registry empty or tracker not running."})
+
+    # Preserved single-camera shape for backward compat with prompts that may
+    # assume `num_people`/`persons` at top level — populate from the primary cam.
+    primary_block = next((c for c in cameras_data if c["id"] == ctx.CAMERA_ID), cameras_data[0])
+    out = {
+        "cameras": cameras_data,
+        "total_people_across_cameras": total_people,
+        "num_people": primary_block.get("num_people", 0),
+    }
+    if "persons" in primary_block:
+        out["persons"] = primary_block["persons"]
+
+    return json.dumps(out)
 
 
 async def _tool_query_unknowns() -> str:
@@ -735,16 +853,28 @@ def _tool_query_event_patterns(args: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
-async def _tool_capture_snapshot() -> str:
-    """Capture camera frame with weather + scene context for AI to describe."""
+async def _tool_capture_snapshot(args: dict = None) -> str:
+    """Capture camera frame with weather + scene context for AI to describe.
+
+    Phase 9a: accepts `camera` arg to pick a specific camera. Defaults to
+    primary (front_door) for back-compat with single-camera setups.
+    """
+    args = args or {}
     import base64
     import httpx
     from routes.notifications import get_latest_frame
 
+    cam_ids = _resolve_camera(args.get("camera", ""))
+    if not cam_ids:
+        return json.dumps({"error": f"Unknown camera id: '{args.get('camera')}'", "available": [c["id"] for c in _get_camera_list()]})
+    # capture_snapshot picks one camera at a time even if user said "all" —
+    # snapshot is a single image. If "all" was passed, use primary.
+    snap_camera = cam_ids[0] if len(cam_ids) == 1 else ctx.CAMERA_ID
+
     try:
-        frame = get_latest_frame()
+        frame = get_latest_frame(camera_id=snap_camera)
         if not frame:
-            return json.dumps({"error": "No frame available — camera may be offline"})
+            return json.dumps({"error": f"No frame available for camera '{snap_camera}' — may be offline"})
 
         b64 = base64.b64encode(frame).decode("utf-8")
 

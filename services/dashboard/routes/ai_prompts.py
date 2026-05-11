@@ -26,6 +26,24 @@ TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
 async def build_system_context() -> str:
     """Gather a live system snapshot to inject into the system prompt."""
     parts = []
+    # Registered cameras — gives the LLM the IDs + names it should use for the
+    # `camera` arg on multi-camera tools (query_events, capture_snapshot, etc.)
+    try:
+        import json as _json
+        raw = ctx.r.hgetall("cameras:registry") or {}
+        cams = []
+        for cid, val in raw.items():
+            try:
+                e = _json.loads(val)
+                if e.get("enabled", True):
+                    cams.append(f"{e.get('id','?')}={e.get('name','?')}")
+            except Exception:
+                pass
+        if cams:
+            parts.append("Cameras (id=name): " + " · ".join(sorted(cams)))
+            parts.append("→ When the user mentions a specific camera by name, pass camera=<id> to tools. Use 'all' for system-wide queries.")
+    except Exception:
+        pass
     # Enrolled faces
     try:
         import httpx

@@ -301,25 +301,36 @@ async def answer_callback_query(callback_query_id: str,
 # Snapshot helper — grab latest frame from Redis (BINARY client)
 # Prefers HD frame for higher quality, falls back to sub-stream.
 # ---------------------------------------------------------------------------
-def get_latest_frame() -> bytes | None:
+def get_latest_frame(camera_id: str = "") -> bytes | None:
     """
     Get the latest JPEG frame from Redis.
     Tries the HD frame first (frame_hd:{camera_id}), then falls
     back to the sub-stream (frames:{camera_id}).
     Uses a SEPARATE binary Redis client (decode_responses=False)
     because frame data is raw JPEG bytes.
+
+    Phase 9a: pass camera_id to pull from a specific camera's streams.
+    Defaults to the dashboard's primary camera (env CAMERA_ID).
     """
     try:
         r_bin = ctx.r_bin
+        if camera_id and camera_id != ctx.CAMERA_ID:
+            # Build keys for the requested camera
+            from contracts.streams import HD_FRAME_KEY as _HD_TMPL, FRAME_STREAM as _FRAME_TMPL, stream_key
+            hd_key = stream_key(_HD_TMPL, camera_id=camera_id).encode()
+            frame_stream = stream_key(_FRAME_TMPL, camera_id=camera_id).encode()
+        else:
+            hd_key = ctx.HD_FRAME_KEY.encode() if ctx.HD_FRAME_KEY else None
+            frame_stream = ctx.FRAME_STREAM.encode()
 
         # --- Try HD frame first (clearer image) ---
-        if ctx.HD_FRAME_KEY:
-            hd_bytes = r_bin.get(ctx.HD_FRAME_KEY.encode())
+        if hd_key:
+            hd_bytes = r_bin.get(hd_key)
             if hd_bytes and len(hd_bytes) > 100:
                 return hd_bytes
 
         # --- Fall back to sub-stream ---
-        entries = r_bin.xrevrange(ctx.FRAME_STREAM.encode(), count=1)
+        entries = r_bin.xrevrange(frame_stream, count=1)
         if entries:
             _, data = entries[0]
             frame = data.get(b"frame")
@@ -331,11 +342,16 @@ def get_latest_frame() -> bytes | None:
     return None
 
 
-def get_sd_frame() -> bytes | None:
+def get_sd_frame(camera_id: str = "") -> bytes | None:
     """Get the sub-stream (SD) frame only — used for bbox coordinate reference."""
     try:
         r_bin = ctx.r_bin
-        entries = r_bin.xrevrange(ctx.FRAME_STREAM.encode(), count=1)
+        if camera_id and camera_id != ctx.CAMERA_ID:
+            from contracts.streams import FRAME_STREAM as _FRAME_TMPL, stream_key
+            frame_stream = stream_key(_FRAME_TMPL, camera_id=camera_id).encode()
+        else:
+            frame_stream = ctx.FRAME_STREAM.encode()
+        entries = r_bin.xrevrange(frame_stream, count=1)
         if entries:
             _, data = entries[0]
             frame = data.get(b"frame")
