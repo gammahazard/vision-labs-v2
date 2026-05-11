@@ -9,6 +9,7 @@ PURPOSE:
 """
 
 import os
+import json
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -60,16 +61,54 @@ async def get_events(count: int = 50):
         return JSONResponse(status_code=503, content={"error": "Redis unavailable"})
 
 
-@router.get("/events/{event_id}/snapshot")
-async def get_event_snapshot(event_id: str):
-    """
-    Serve the saved camera snapshot for a given event.
-    Snapshots are stored as JPEG files by the event poller in server.py.
+def resolve_event_snapshot_path(event_id: str, camera_id: str = "") -> str | None:
+    """Locate the on-disk snapshot for an event_id.
+
+    Path search order:
+      1. {SNAPSHOT_DIR}/{camera_id}/{event_id}.jpg (if camera_id provided)
+      2. {SNAPSHOT_DIR}/{cam}/{event_id}.jpg for each enabled camera (fallback)
+      3. {SNAPSHOT_DIR}/{event_id}.jpg (legacy flat layout, pre-fan-out)
+
+    Returns the first path that exists, or None.
     """
     safe_id = event_id.replace(":", "-")
-    path = os.path.join(SNAPSHOT_DIR, f"{safe_id}.jpg")
 
-    if not os.path.exists(path):
+    if camera_id:
+        p = os.path.join(SNAPSHOT_DIR, camera_id, f"{safe_id}.jpg")
+        if os.path.exists(p):
+            return p
+
+    # Walk camera subdirs from registry
+    try:
+        raw = ctx.r.hgetall("cameras:registry") or {}
+        for _cid, val in raw.items():
+            try:
+                entry = json.loads(val)
+                cid = entry.get("id") or _cid
+                p = os.path.join(SNAPSHOT_DIR, cid, f"{safe_id}.jpg")
+                if os.path.exists(p):
+                    return p
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Legacy flat path
+    legacy = os.path.join(SNAPSHOT_DIR, f"{safe_id}.jpg")
+    if os.path.exists(legacy):
+        return legacy
+    return None
+
+
+@router.get("/events/{event_id}/snapshot")
+async def get_event_snapshot(event_id: str, camera: str = ""):
+    """
+    Serve the saved camera snapshot for a given event.
+    Snapshots are stored per-camera at {SNAPSHOT_DIR}/{camera_id}/{event_id}.jpg.
+    Pass `?camera=<id>` to skip the cross-camera search.
+    """
+    path = resolve_event_snapshot_path(event_id, camera_id=camera)
+    if not path:
         return JSONResponse(status_code=404, content={"error": "Snapshot not found"})
 
     with open(path, "rb") as f:

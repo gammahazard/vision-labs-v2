@@ -61,23 +61,45 @@ async def event_notification_poller():
         notify_vehicle_idle, is_configured, get_latest_frame, get_sd_frame,
     )
 
+    from contracts.streams import (
+        EVENT_STREAM as _EVT_TMPL,
+        CONFIG_KEY as _CFG_TMPL,
+        HD_FRAME_KEY as _HD_TMPL,
+        stream_key as _stream_key,
+    )
+
     r = ctx.r
     r_bin = ctx.r_bin
-    EVENT_STREAM = ctx.EVENT_STREAM
-    CONFIG_KEY = ctx.CONFIG_KEY
-    HD_FRAME_KEY = ctx.HD_FRAME_KEY
     VEHICLE_SNAPSHOT_DIR = ctx.VEHICLE_SNAPSHOT_DIR
 
-    # Ensure snapshot directory exists
+    # Per-camera snapshots live in {SNAPSHOT_DIR}/{camera_id}/{event_id}.jpg.
+    # Vehicle snapshots live in {VEHICLE_SNAPSHOT_DIR}/{camera_id}/{day}/...
+    # Event journal stays flat by day; each entry carries a `camera` field.
     SNAPSHOT_DIR = os.path.join(os.environ.get("SNAPSHOT_DIR", "/data/snapshots"))
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
-    # Event journal directory (daily JSONL files)
     EVENT_JOURNAL_DIR = os.environ.get("EVENT_JOURNAL_DIR", "/data/events")
     os.makedirs(EVENT_JOURNAL_DIR, exist_ok=True)
 
-    def _journal_event(msg_id: str, data: dict):
-        """Append event to daily JSONL file for persistent audit trail."""
+    def _load_enabled_cameras() -> list:
+        """Snapshot the cameras:registry hash → list of enabled camera ids."""
+        try:
+            raw = r.hgetall("cameras:registry") or {}
+            out = []
+            for cid, val in raw.items():
+                try:
+                    entry = json.loads(val)
+                    if entry.get("enabled", True):
+                        out.append(entry.get("id") or cid)
+                except Exception:
+                    continue
+            return sorted(set(out))
+        except Exception:
+            return []
+
+    def _journal_event(msg_id: str, data: dict, camera_id: str):
+        """Append event to daily JSONL file for persistent audit trail.
+        Includes the source camera so downstream consumers can filter."""
         try:
             _tz = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
             ts = float(data.get("timestamp", time.time()))
@@ -86,6 +108,7 @@ async def event_notification_poller():
             journal_path = os.path.join(EVENT_JOURNAL_DIR, f"{day_str}.jsonl")
             entry = {
                 "id": msg_id if isinstance(msg_id, str) else msg_id.decode(),
+                "camera": camera_id,
                 "timestamp": ts,
                 "time": dt.strftime("%H:%M:%S"),
                 **{k: v for k, v in data.items() if k != "timestamp"},
@@ -95,35 +118,54 @@ async def event_notification_poller():
         except Exception as e:
             logger.debug(f"Event journal write failed: {e}")
 
-    last_id = "$"  # Only process new events from this point forward
-    logger.info(f"Event poller started — snapshots → {SNAPSHOT_DIR}, vehicles → {VEHICLE_SNAPSHOT_DIR}, journal → {EVENT_JOURNAL_DIR}")
+    # Initial fan-out: every enabled camera's event stream gets watched.
+    # Refreshed periodically so new cameras get picked up without a restart.
+    cameras = _load_enabled_cameras() or [ctx.CAMERA_ID]
+    last_ids: dict[str, str] = {
+        _stream_key(_EVT_TMPL, camera_id=cid): "$" for cid in cameras
+    }
+    # Map stream name -> camera_id for routing events to the right disk dir
+    stream_to_camera: dict[str, str] = {
+        _stream_key(_EVT_TMPL, camera_id=cid): cid for cid in cameras
+    }
+    logger.info(
+        f"Event poller started — watching {len(last_ids)} stream(s): "
+        f"{sorted(last_ids.keys())} · snapshots → {SNAPSHOT_DIR}/<camera>/, "
+        f"vehicles → {VEHICLE_SNAPSHOT_DIR}/<camera>/, journal → {EVENT_JOURNAL_DIR}"
+    )
 
     loop = asyncio.get_event_loop()
+    refresh_counter = 0  # Re-scan registry every N loop ticks
 
-    def _save_snapshot(event_id: str, bbox_json: str = "", snapshot_key: str = ""):
-        """Save a snapshot JPEG for this event.
+    def _save_snapshot(event_id: str, bbox_json: str = "", snapshot_key: str = "",
+                       camera_id: str = ""):
+        """Save a snapshot JPEG for this event to per-camera disk subdir.
+
         If snapshot_key is provided (set by tracker at detection time), uses
         that frame from Redis instead of the live frame. This ensures the
         snapshot matches the actual detection moment.
-        Falls back to HD/sub-stream live frame if no snapshot_key.
+        Falls back to HD/sub-stream live frame for the named camera.
 
         Returns the RAW frame bytes (before bbox annotation) so the caller
         can forward them to the Telegram notification.
         """
         try:
+            cam = camera_id or ctx.CAMERA_ID
+            hd_key = _stream_key(_HD_TMPL, camera_id=cam)
+
             # --- Prefer tracker-saved snapshot (matches detection frame) ---
             frame = None
             is_hd = False
-            sd_frame = get_sd_frame()  # Always needed for bbox scaling reference
+            sd_frame = get_sd_frame(camera_id=cam)  # bbox scaling reference
             if snapshot_key:
                 frame = r_bin.get(snapshot_key.encode() if isinstance(snapshot_key, str) else snapshot_key)
                 # Tracker snapshots are sub-stream (SD) resolution since
                 # the bbox coords come from the sub-stream detector.
                 # Do NOT set is_hd — bbox draws directly without scaling.
 
-            # --- Fall back to live frame ---
+            # --- Fall back to live frame for this camera ---
             if not frame:
-                hd_bytes = r_bin.get(HD_FRAME_KEY.encode())
+                hd_bytes = r_bin.get(hd_key.encode())
                 frame = hd_bytes if hd_bytes else sd_frame
                 is_hd = bool(hd_bytes)
 
@@ -166,9 +208,13 @@ async def event_notification_poller():
                 except Exception:
                     pass  # Fall back to raw frame
 
-            # Redis event IDs contain ":" — replace for safe filenames
+            # Per-camera disk subdir: /data/snapshots/{camera_id}/{event_id}.jpg
+            # Old root-dir snapshots are left in place for backward compat;
+            # consumers read from camera subdir first, falling back to root.
             safe_id = event_id.replace(":", "-")
-            path = os.path.join(SNAPSHOT_DIR, f"{safe_id}.jpg")
+            cam_dir = os.path.join(SNAPSHOT_DIR, cam)
+            os.makedirs(cam_dir, exist_ok=True)
+            path = os.path.join(cam_dir, f"{safe_id}.jpg")
             with open(path, "wb") as f:
                 f.write(frame)
 
@@ -177,12 +223,13 @@ async def event_notification_poller():
             logger.debug(f"Snapshot save failed for {event_id}: {e}")
             return None
 
-    def _save_vehicle_snapshot(snapshot_key: str, event_data: dict):
+    def _save_vehicle_snapshot(snapshot_key: str, event_data: dict, camera_id: str = ""):
         """
         Pull vehicle snapshot JPEG from Redis and save to disk.
-        Draws bbox highlight if available. Organized as:
-        vehicles/YYYY-MM-DD/HH-MM-SS_class.jpg
+        Draws bbox highlight if available. Per-camera layout:
+            {VEHICLE_SNAPSHOT_DIR}/{camera_id}/{YYYY-MM-DD}/{HH-MM-SS}_{class}.jpg
         """
+        cam = camera_id or ctx.CAMERA_ID
         try:
             jpeg_data = r_bin.get(snapshot_key.encode() if isinstance(snapshot_key, str) else snapshot_key)
             if not jpeg_data:
@@ -217,8 +264,8 @@ async def event_notification_poller():
             day_str = dt.strftime("%Y-%m-%d")
             time_str = dt.strftime("%H-%M-%S")
 
-            # Create day folder and write file
-            day_dir = os.path.join(VEHICLE_SNAPSHOT_DIR, day_str)
+            # Per-camera layout: /data/snapshots/vehicles/{camera_id}/{day}/{time_class}.jpg
+            day_dir = os.path.join(VEHICLE_SNAPSHOT_DIR, cam, day_str)
             os.makedirs(day_dir, exist_ok=True)
             path = os.path.join(day_dir, f"{time_str}_{vehicle_class}.jpg")
             with open(path, "wb") as f:
@@ -230,36 +277,64 @@ async def event_notification_poller():
 
     while True:
         try:
-            # Run blocking xread in a thread so we don't block the event loop
+            # Periodically re-scan the registry so new cameras get added live.
+            refresh_counter += 1
+            if refresh_counter >= 30:  # ~ every minute given 2s xread block
+                refresh_counter = 0
+                current_cams = _load_enabled_cameras()
+                current_streams = {
+                    _stream_key(_EVT_TMPL, camera_id=cid): cid for cid in current_cams
+                }
+                added = set(current_streams) - set(last_ids)
+                removed = set(last_ids) - set(current_streams)
+                for stream in added:
+                    last_ids[stream] = "$"
+                    stream_to_camera[stream] = current_streams[stream]
+                    logger.info(f"Event poller: now watching {stream}")
+                for stream in removed:
+                    last_ids.pop(stream, None)
+                    stream_to_camera.pop(stream, None)
+                    logger.info(f"Event poller: stopped watching {stream}")
+
+            if not last_ids:
+                await asyncio.sleep(2)
+                continue
+
+            # Run blocking multi-stream xread in a thread
             entries = await loop.run_in_executor(
-                None, lambda: r.xread({EVENT_STREAM: last_id}, count=10, block=2000)
+                None, lambda: r.xread(dict(last_ids), count=10, block=2000)
             )
             if entries:
-                # Read notification preferences from Redis config
-                cfg = r.hgetall(CONFIG_KEY)
-                notify_person = cfg.get("notify_person", "1") == "1"
-                notify_vehicle = cfg.get("notify_vehicle", "1") == "1"
-                suppress_known = cfg.get("suppress_known", "0") == "1"
-
                 for stream_name, messages in entries:
+                    # Normalize stream name to str for dict lookup
+                    sname = stream_name if isinstance(stream_name, str) else stream_name.decode()
+                    src_camera = stream_to_camera.get(sname, ctx.CAMERA_ID)
+                    # Per-camera notification config
+                    cfg_key = _stream_key(_CFG_TMPL, camera_id=src_camera)
+                    cfg = r.hgetall(cfg_key)
+                    notify_person = cfg.get("notify_person", "1") == "1"
+                    notify_vehicle = cfg.get("notify_vehicle", "1") == "1"
+                    suppress_known = cfg.get("suppress_known", "0") == "1"
+
                     for msg_id, data in messages:
-                        last_id = msg_id
+                        last_ids[sname] = msg_id
+                        # Inject camera id into data so notify_* / consumers see it
+                        data = {**data, "camera_id": src_camera}
                         event_type = data.get("event_type", "")
 
-                        # Journal ALL events to daily JSONL
+                        # Journal ALL events to daily JSONL (with camera tag)
                         await loop.run_in_executor(
-                            None, _journal_event, msg_id, data
+                            None, _journal_event, msg_id, data, src_camera
                         )
 
                         if event_type == "person_appeared":
-                            # Use snapshot_bbox (matches the saved snapshot frame)
-                            # instead of live bbox to avoid bbox/frame mismatch
                             bbox_json = data.get("snapshot_bbox", "") or data.get("bbox", "")
                             evt_snap_key = data.get("snapshot_key", "")
                             snap_bytes = await loop.run_in_executor(
-                                None, lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key: _save_snapshot(eid, bb, sk)
+                                None,
+                                lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key, c=src_camera:
+                                    _save_snapshot(eid, bb, sk, c)
                             )
-                            # Send Telegram if person notifications enabled
                             if is_configured() and notify_person:
                                 await notify_person_detected(
                                     data, event_id=msg_id,
@@ -267,13 +342,13 @@ async def event_notification_poller():
                                 )
 
                         elif event_type == "person_identified":
-                            # Use snapshot_bbox to match saved frame
                             bbox_json = data.get("snapshot_bbox", "") or data.get("bbox", "")
                             evt_snap_key = data.get("snapshot_key", "")
                             snap_bytes = await loop.run_in_executor(
-                                None, lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key: _save_snapshot(eid, bb, sk)
+                                None,
+                                lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key, c=src_camera:
+                                    _save_snapshot(eid, bb, sk, c)
                             )
-                            # Skip if suppress_known is on (known people don't alert)
                             if is_configured() and notify_person and not suppress_known:
                                 await notify_person_identified(
                                     data, event_id=msg_id,
@@ -281,31 +356,33 @@ async def event_notification_poller():
                                 )
 
                         elif event_type == "vehicle_detected":
-                            # Save event snapshot with highlighted bbox for event detail modal
                             bbox_json = data.get("bbox", "")
                             evt_snap_key = data.get("snapshot_key", "")
                             await loop.run_in_executor(
-                                None, lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key: _save_snapshot(eid, bb, sk)
+                                None,
+                                lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key, c=src_camera:
+                                    _save_snapshot(eid, bb, sk, c)
                             )
-                            # Also save vehicle snapshot to disk in day folder
                             snapshot_key = data.get("snapshot_key", "")
                             if snapshot_key:
                                 await loop.run_in_executor(
-                                    None, _save_vehicle_snapshot, snapshot_key, data
+                                    None, _save_vehicle_snapshot,
+                                    snapshot_key, data, src_camera,
                                 )
 
                         elif event_type == "vehicle_idle":
-                            # Save snapshot with highlighted bbox for feedback modal
                             bbox_json = data.get("bbox", "")
                             evt_snap_key = data.get("snapshot_key", "")
                             snap_bytes = await loop.run_in_executor(
-                                None, lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key: _save_snapshot(eid, bb, sk)
+                                None,
+                                lambda eid=msg_id, bb=bbox_json, sk=evt_snap_key, c=src_camera:
+                                    _save_snapshot(eid, bb, sk, c)
                             )
-                            # Save vehicle snapshot to disk too
                             snapshot_key = data.get("snapshot_key", "")
                             if snapshot_key:
                                 await loop.run_in_executor(
-                                    None, _save_vehicle_snapshot, snapshot_key, data
+                                    None, _save_vehicle_snapshot,
+                                    snapshot_key, data, src_camera,
                                 )
                             if is_configured() and notify_vehicle:
                                 await notify_vehicle_idle(

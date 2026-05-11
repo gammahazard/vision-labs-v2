@@ -1189,11 +1189,12 @@ async def _cmd_events(chat_id: str = "", text: str = "", **kwargs):
             if time_str:
                 caption += f"\n🕐 {time_str}"
 
-            # Try to send event snapshot as photo
-            safe_id = msg_id.replace(":", "-") if isinstance(msg_id, str) else msg_id.decode().replace(":", "-")
-            snap_path = os.path.join(SNAPSHOT_DIR, f"{safe_id}.jpg")
+            # Try to send event snapshot as photo (per-camera path)
+            from routes.events import resolve_event_snapshot_path
+            mid = msg_id if isinstance(msg_id, str) else msg_id.decode()
+            snap_path = resolve_event_snapshot_path(mid, camera_id=src_cid)
             sent_photo = False
-            if os.path.isfile(snap_path):
+            if snap_path and os.path.isfile(snap_path):
                 try:
                     with open(snap_path, "rb") as f:
                         snap_bytes = f.read()
@@ -1490,7 +1491,23 @@ async def _cmd_timelapse(chat_id: str = "", text: str = "", **kwargs):
         )
         return
 
-    all_jpgs = glob.glob(os.path.join(SNAPSHOT_DIR, "*.jpg"))
+    # Search per-camera subdirs. Specified camera_id narrows; otherwise scans
+    # all subdirs (and the legacy flat root for pre-fan-out snapshots).
+    if cam_ids and len(cam_ids) == 1 and cam_ids[0] != "all":
+        search_globs = [os.path.join(SNAPSHOT_DIR, cam_ids[0], "*.jpg")]
+    else:
+        # Scan every camera subdir + legacy root
+        subdir_globs = [
+            os.path.join(SNAPSHOT_DIR, d, "*.jpg")
+            for d in os.listdir(SNAPSHOT_DIR)
+            if os.path.isdir(os.path.join(SNAPSHOT_DIR, d)) and d != "vehicles" and d != "clips"
+        ]
+        search_globs = subdir_globs + [os.path.join(SNAPSHOT_DIR, "*.jpg")]
+
+    all_jpgs = []
+    for g in search_globs:
+        all_jpgs.extend(glob.glob(g))
+
     matching = []
     for path in all_jpgs:
         fname = os.path.splitext(os.path.basename(path))[0]  # e.g. "1708567891234-0"
@@ -1768,9 +1785,9 @@ async def _cmd_ask(chat_id: str = "", text: str = "", **kwargs):
                     # Event snapshots: /api/events/{event_id}/snapshot
                     elif url.startswith("/api/events/") and url.endswith("/snapshot"):
                         event_id = url.replace("/api/events/", "").replace("/snapshot", "")
-                        safe_id = event_id.replace(":", "-")
-                        snap_path = os.path.join(SNAPSHOT_DIR, f"{safe_id}.jpg")
-                        if os.path.isfile(snap_path):
+                        from routes.events import resolve_event_snapshot_path
+                        snap_path = resolve_event_snapshot_path(event_id)
+                        if snap_path and os.path.isfile(snap_path):
                             with open(snap_path, "rb") as f:
                                 await send_photo(f.read(), caption or "📸 Event", chat_id=chat_id)
                 except Exception:
