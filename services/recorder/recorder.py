@@ -162,14 +162,16 @@ def record_segments() -> bool:
         "-i", RTSP_URL,
         # --- Copy codec (no transcode) ---
         "-c", "copy",
-        # --- Segment muxer ---
+        # --- Segment muxer (rolls every SEGMENT_DURATION seconds) ---
         "-f", "segment",
         "-segment_time", str(SEGMENT_DURATION),
-        "-segment_format", "mpegts",     # MPEG-TS = crash-safe
-        "-segment_atclocktime", "1",     # Split on clock boundaries (top of hour)
-        "-strftime", "1",               # Use strftime in output pattern
+        "-segment_format", "mpegts",     # MPEG-TS = crash-safe (per-packet playable)
+        "-strftime", "1",                # Use strftime in output filename
         "-reset_timestamps", "1",        # Each segment starts at t=0
-        "-break_non_keyframes", "1",     # Don't wait for keyframe at split point
+        # NOTE: previously had -segment_atclocktime + -break_non_keyframes here.
+        # The combination caused ffmpeg to split at every minute boundary
+        # regardless of segment_time. Dropping them gives clean per-duration
+        # segments at the cost of not being aligned to top-of-hour.
         segment_pattern,
     ]
 

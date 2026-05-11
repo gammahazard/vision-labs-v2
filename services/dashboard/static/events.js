@@ -23,8 +23,14 @@ const eventCount = document.getElementById("eventCount");
 // ---------------------------------------------------------------------------
 // Camera filter (multi-camera)
 // ---------------------------------------------------------------------------
-// Set via URL ?camera=<id> on the per-camera page, or via window.EVENT_FEED_CAMERA
-// before this script loads. Empty = aggregate across every enabled camera.
+// Resolution order:
+//   1. ?camera=<id> URL param         → that camera (or "all" for aggregate)
+//   2. window.EVENT_FEED_CAMERA       → page-level override (set by single.html
+//                                       to "primary"/<id>, by index.html to "all")
+//   3. fallback                       → "" (backend defaults to primary)
+//
+// "all" means aggregate-across-all-cameras (used by the home page).
+// Anything else is treated as a specific camera id and passed verbatim.
 const _cameraFilter = (() => {
     try {
         const fromUrl = new URLSearchParams(window.location.search).get("camera");
@@ -32,6 +38,7 @@ const _cameraFilter = (() => {
     } catch (e) { /* SSR/edge */ }
     return window.EVENT_FEED_CAMERA || "";
 })();
+// Aggregate feed is when filter is empty (no scope set) OR explicitly "all".
 const _isAggregateFeed = !_cameraFilter || _cameraFilter === "all";
 
 // Camera-name cache (id -> friendly name) for badge rendering on aggregate feeds
