@@ -526,11 +526,15 @@ async def broadcast_video(video_bytes: bytes, caption: str = "") -> int:
     return first_msg_id
 
 
-def build_clip(duration: float = 5.0, fps: int = 10) -> bytes | None:
+def build_clip(duration: float = 5.0, fps: int = 10, camera_id: str = "") -> bytes | None:
     """
     Capture frames from the Redis stream and encode as MP4 clip.
     Collects frames for `duration` seconds using xread to get unique frames.
     Returns MP4 bytes or None on failure.
+
+    If `camera_id` is empty, uses the dashboard's primary FRAME_STREAM
+    (ctx.FRAME_STREAM). Pass an explicit id to record from a non-primary
+    camera (cam2, etc.) via the per-camera frame stream template.
     """
     import cv2
     import numpy as np
@@ -542,7 +546,11 @@ def build_clip(duration: float = 5.0, fps: int = 10) -> bytes | None:
         frames = []
         target_count = int(duration * fps)
         start = _time.monotonic()
-        stream_key = ctx.FRAME_STREAM.encode()
+        if camera_id and camera_id != ctx.CAMERA_ID:
+            from contracts.streams import FRAME_STREAM as _FRAME_TMPL, stream_key as _stream_key
+            stream_key = _stream_key(_FRAME_TMPL, camera_id=camera_id).encode()
+        else:
+            stream_key = ctx.FRAME_STREAM.encode()
 
         # Get the latest stream ID as our starting point
         latest = r_bin.xrevrange(stream_key, count=1)
