@@ -167,15 +167,9 @@ function connectWebSocket() {
                 liveFrame.src = "data:image/jpeg;base64," + msg.frame;
                 liveFrame.style.display = "block";
                 noSignal.style.display = "none";
-
-                // Mirror frame to wizard live feed when enrollment wizard is open
-                if (typeof _wizardActive !== "undefined" && _wizardActive) {
-                    const wizFeed = document.getElementById("wizardLiveFeed");
-                    if (wizFeed) {
-                        wizFeed.src = liveFrame.src;
-                        wizFeed.style.display = "block";
-                    }
-                }
+                // Note: the enrollment wizard now opens its own dedicated
+                // WebSocket pinned to front_door (see faces.js
+                // _wizardOpenPreviewWS) so we don't mirror the main feed here.
 
                 // Update FPS counter
                 frameCount++;

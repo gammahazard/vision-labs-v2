@@ -41,6 +41,45 @@ let _wizardActive = false;
 // ---------------------------------------------------------------------------
 // Start the Enrollment Wizard
 // ---------------------------------------------------------------------------
+// Face enrollment is ALWAYS pinned to the primary camera (front_door). The
+// backend enrollment proxy already hits face-recognizer:8081 which reads
+// from frames:front_door, so the wizard preview opens a dedicated WebSocket
+// to that camera regardless of which detail page the user is on.
+// This avoids the visual disconnect where a wizard launched from
+// /single.html?camera=cam2 would have shown the basement feed.
+const ENROLLMENT_CAMERA = "front_door";  // pinned; matches face-recognizer:8081 mount
+let _wizardWs = null;
+
+function _wizardOpenPreviewWS() {
+    _wizardCloseWS();  // belt-and-suspenders
+    try {
+        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+        const url = `${protocol}://${window.location.host}/ws/live?camera=${encodeURIComponent(ENROLLMENT_CAMERA)}`;
+        _wizardWs = new WebSocket(url);
+        const wizFeed = document.getElementById("wizardLiveFeed");
+        _wizardWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === "frame" && msg.frame && wizFeed) {
+                    wizFeed.src = "data:image/jpeg;base64," + msg.frame;
+                    wizFeed.style.display = "block";
+                }
+            } catch (_) { /* ignore */ }
+        };
+        _wizardWs.onclose = () => { _wizardWs = null; };
+        _wizardWs.onerror = (e) => { console.warn("Wizard WS error:", e); };
+    } catch (e) {
+        console.warn("Failed to open wizard preview WS:", e);
+    }
+}
+
+function _wizardCloseWS() {
+    if (_wizardWs && _wizardWs.readyState !== WebSocket.CLOSED) {
+        try { _wizardWs.close(); } catch (_) {}
+    }
+    _wizardWs = null;
+}
+
 function startEnrollWizard() {
     const name = _faceEls.nameInput?.value.trim();
     if (!name) {
@@ -55,6 +94,9 @@ function startEnrollWizard() {
 
     // Set wizard name display
     document.getElementById("wizardName").textContent = name;
+    // Hint which camera is being used (visible in the wizard header area)
+    const camHint = document.getElementById("wizardCameraHint");
+    if (camHint) camHint.textContent = `Using ${ENROLLMENT_CAMERA} camera`;
 
     // Reset all step indicators
     document.querySelectorAll(".wizard-step").forEach((el, i) => {
@@ -63,6 +105,9 @@ function startEnrollWizard() {
 
     // Reset UI
     _wizardUpdateUI();
+
+    // Open the pinned-front_door preview WebSocket (independent of the page's main feed)
+    _wizardOpenPreviewWS();
 
     // Show wizard modal with animation
     const overlay = document.getElementById("enrollWizard");
@@ -75,6 +120,7 @@ function startEnrollWizard() {
 // ---------------------------------------------------------------------------
 function closeWizard() {
     _wizardActive = false;
+    _wizardCloseWS();
     const overlay = document.getElementById("enrollWizard");
     overlay.classList.remove("visible");
     setTimeout(() => { overlay.style.display = "none"; }, 300);
