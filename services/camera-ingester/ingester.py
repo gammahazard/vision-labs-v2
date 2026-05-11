@@ -269,8 +269,22 @@ def run():
         # --- Frame capture loop ---
         last_frame_time = 0.0
         consecutive_failures = 0
+        last_good_frame_wallclock = time.time()
+        # Force reconnect if no frame has decoded in this many seconds, regardless
+        # of consecutive_failures. Catches the case where cv2.VideoCapture.read()
+        # blocks for 30s in FFmpeg's stream timeout — consecutive_failures alone
+        # would take ~50 min to trigger reconnect at that rate.
+        STALE_FRAME_RECONNECT_SECS = 30
 
         while not _shutdown:
+            # Wallclock-based staleness check (catches long FFmpeg timeouts)
+            if time.time() - last_good_frame_wallclock > STALE_FRAME_RECONNECT_SECS:
+                logger.warning(
+                    f"No decoded frame in {STALE_FRAME_RECONNECT_SECS}s "
+                    f"(camera likely unplugged or stream stalled) — reconnecting..."
+                )
+                break
+
             # Throttle to TARGET_FPS (don't flood Redis with 15 FPS if we only need 5)
             now = time.time()
             elapsed = now - last_frame_time
@@ -292,6 +306,7 @@ def run():
                 continue
 
             consecutive_failures = 0
+            last_good_frame_wallclock = time.time()
 
             # Encode frame as JPEG
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
@@ -372,8 +387,17 @@ def run_hd_stream():
         last_frame_time = 0.0
         consecutive_failures = 0
         hd_frame_count = 0
+        last_good_frame_wallclock = time.time()
+        STALE_FRAME_RECONNECT_SECS = 30  # match sub-stream
 
         while not _shutdown:
+            # Wallclock-based staleness check
+            if time.time() - last_good_frame_wallclock > STALE_FRAME_RECONNECT_SECS:
+                logger.warning(
+                    f"HD stream: no decoded frame in {STALE_FRAME_RECONNECT_SECS}s — reconnecting..."
+                )
+                break
+
             now = time.time()
             if now - last_frame_time < frame_interval:
                 cap.grab()
@@ -390,6 +414,7 @@ def run_hd_stream():
                 continue
 
             consecutive_failures = 0
+            last_good_frame_wallclock = time.time()
             _, jpeg_buf = cv2.imencode(
                 ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, HD_JPEG_QUALITY]
             )
