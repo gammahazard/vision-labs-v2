@@ -347,6 +347,106 @@ async def poll_telegram_callbacks():
 
 
 # ---------------------------------------------------------------------------
+# Multi-camera helpers (Phase 9b)
+# ---------------------------------------------------------------------------
+# Telegram users specify a camera by typing its id ("cam2") or friendly name
+# ("basement") anywhere in the command text. The resolver scans tokens for
+# any match against the registry, strips it, and returns the remaining text
+# so per-command arg parsing (duration, date, count) still works.
+#
+# Match priority:
+#   1. exact id      (case-insensitive)
+#   2. exact name    (case-insensitive)
+#   3. unambiguous prefix match (>= 3 chars, single hit)
+#   4. "all"         -> every enabled camera
+#
+# No match -> default to the dashboard's primary camera.
+
+def _telegram_get_cameras() -> list:
+    """Return enabled cameras from the registry (id, name, etc.) sorted by id."""
+    try:
+        raw = ctx.r.hgetall("cameras:registry") or {}
+        out = []
+        for cid, val in raw.items():
+            try:
+                entry = json.loads(val)
+                if entry.get("enabled", True):
+                    out.append(entry)
+            except Exception:
+                continue
+        out.sort(key=lambda c: c.get("id", ""))
+        return out
+    except Exception:
+        return []
+
+
+def _camera_friendly_name(cam_id: str) -> str:
+    """Look up a camera's display name. Falls back to the id if none."""
+    for c in _telegram_get_cameras():
+        if c.get("id") == cam_id:
+            return c.get("name") or cam_id
+    return cam_id
+
+
+def _resolve_camera_token(text: str) -> tuple[list[str], str]:
+    """
+    Scan `text` for a camera token. Returns (camera_ids, remaining_text).
+
+    The remaining text still contains the leading command (/clip, /events, etc.)
+    so existing per-command arg parsing (e.g., duration for /clip) keeps working.
+
+    If no token matches, returns ([primary_cam_id], text_unchanged).
+    """
+    cams = _telegram_get_cameras()
+    cam_ids = [c["id"] for c in cams]
+
+    id_map = {c["id"].lower(): c["id"] for c in cams}
+    name_map = {(c.get("name") or "").lower(): c["id"]
+                for c in cams if c.get("name")}
+
+    tokens = (text or "").split()
+    new_tokens = []
+    matched: list[str] | None = None
+
+    for tok in tokens:
+        if matched is None:
+            tlow = tok.lower()
+            # 1. "all"
+            if tlow == "all":
+                matched = cam_ids if cam_ids else None
+                if matched:
+                    continue
+            # 2. exact id
+            if tlow in id_map:
+                matched = [id_map[tlow]]
+                continue
+            # 3. exact name
+            if tlow in name_map:
+                matched = [name_map[tlow]]
+                continue
+            # 4. unambiguous prefix (>= 3 chars)
+            if len(tlow) >= 3:
+                prefix_hits = set()
+                for key, cid in id_map.items():
+                    if key.startswith(tlow):
+                        prefix_hits.add(cid)
+                for key, cid in name_map.items():
+                    if key.startswith(tlow):
+                        prefix_hits.add(cid)
+                if len(prefix_hits) == 1:
+                    matched = list(prefix_hits)
+                    continue
+        new_tokens.append(tok)
+
+    if matched is None:
+        # Default to primary camera
+        primary = os.getenv("CAMERA_ID", "") or (cam_ids[0] if cam_ids else "")
+        matched = [primary] if primary else []
+
+    return matched, " ".join(new_tokens)
+
+
+# ---------------------------------------------------------------------------
 # Command router
 # ---------------------------------------------------------------------------
 def _get_user_role(user_id: str) -> str:
@@ -366,28 +466,27 @@ def _get_user_role(user_id: str) -> str:
 async def _handle_command(cmd: str, chat_id: str = "", text: str = "",
                           user_id: str = "", username: str = ""):
     """Route a bot command to the appropriate handler."""
-    # Commands that accept args from the raw text
-    args_handlers = {
-        "/clip": _cmd_clip,
-        "/events": _cmd_events,
-        "/ask": _cmd_ask,
-        "/timelapse": _cmd_timelapse,
-        "/analyze": _cmd_analyze,
-    }
-    # Admin-only commands
+    # Admin-only commands (system-wide, no per-camera scoping)
     admin_handlers = {
         "/arm": _cmd_arm,
         "/disarm": _cmd_disarm,
     }
-    # Simple commands
-    simple_handlers = {
+    # All user commands now accept text so they can extract a camera token
+    # if present. Each handler is responsible for parsing its own extra args.
+    user_handlers = {
         "/snapshot": _cmd_snapshot,
+        "/clip": _cmd_clip,
         "/status": _cmd_status,
         "/who": _cmd_who,
         "/zones": _cmd_zones,
+        "/events": _cmd_events,
+        "/timelapse": _cmd_timelapse,
+        "/analyze": _cmd_analyze,
+        "/ask": _cmd_ask,
         "/rules": _cmd_time_rules,
         "/night": _cmd_night,
         "/faces": _cmd_faces,
+        "/cameras": _cmd_cameras,
         "/start": _cmd_help,
         "/help": _cmd_help,
     }
@@ -402,12 +501,9 @@ async def _handle_command(cmd: str, chat_id: str = "", text: str = "",
                 await send_text("🔒 This command is reserved for admins.", chat_id=chat_id)
                 return
             await admin_handlers[cmd](chat_id=chat_id)
-        elif cmd in args_handlers:
-            await args_handlers[cmd](chat_id=chat_id, text=text,
-                                     user_id=user_id, username=username)
-        elif cmd in simple_handlers:
-            await simple_handlers[cmd](chat_id=chat_id,
-                                       user_id=user_id, username=username)
+        elif cmd in user_handlers:
+            await user_handlers[cmd](chat_id=chat_id, text=text,
+                                      user_id=user_id, username=username)
         else:
             await _cmd_help(chat_id=chat_id)
     except Exception as e:
@@ -418,105 +514,184 @@ async def _handle_command(cmd: str, chat_id: str = "", text: str = "",
 # ---------------------------------------------------------------------------
 # Bot command implementations
 # ---------------------------------------------------------------------------
-async def _cmd_snapshot(chat_id: str = "", user_id: str = "",
-                        username: str = "", **kwargs):
-    """Send a live camera snapshot with AI scene description."""
-    frame = get_latest_frame()
-    if frame:
-        # Save copy to per-user audit trail on QNAP
-        _save_telegram_media(username, user_id, frame, "snapshot", ".jpg")
-        await send_photo(frame, f"📸 Live snapshot — {_now_str()}", chat_id=chat_id)
+async def _cmd_snapshot(chat_id: str = "", text: str = "",
+                        user_id: str = "", username: str = "", **kwargs):
+    """Send a live camera snapshot with AI scene description.
 
-        # Run MiniCPM-V scene analysis in background
-        try:
-            from routes.notifications import describe_scene
-            desc = await describe_scene(frame, timeout=25.0)
-            if desc:
-                await send_text(f"👁️ <b>AI Analysis</b> <i>(MiniCPM-V)</i>\n\n{desc}", chat_id=chat_id)
-        except Exception as e:
-            logger.debug(f"Snapshot AI analysis failed: {e}")
-    else:
-        await send_text("⚠️ No camera frame available", chat_id=chat_id)
+    Examples:
+      /snapshot           — primary camera
+      /snapshot basement  — that camera
+      /snapshot all       — one photo per enabled camera
+    """
+    cam_ids, _ = _resolve_camera_token(text)
+    if not cam_ids:
+        await send_text("⚠️ No cameras configured. Add one in the dashboard.", chat_id=chat_id)
+        return
+
+    for cid in cam_ids:
+        friendly = _camera_friendly_name(cid)
+        frame = get_latest_frame(camera_id=cid)
+        if frame:
+            _save_telegram_media(username, user_id, frame, f"snapshot_{cid}", ".jpg")
+            await send_photo(
+                frame,
+                f"📸 <b>{friendly}</b> — {_now_str()}",
+                chat_id=chat_id,
+            )
+            # Run MiniCPM-V scene analysis in background (per camera)
+            try:
+                from routes.notifications import describe_scene
+                desc = await describe_scene(frame, timeout=25.0)
+                if desc:
+                    await send_text(
+                        f"👁️ <b>{friendly} — AI Analysis</b> <i>(MiniCPM-V)</i>\n\n{desc}",
+                        chat_id=chat_id,
+                    )
+            except Exception as e:
+                logger.debug(f"Snapshot AI analysis failed for {cid}: {e}")
+        else:
+            await send_text(f"⚠️ No frame available from <b>{friendly}</b>", chat_id=chat_id)
 
 
 async def _cmd_clip(chat_id: str = "", text: str = "",
                     user_id: str = "", username: str = "", **kwargs):
-    """Capture and send a video clip (5-40s, default 5) with AI analysis."""
-    # Parse optional duration from text: /clip 15
+    """Capture and send a video clip (5-40s, default 5) with AI analysis.
+
+    Examples:
+      /clip             — 5s on primary
+      /clip 15          — 15s on primary
+      /clip basement    — 5s on basement
+      /clip 10 basement — 10s on basement (order doesn't matter)
+      /clip all         — 5s clip from each enabled camera, sent in sequence
+    """
+    cam_ids, remaining_text = _resolve_camera_token(text)
+    if not cam_ids:
+        await send_text("⚠️ No cameras configured.", chat_id=chat_id)
+        return
+
+    # Parse optional duration from the REMAINING text (camera token already stripped)
     duration = 5.0
-    parts = text.split()
-    if len(parts) >= 2:
+    parts = remaining_text.split()
+    for p in parts[1:]:  # skip the /clip command itself
         try:
-            duration = float(parts[1])
-            duration = max(5.0, min(40.0, duration))
-        except (ValueError, IndexError):
-            pass
+            duration = max(5.0, min(40.0, float(p)))
+            break
+        except ValueError:
+            continue
 
-    await send_text(f"🎬 Recording {int(duration)}-second clip...", chat_id=chat_id)
     loop = asyncio.get_running_loop()
-    clip_bytes = await loop.run_in_executor(
-        None, lambda: build_clip(duration=duration, fps=10)
-    )
-    if clip_bytes:
-        # Save copy to per-user audit trail on QNAP
-        _save_telegram_media(username, user_id, clip_bytes, "clip", ".mp4")
-        await send_video(clip_bytes, f"🎬 {int(duration)}s clip — {_now_str()}", chat_id=chat_id)
 
-        # Extract frames from clip and analyze with MiniCPM-V
-        try:
-            frames = await loop.run_in_executor(
-                None, lambda: _extract_clip_frames(clip_bytes, max_frames=6)
+    for cid in cam_ids:
+        friendly = _camera_friendly_name(cid)
+        await send_text(
+            f"🎬 Recording {int(duration)}-second clip from <b>{friendly}</b>...",
+            chat_id=chat_id,
+        )
+        clip_bytes = await loop.run_in_executor(
+            None, lambda c=cid: build_clip(duration=duration, fps=10, camera_id=c)
+        )
+        if clip_bytes:
+            _save_telegram_media(username, user_id, clip_bytes, f"clip_{cid}", ".mp4")
+            await send_video(
+                clip_bytes,
+                f"🎬 <b>{friendly}</b> · {int(duration)}s — {_now_str()}",
+                chat_id=chat_id,
             )
-            if frames:
-                desc = await _describe_scene_multi(frames, timeout=45.0)
-                if desc:
-                    await send_text(f"👁️ <b>AI Clip Analysis</b> <i>(MiniCPM-V · {len(frames)} frames)</i>\n\n{desc}", chat_id=chat_id)
-        except Exception as e:
-            logger.debug(f"Clip AI analysis failed: {e}")
-    else:
-        await send_text("⚠️ Failed to capture clip — not enough frames", chat_id=chat_id)
+
+            # Extract frames from clip and analyze with MiniCPM-V (per camera)
+            try:
+                frames = await loop.run_in_executor(
+                    None, lambda: _extract_clip_frames(clip_bytes, max_frames=6)
+                )
+                if frames:
+                    desc = await _describe_scene_multi(frames, timeout=45.0)
+                    if desc:
+                        await send_text(
+                            f"👁️ <b>{friendly} — Clip Analysis</b> "
+                            f"<i>(MiniCPM-V · {len(frames)} frames)</i>\n\n{desc}",
+                            chat_id=chat_id,
+                        )
+            except Exception as e:
+                logger.debug(f"Clip AI analysis failed for {cid}: {e}")
+        else:
+            await send_text(
+                f"⚠️ Failed to capture clip from <b>{friendly}</b> — not enough frames",
+                chat_id=chat_id,
+            )
 
 
-async def _cmd_status(chat_id: str = "", **kwargs):
-    """Send system health summary."""
+async def _cmd_status(chat_id: str = "", text: str = "", **kwargs):
+    """Send system health summary. Multi-camera aware.
+
+    Defaults to showing all cameras. Pass a camera token to scope to one:
+      /status            — all cameras
+      /status basement   — basement only
+    """
+    from contracts.streams import (
+        FRAME_STREAM as _FRAME_TMPL,
+        EVENT_STREAM as _EVT_TMPL,
+        HD_FRAME_KEY as _HD_TMPL,
+        CONFIG_KEY as _CFG_TMPL,
+        stream_key as _stream_key,
+    )
     try:
-        r = ctx.r  # Use the centralized Redis connection
+        r = ctx.r
+        r_raw = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+
+        # Default to "all" for status: if user didn't name a camera, show every one.
+        cam_ids, _ = _resolve_camera_token(text)
+        # If user didn't include a camera token, _resolve returns [primary] —
+        # for /status we override that to "all" so we always show the whole system.
+        token_present = any(
+            tok.lower() in (
+                {c["id"].lower() for c in _telegram_get_cameras()} |
+                {(c.get("name") or "").lower() for c in _telegram_get_cameras()} |
+                {"all"}
+            )
+            for tok in text.split()
+        )
+        if not token_present:
+            cam_ids = [c["id"] for c in _telegram_get_cameras()] or cam_ids
+
         info = r.info("memory")
         mem_used = info.get("used_memory_human", "?")
 
-        # Check frame stream health
-        frame_len = r.xlen(ctx.FRAME_STREAM) if ctx.FRAME_STREAM else 0
-        # HD frame check needs raw bytes connection
-        r_raw = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
-        hd_exists = bool(r_raw.get(ctx.HD_FRAME_KEY.encode())) if ctx.HD_FRAME_KEY else False
+        parts = [f"📊 <b>System Status</b>", f"• Redis memory: {mem_used}"]
 
-        # Check event stream length
-        event_len = r.xlen(ctx.EVENT_STREAM)
+        # Per-camera health
+        for cid in cam_ids:
+            friendly = _camera_friendly_name(cid)
+            frame_stream = _stream_key(_FRAME_TMPL, camera_id=cid)
+            evt_stream = _stream_key(_EVT_TMPL, camera_id=cid)
+            hd_key = _stream_key(_HD_TMPL, camera_id=cid)
+            cfg_key = _stream_key(_CFG_TMPL, camera_id=cid)
 
-        # Read notification preferences from Redis config
-        cfg = r.hgetall(ctx.CONFIG_KEY)
-        person_on = cfg.get("notify_person", "1") == "1"
-        vehicle_on = cfg.get("notify_vehicle", "1") == "1"
-        if person_on and vehicle_on:
-            alert_str = "🟢 All alerts on"
-        elif not person_on and not vehicle_on:
-            alert_str = "🔴 All alerts off"
-        else:
-            parts_a = []
-            if person_on: parts_a.append("Person")
-            if vehicle_on: parts_a.append("Vehicle")
-            alert_str = f"🟡 {', '.join(parts_a)} only"
+            frame_len = r.xlen(frame_stream)
+            event_len = r.xlen(evt_stream)
+            hd_exists = bool(r_raw.get(hd_key.encode()))
 
-        status = (
-            f"📊 <b>System Status</b>\n"
-            f"• Notifications: {alert_str}\n"
-            f"• Redis memory: {mem_used}\n"
-            f"• Frame buffer: {frame_len} frames\n"
-            f"• HD stream: {'✅' if hd_exists else '❌'}\n"
-            f"• Events total: {event_len}\n"
-            f"• Time: {_now_str()}"
-        )
-        await send_text(status, chat_id=chat_id)
+            cfg = r.hgetall(cfg_key)
+            person_on = cfg.get("notify_person", "1") == "1"
+            vehicle_on = cfg.get("notify_vehicle", "1") == "1"
+            if person_on and vehicle_on:
+                alert_str = "🟢 all alerts on"
+            elif not person_on and not vehicle_on:
+                alert_str = "🔴 all alerts off"
+            else:
+                a = []
+                if person_on: a.append("person")
+                if vehicle_on: a.append("vehicle")
+                alert_str = f"🟡 {', '.join(a)} only"
+
+            parts.append(
+                f"\n<b>📷 {friendly}</b> ({cid})\n"
+                f"• Notifications: {alert_str}\n"
+                f"• Frame buffer: {frame_len} frames · HD: {'✅' if hd_exists else '❌'}\n"
+                f"• Events total: {event_len}"
+            )
+
+        parts.append(f"\n• Time: {_now_str()}")
+        await send_text("\n".join(parts), chat_id=chat_id)
     except Exception as e:
         await send_text(f"⚠️ Status check failed: {e}", chat_id=chat_id)
 
@@ -547,45 +722,65 @@ async def _cmd_disarm(chat_id: str = ""):
         await send_text(f"⚠️ Failed to disarm: {e}", chat_id=chat_id)
 
 
-async def _cmd_who(chat_id: str = "", **kwargs):
-    """Report who/what is currently in the camera frame."""
+async def _cmd_who(chat_id: str = "", text: str = "", **kwargs):
+    """Report who/what is currently in frame across one or more cameras.
+
+    Default = all cameras (aggregated, since 'who is around right now?' is
+    inherently a system-wide question). Specify a camera to narrow:
+      /who           — all cameras
+      /who basement  — basement only
+    """
+    from contracts.streams import STATE_KEY as _STATE_TMPL, stream_key as _stream_key
     try:
-        state = ctx.r.hgetall(ctx.STATE_KEY)
-        if not state:
-            await send_text("👀 No detection state available — scene may be clear.", chat_id=chat_id)
-            return
+        cam_ids, _ = _resolve_camera_token(text)
+        # Default to "all" for /who when no token was present
+        token_present = any(
+            tok.lower() in (
+                {c["id"].lower() for c in _telegram_get_cameras()} |
+                {(c.get("name") or "").lower() for c in _telegram_get_cameras()} |
+                {"all"}
+            )
+            for tok in text.split()
+        )
+        if not token_present:
+            cam_ids = [c["id"] for c in _telegram_get_cameras()] or cam_ids
 
         parts = ["👁️ <b>Current Scene</b>"]
+        for cid in cam_ids:
+            friendly = _camera_friendly_name(cid)
+            state_key = _stream_key(_STATE_TMPL, camera_id=cid)
+            state = ctx.r.hgetall(state_key) or {}
 
-        # People
-        num_people = int(state.get("num_people", "0"))
-        if num_people > 0:
-            parts.append(f"• People: {num_people}")
-            try:
-                people = json.loads(state.get("people", "[]"))
-                for p in people[:5]:
-                    name = p.get("identity_name", p.get("id", "unknown"))
-                    action = p.get("action", "")
-                    parts.append(f"  — {name}{f' ({action})' if action else ''}")
-            except json.JSONDecodeError:
-                pass
-        else:
-            parts.append("• People: none")
+            parts.append(f"\n<b>📷 {friendly}</b>")
+            if not state:
+                parts.append("  • no detection state — may be clear")
+                continue
 
-        # Vehicles (check if tracker publishes vehicle info)
-        num_vehicles = int(state.get("num_vehicles", "0"))
-        if num_vehicles > 0:
-            parts.append(f"• Vehicles: {num_vehicles}")
-            try:
-                vehicles = json.loads(state.get("vehicles", "[]"))
-                for v in vehicles[:5]:
-                    parts.append(f"  — {v.get('class', 'vehicle')}")
-            except json.JSONDecodeError:
-                pass
-        else:
-            parts.append("• Vehicles: none")
+            num_people = int(state.get("num_people", "0") or 0)
+            if num_people > 0:
+                parts.append(f"  • People: {num_people}")
+                try:
+                    people = json.loads(state.get("people", "[]"))
+                    for p in people[:5]:
+                        name = p.get("identity_name", p.get("id", "unknown"))
+                        action = p.get("action", "")
+                        parts.append(f"    — {name}{f' ({action})' if action else ''}")
+                except json.JSONDecodeError:
+                    pass
+            else:
+                parts.append("  • People: none")
 
-        parts.append(f"• Time: {_now_str()}")
+            num_vehicles = int(state.get("num_vehicles", "0") or 0)
+            if num_vehicles > 0:
+                parts.append(f"  • Vehicles: {num_vehicles}")
+                try:
+                    vehicles = json.loads(state.get("vehicles", "[]"))
+                    for v in vehicles[:5]:
+                        parts.append(f"    — {v.get('class', 'vehicle')}")
+                except json.JSONDecodeError:
+                    pass
+
+        parts.append(f"\n🕐 {_now_str()}")
         await send_text("\n".join(parts), chat_id=chat_id)
     except Exception as e:
         await send_text(f"⚠️ Failed to read scene state: {e}", chat_id=chat_id)
@@ -593,26 +788,85 @@ async def _cmd_who(chat_id: str = "", **kwargs):
 
 async def _cmd_help(chat_id: str = "", **kwargs):
     """Send list of available commands."""
+    cams = _telegram_get_cameras()
+    if cams:
+        cam_examples = " · ".join(
+            f"<code>{c.get('name') or c.get('id')}</code>" for c in cams[:4]
+        )
+        multi_note = (
+            "\n📷 <b>Multi-camera</b>\n"
+            f"Most commands accept an optional camera name at the end:\n"
+            f"  {cam_examples}\n"
+            "Use <code>all</code> to fan-out across every camera.\n"
+            "Examples: <code>/snapshot basement</code> · <code>/clip 10 front</code> · <code>/events all</code>\n"
+            "See <code>/cameras</code> to list available.\n"
+        )
+    else:
+        multi_note = ""
+
     await send_text(
         "🤖 <b>Vision Labs Bot</b>\n\n"
-        "/snapshot — 📸 Live photo + AI analysis\n"
-        "/clip [5-40] — 🎬 Video clip + AI analysis\n"
-        "/analyze — 👁️ AI vision analysis of live frame\n"
-        "/status — 📊 System health\n"
-        "/who — 👁️ Who's in frame now\n"
-        "/events [1-20] — 📋 Recent detections\n"
-        "/zones — 🗺️ Camera view with zones drawn\n"
+        "/snapshot [camera] — 📸 Live photo + AI analysis\n"
+        "/clip [5-40] [camera] — 🎬 Video clip + AI analysis\n"
+        "/analyze [camera] [prompt] — 👁️ AI vision analysis\n"
+        "/status [camera] — 📊 System health\n"
+        "/who [camera] — 👁️ Who's in frame now\n"
+        "/events [1-20] [camera] — 📋 Recent detections\n"
+        "/zones [camera] — 🗺️ Camera view with zones drawn\n"
+        "/cameras — 📷 List configured cameras\n"
         "/rules — 📜 Time rules overview\n"
         "/night — 🌙 Night mode status\n"
         "/faces — 👤 Enrolled faces\n"
         "/timelapse [YYYY-MM-DD] — ⏩ Timelapse from snapshots\n"
         "/ask [question] — 🧠 Ask the AI assistant\n\n"
+        + multi_note +
         "📷 <b>Send a photo</b> to get AI vision analysis\n\n"
         "🔒 <b>Admin Only</b>\n"
         "/arm — 🟢 Enable notifications\n"
         "/disarm — 🔴 Disable notifications",
         chat_id=chat_id,
     )
+
+
+async def _cmd_cameras(chat_id: str = "", **kwargs):
+    """List all registered cameras with online/offline status + detector flags."""
+    from contracts.streams import FRAME_STREAM as _FRAME_TMPL, stream_key as _stream_key
+    try:
+        cams = _telegram_get_cameras()
+        if not cams:
+            await send_text("📷 No cameras configured. Add one in the dashboard.", chat_id=chat_id)
+            return
+
+        lines = ["📷 <b>Cameras</b>"]
+        for c in cams:
+            cid = c.get("id", "?")
+            name = c.get("name") or cid
+            # Check liveness via frame stream presence
+            try:
+                frame_stream = _stream_key(_FRAME_TMPL, camera_id=cid)
+                frame_len = ctx.r.xlen(frame_stream) if frame_stream else 0
+                online = "🟢" if frame_len > 0 else "⚪"
+            except Exception:
+                online = "❓"
+
+            detectors = []
+            if c.get("detect_persons", True): detectors.append("persons")
+            if c.get("detect_vehicles", True): detectors.append("vehicles")
+            if c.get("detect_faces", True): detectors.append("faces")
+            det_str = ", ".join(detectors) if detectors else "none"
+
+            lines.append(
+                f"\n{online} <b>{name}</b> (<code>{cid}</code>)\n"
+                f"  • Detectors: {det_str}"
+            )
+
+        lines.append(
+            "\n\nUse a camera's name in any command:\n"
+            "<code>/snapshot basement</code> · <code>/clip 10 front_door</code>"
+        )
+        await send_text("\n".join(lines), chat_id=chat_id)
+    except Exception as e:
+        await send_text(f"⚠️ Failed to list cameras: {e}", chat_id=chat_id)
 
 
 # ---------------------------------------------------------------------------
@@ -777,35 +1031,59 @@ async def _handle_photo(photo_list: list, chat_id: str = "",
 
 async def _cmd_analyze(chat_id: str = "", text: str = "",
                        user_id: str = "", username: str = "", **kwargs):
-    """Analyze the live camera frame with MiniCPM-V vision model."""
+    """Analyze a live camera frame with MiniCPM-V vision model.
+
+    Examples:
+      /analyze                        — primary camera, default prompt
+      /analyze basement               — basement, default prompt
+      /analyze is the gate open       — primary, custom prompt
+      /analyze basement count people  — basement, custom prompt
+      /analyze all                    — analyze each camera in turn
+    """
     from routes.notifications import describe_scene
 
-    frame = get_latest_frame()
-    if not frame:
-        await send_text("⚠️ No camera frame available", chat_id=chat_id)
+    cam_ids, remaining_text = _resolve_camera_token(text)
+    if not cam_ids:
+        await send_text("⚠️ No cameras configured.", chat_id=chat_id)
         return
 
-    await send_text("👁️ Analyzing live frame...", chat_id=chat_id)
-
-    # Use text after /analyze as custom prompt, otherwise default
-    custom_prompt = text.replace("/analyze", "", 1).strip() if text else ""
-    prompt = custom_prompt or (
+    # Custom prompt is whatever is left in remaining_text after the command itself
+    custom_prompt = remaining_text.replace("/analyze", "", 1).strip()
+    default_prompt = (
         "Describe this security camera image in detail. "
         "Include: lighting/time of day, weather if visible, "
         "any people (count, appearance, actions), vehicles, "
         "and anything notable or unusual."
     )
+    prompt = custom_prompt or default_prompt
 
-    try:
-        desc = await describe_scene(frame, prompt=prompt, timeout=30.0)
-        if desc:
-            # Also send the snapshot so they can see what was analyzed
-            await send_photo(frame, f"📸 Live frame — {_now_str()}", chat_id=chat_id)
-            await send_text(f"👁️ <b>AI Vision Analysis</b> <i>(MiniCPM-V)</i>\n\n{desc}", chat_id=chat_id)
-        else:
-            await send_text("⚠️ Vision model timed out or returned empty", chat_id=chat_id)
-    except Exception as e:
-        await send_text(f"⚠️ Analysis failed: {e}", chat_id=chat_id)
+    for cid in cam_ids:
+        friendly = _camera_friendly_name(cid)
+        frame = get_latest_frame(camera_id=cid)
+        if not frame:
+            await send_text(f"⚠️ No frame available from <b>{friendly}</b>", chat_id=chat_id)
+            continue
+
+        await send_text(f"👁️ Analyzing live frame from <b>{friendly}</b>...", chat_id=chat_id)
+        try:
+            desc = await describe_scene(frame, prompt=prompt, timeout=30.0)
+            if desc:
+                await send_photo(
+                    frame,
+                    f"📸 <b>{friendly}</b> — {_now_str()}",
+                    chat_id=chat_id,
+                )
+                await send_text(
+                    f"👁️ <b>{friendly} — Vision Analysis</b> <i>(MiniCPM-V)</i>\n\n{desc}",
+                    chat_id=chat_id,
+                )
+            else:
+                await send_text(
+                    f"⚠️ Vision model timed out for <b>{friendly}</b>",
+                    chat_id=chat_id,
+                )
+        except Exception as e:
+            await send_text(f"⚠️ Analysis failed for <b>{friendly}</b>: {e}", chat_id=chat_id)
 
 
 # Snapshot directory — same as server.py uses
@@ -813,27 +1091,68 @@ SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
 
 
 async def _cmd_events(chat_id: str = "", text: str = "", **kwargs):
-    """Show recent detection events with snapshot images."""
-    # Parse optional count from text: /events 10
+    """Show recent detection events with snapshot images.
+
+    Examples:
+      /events            — last 5 from all cameras (merged)
+      /events 10         — last 10 from all cameras
+      /events basement   — last 5 from basement only
+      /events 10 all     — last 10 across every camera
+    """
+    from contracts.streams import EVENT_STREAM as _EVT_TMPL, stream_key as _stream_key
+
+    cam_ids, remaining_text = _resolve_camera_token(text)
+    # /events defaults to aggregating across all cameras when no token given.
+    token_present = any(
+        tok.lower() in (
+            {c["id"].lower() for c in _telegram_get_cameras()} |
+            {(c.get("name") or "").lower() for c in _telegram_get_cameras()} |
+            {"all"}
+        )
+        for tok in text.split()
+    )
+    if not token_present:
+        cam_ids = [c["id"] for c in _telegram_get_cameras()] or cam_ids
+
+    # Parse count from the remaining text (camera already stripped)
     count = 5
-    parts_args = text.split()
-    if len(parts_args) >= 2:
+    for p in remaining_text.split()[1:]:
         try:
-            count = int(parts_args[1])
-            count = max(1, min(20, count))
-        except (ValueError, IndexError):
-            pass
+            count = max(1, min(20, int(p)))
+            break
+        except ValueError:
+            continue
 
     try:
         r_ev = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-        entries = r_ev.xrevrange(ctx.EVENT_STREAM, count=count)
-        if not entries:
-            await send_text("📋 No events recorded yet.", chat_id=chat_id)
+        # Pull last N from each camera, merge by stream id (ms timestamp), trim to N
+        merged = []
+        for cid in cam_ids:
+            evt_stream = _stream_key(_EVT_TMPL, camera_id=cid)
+            entries = r_ev.xrevrange(evt_stream, count=count)
+            for msg_id, data in entries:
+                merged.append((msg_id, dict(data), cid))
+        # Sort newest-first using the millisecond timestamp encoded in stream id
+        def _ms(mid):
+            try:
+                return int(str(mid).split("-")[0])
+            except Exception:
+                return 0
+        merged.sort(key=lambda x: _ms(x[0]), reverse=True)
+        merged = merged[:count]
+
+        if not merged:
+            cams_label = ", ".join(_camera_friendly_name(c) for c in cam_ids) or "any camera"
+            await send_text(f"📋 No events recorded yet on {cams_label}.", chat_id=chat_id)
             return
 
-        await send_text(f"📋 <b>Recent Events</b> (showing {len(entries)})", chat_id=chat_id)
+        cams_label = ", ".join(_camera_friendly_name(c) for c in cam_ids)
+        await send_text(
+            f"📋 <b>Recent Events</b> from {cams_label} (showing {len(merged)})",
+            chat_id=chat_id,
+        )
 
-        for msg_id, data in entries:
+        for msg_id, data, src_cid in merged:
             etype = data.get("event_type", "unknown")
             identity = data.get("identity_name", "")
             person_id = data.get("person_id", "")
@@ -859,7 +1178,10 @@ async def _cmd_events(chat_id: str = "", text: str = "", **kwargs):
                 except (ValueError, OSError):
                     time_str = ts_raw  # Fallback to raw if not a float
 
-            caption = f"{icon} <b>{etype.replace('_', ' ').title()}</b>"
+            # Prefix with camera name only when reporting across multiple cameras
+            src_label = _camera_friendly_name(src_cid)
+            cam_prefix = f"📷 {src_label} · " if len(cam_ids) > 1 else ""
+            caption = f"{cam_prefix}{icon} <b>{etype.replace('_', ' ').title()}</b>"
             if who and who != "unknown":
                 caption += f" — {who}"
             if zone:
@@ -891,27 +1213,49 @@ async def _cmd_events(chat_id: str = "", text: str = "", **kwargs):
 # ---------------------------------------------------------------------------
 # /zones — Camera snapshot with zone overlays
 # ---------------------------------------------------------------------------
-async def _cmd_zones(chat_id: str = "", **kwargs):
-    """Send a camera snapshot with all security zones drawn on it."""
+async def _cmd_zones(chat_id: str = "", text: str = "", **kwargs):
+    """Send a camera snapshot with all security zones drawn on it.
+
+    Zones are per-camera, so:
+      /zones            — primary camera
+      /zones basement   — that camera
+      /zones all        — one image per camera with its own zones drawn
+    """
+    from contracts.streams import ZONE_KEY as _ZONE_TMPL, stream_key as _stream_key
+
+    cam_ids, _ = _resolve_camera_token(text)
+    if not cam_ids:
+        await send_text("⚠️ No cameras configured.", chat_id=chat_id)
+        return
+
+    for cid in cam_ids:
+        friendly = _camera_friendly_name(cid)
+        await _send_zones_for_camera(chat_id=chat_id, cam_id=cid, friendly=friendly)
+
+
+async def _send_zones_for_camera(chat_id: str, cam_id: str, friendly: str):
+    """Render a single camera's snapshot with its zones drawn on it."""
+    from contracts.streams import ZONE_KEY as _ZONE_TMPL, stream_key as _stream_key
     try:
-        # Get live frame
-        frame_bytes = get_latest_frame()
+        frame_bytes = get_latest_frame(camera_id=cam_id)
         if not frame_bytes:
-            await send_text("⚠️ No camera frame available", chat_id=chat_id)
+            await send_text(f"⚠️ No frame available from <b>{friendly}</b>", chat_id=chat_id)
             return
 
-        # Load zones from Redis
-        zone_data = ctx.r.hgetall(ctx.ZONE_KEY) if ctx.ZONE_KEY else {}
+        zone_key = _stream_key(_ZONE_TMPL, camera_id=cam_id)
+        zone_data = ctx.r.hgetall(zone_key) or {}
         if not zone_data:
-            # No zones — just send the snapshot with a note
-            await send_photo(frame_bytes, "🗺️ No zones defined yet — use the dashboard to create zones.", chat_id=chat_id)
+            await send_photo(
+                frame_bytes,
+                f"🗺️ <b>{friendly}</b> — no zones defined yet. Use the dashboard to create some.",
+                chat_id=chat_id,
+            )
             return
 
-        # Decode frame
         nparr = np.frombuffer(frame_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is None:
-            await send_text("⚠️ Failed to decode camera frame", chat_id=chat_id)
+            await send_text(f"⚠️ Failed to decode <b>{friendly}</b> frame", chat_id=chat_id)
             return
 
         h, w = frame.shape[:2]
@@ -979,12 +1323,12 @@ async def _cmd_zones(chat_id: str = "", **kwargs):
 
         await send_photo(
             annotated_bytes,
-            f"🗺️ <b>Security Zones</b> — {zone_count} zone(s) drawn\n"
+            f"🗺️ <b>{friendly} — Zones</b> ({zone_count} drawn)\n"
             f"🕐 {_now_str()}",
             chat_id=chat_id,
         )
     except Exception as e:
-        await send_text(f"⚠️ Failed to render zones: {e}", chat_id=chat_id)
+        await send_text(f"⚠️ Failed to render zones for <b>{friendly}</b>: {e}", chat_id=chat_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1084,13 +1428,47 @@ async def _cmd_faces(chat_id: str = "", **kwargs):
 # /timelapse — Stitch event snapshots into MP4
 # ---------------------------------------------------------------------------
 async def _cmd_timelapse(chat_id: str = "", text: str = "", **kwargs):
-    """Stitch today's (or a given date's) event snapshots into a timelapse MP4."""
-    # Parse optional date: /timelapse 2026-02-21
-    parts_args = text.split()
-    if len(parts_args) >= 2:
-        date_str = parts_args[1]
-    else:
-        date_str = datetime.now(TZ_LOCAL).strftime("%Y-%m-%d")
+    """Stitch event snapshots from a date into a timelapse MP4.
+
+    Storage caveat (until event poller fan-out lands): the event poller only
+    watches the primary camera's event stream, so disk snapshots only exist
+    for primary right now. The `camera` arg is accepted but a warning is
+    sent if the user asks for a non-primary camera.
+
+    Examples:
+      /timelapse                    — today (primary camera; only cam with disk snapshots)
+      /timelapse 2026-02-21         — that date
+      /timelapse basement           — warns: not yet on disk
+    """
+    cam_ids, remaining_text = _resolve_camera_token(text)
+    parts_args = remaining_text.split()
+
+    # Pull date from remaining tokens (skipping the /timelapse command itself)
+    date_str = datetime.now(TZ_LOCAL).strftime("%Y-%m-%d")
+    for p in parts_args[1:]:
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", p):
+            date_str = p
+            break
+
+    # If user explicitly asked for a non-primary camera, warn — disk persistence
+    # for non-primary cameras isn't implemented yet (event poller fan-out pending).
+    primary_id = os.getenv("CAMERA_ID", "")
+    token_specified = any(
+        tok.lower() in (
+            {c["id"].lower() for c in _telegram_get_cameras()} |
+            {(c.get("name") or "").lower() for c in _telegram_get_cameras()} |
+            {"all"}
+        )
+        for tok in text.split()
+    )
+    if token_specified and cam_ids and cam_ids[0] != primary_id:
+        friendly = _camera_friendly_name(cam_ids[0])
+        await send_text(
+            f"ℹ️ Note: event snapshots aren't persisted to disk for "
+            f"<b>{friendly}</b> yet (event poller currently watches the primary "
+            f"camera only). Falling back to primary camera frames.",
+            chat_id=chat_id,
+        )
 
     if not os.path.isdir(SNAPSHOT_DIR):
         await send_text(
