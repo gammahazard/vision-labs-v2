@@ -837,12 +837,72 @@ function copyVisionResult() {
 // ---------------------------------------------------------------------------
 // DVR Recordings Tab
 // ---------------------------------------------------------------------------
-let _recLastDate = '';  // track last loaded date to avoid redundant fetches
+let _recLastDate = '';     // track last loaded date to avoid redundant fetches
+let _recCamera = '';       // currently selected camera id
+
+window._onRecCameraChange = function (camId) {
+    _recCamera = camId || '';
+    _recLastDate = '';  // force segment reload for the new camera
+    window._initRecordingsTab();
+};
+
+async function _ensureRecCameraList() {
+    // Populate the camera selector from /api/recordings/cameras (cameras that
+    // actually have recordings on disk). Also load friendly names from the
+    // camera registry so we show e.g. "Wheatley (front_door)".
+    const sel = document.getElementById('recCameraPicker');
+    if (!sel) return;
+    try {
+        const [recsRes, camsRes] = await Promise.all([
+            fetch('/api/recordings/cameras'),
+            fetch('/api/cameras'),
+        ]);
+        const recsData = await recsRes.json();
+        const camsData = await camsRes.json();
+
+        const nameByid = {};
+        for (const c of (camsData.cameras || [])) {
+            if (c.id) nameByid[c.id] = c.name || c.id;
+        }
+
+        const recCams = recsData.cameras || [];
+        const prev = sel.value;
+        sel.innerHTML = '';
+
+        if (recCams.length === 0) {
+            sel.innerHTML = '<option value="">No cameras have recordings yet</option>';
+            return;
+        }
+
+        recCams.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            const friendly = nameByid[c.id] || c.id;
+            opt.textContent = `${friendly} (${c.day_count} day${c.day_count !== 1 ? 's' : ''})`;
+            sel.appendChild(opt);
+        });
+
+        // Pick previously selected camera if still valid, else first one
+        const valid = recCams.map(c => c.id);
+        if (prev && valid.includes(prev)) {
+            sel.value = prev;
+            _recCamera = prev;
+        } else {
+            sel.value = recCams[0].id;
+            _recCamera = recCams[0].id;
+        }
+    } catch (e) {
+        console.warn('Failed to load DVR camera list:', e);
+    }
+}
 
 window._initRecordingsTab = async function () {
+    await _ensureRecCameraList();
+
     // Always re-fetch dates so new recordings appear
     try {
-        const resp = await fetch('/api/recordings/dates');
+        const camParam = _recCamera ? `?camera=${encodeURIComponent(_recCamera)}` : '';
+        const resp = await fetch('/api/recordings/dates' + camParam);
         const data = await resp.json();
         const sel = document.getElementById('recDatePicker');
         const prevValue = sel.value;  // remember current selection
@@ -850,6 +910,9 @@ window._initRecordingsTab = async function () {
 
         if (!data.dates || data.dates.length === 0) {
             sel.innerHTML = '<option value="">No recordings found</option>';
+            // Also clear segment grid since camera might be empty
+            const grid = document.getElementById('recSegmentGrid');
+            if (grid) grid.innerHTML = '<div style="color:var(--text-secondary,#888); grid-column:1/-1; text-align:center; padding:20px;">No recordings for this camera</div>';
             return;
         }
 
@@ -887,7 +950,8 @@ window._loadRecSegments = async function (date) {
     grid.innerHTML = '<div style="color:var(--text-secondary,#888); grid-column:1/-1; text-align:center; padding:20px;">Loading...</div>';
 
     try {
-        const resp = await fetch(`/api/recordings/segments?date=${date}`);
+        const camParam = _recCamera ? `&camera=${encodeURIComponent(_recCamera)}` : '';
+        const resp = await fetch(`/api/recordings/segments?date=${date}${camParam}`);
         const data = await resp.json();
 
         if (!data.segments || data.segments.length === 0) {
@@ -926,8 +990,9 @@ window._playRecording = function (date, filename, timeLabel) {
     wrap.style.display = 'block';
     player.style.opacity = '0.4';
 
-    // Set source
-    const url = `/api/recordings/stream/${date}/${filename}`;
+    // Set source (include camera so the backend picks the right per-camera dir)
+    const camParam = _recCamera ? `?camera=${encodeURIComponent(_recCamera)}` : '';
+    const url = `/api/recordings/stream/${date}/${filename}${camParam}`;
     player.src = url;
 
     // When video is ready to play, update label and show player

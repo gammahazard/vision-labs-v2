@@ -479,6 +479,12 @@
                 <h3 style="margin:0 0 12px; color:var(--text-primary,#e0e0e0); font-size:1.1em;">📹 DVR Recordings</h3>
                 <div class="video-controls" style="margin-bottom:12px;">
                     <div class="video-control-group">
+                        <label>Camera</label>
+                        <select id="recCameraPicker" onchange="window._onRecCameraChange(this.value)">
+                            <option value="">Loading…</option>
+                        </select>
+                    </div>
+                    <div class="video-control-group">
                         <label>Date</label>
                         <select id="recDatePicker" onchange="window._loadRecSegments(this.value)">
                             <option value="">Loading dates...</option>
@@ -552,7 +558,7 @@
         </div>
     </div>
 
-    <script src="ai.js"></script>
+    <script src="ai.js?v=2"></script>
     <script src="generate.js"></script>
 
 </body>
