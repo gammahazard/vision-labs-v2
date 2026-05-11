@@ -23,20 +23,12 @@ SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
 
 
 def _enabled_camera_ids() -> list:
-    """Snapshot enabled cameras from the registry. Falls back to primary."""
-    try:
-        raw = ctx.r.hgetall("cameras:registry") or {}
-        out = []
-        for cid, val in raw.items():
-            try:
-                entry = json.loads(val)
-                if entry.get("enabled", True):
-                    out.append(entry.get("id") or cid)
-            except Exception:
-                continue
-        return sorted(set(out)) or [ctx.CAMERA_ID]
-    except Exception:
-        return [ctx.CAMERA_ID]
+    """Snapshot enabled cameras from the registry. Falls back to primary.
+    Thin wrapper over cameras.enabled_camera_ids() so all callers share
+    the same registry-read logic."""
+    import cameras as _camreg
+    ids = _camreg.enabled_camera_ids()
+    return ids if ids else [ctx.CAMERA_ID]
 
 
 @router.get("/events")

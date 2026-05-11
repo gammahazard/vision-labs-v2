@@ -123,6 +123,118 @@ def get_camera(camera_id: str) -> Optional[dict]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Shared camera-resolution helpers (used by ai_tools, bot_commands, routes)
+# ---------------------------------------------------------------------------
+# Why these live here instead of in each caller:
+#   - ai_tools._resolve_camera, bot_commands._telegram_get_cameras + helpers,
+#     and routes/events._enabled_camera_ids all do the same thing with subtle
+#     variations. Single source of truth here means a registry-schema tweak
+#     only touches one file.
+
+def list_enabled_cameras() -> list:
+    """Return all enabled cameras from the registry, sorted by id.
+    Each entry is the full registry dict (id, name, rtsp_sub, detect_*, etc.)."""
+    return [c for c in list_cameras() if c.get("enabled", True)]
+
+
+def enabled_camera_ids() -> list:
+    """Just the ids of enabled cameras, sorted. Most callers want this shape."""
+    return [c["id"] for c in list_enabled_cameras() if c.get("id")]
+
+
+def camera_friendly_name(camera_id: str) -> str:
+    """Look up a camera's display name, falling back to its id."""
+    for c in list_cameras():
+        if c.get("id") == camera_id:
+            return c.get("name") or camera_id
+    return camera_id
+
+
+def resolve_camera_arg(arg: str, primary_camera_id: str) -> list:
+    """
+    Resolve a tool/route `camera` argument into a concrete list of camera ids.
+
+    Convention (shared by AI tools, REST routes, etc.):
+        ""  / "primary" / absent  → [primary_camera_id]  (or first enabled if missing)
+        "all"                      → every enabled camera id
+        "<id>"                     → [<id>] if registered+enabled, else []
+
+    Returns an empty list iff `arg` was a specific id that doesn't exist —
+    caller should handle this as a user error (unknown camera).
+    """
+    arg = (arg or "").strip()
+    cam_ids = enabled_camera_ids()
+
+    if not arg or arg.lower() == "primary":
+        if primary_camera_id in cam_ids:
+            return [primary_camera_id]
+        return cam_ids[:1] if cam_ids else [primary_camera_id]
+    if arg.lower() == "all":
+        return cam_ids if cam_ids else [primary_camera_id]
+    return [arg] if arg in cam_ids else []
+
+
+def find_camera_in_tokens(text: str, primary_camera_id: str) -> tuple:
+    """
+    Scan free-text `text` for a camera identifier; used by Telegram commands
+    where the camera lives anywhere in the message ("/clip basement 10s",
+    "/clip 10 basement", etc.).
+
+    Match priority for each token:
+        1. lowercase == "all"                              → every enabled camera
+        2. lowercase == camera id (case-insensitive)        → that camera
+        3. lowercase == camera name                         → that camera
+        4. unambiguous prefix match (>= 3 chars, single hit) → that camera
+
+    Returns (camera_ids, remaining_text):
+        camera_ids: list[str], possibly the primary fallback if no token matched
+        remaining_text: original text with the matched camera token stripped
+                        (so per-command arg parsing can run on what's left)
+    """
+    cams = list_enabled_cameras()
+    cam_ids = [c["id"] for c in cams]
+
+    id_map = {c["id"].lower(): c["id"] for c in cams}
+    name_map = {(c.get("name") or "").lower(): c["id"]
+                for c in cams if c.get("name")}
+
+    tokens = (text or "").split()
+    new_tokens: list = []
+    matched: list | None = None
+
+    for tok in tokens:
+        if matched is None:
+            tlow = tok.lower()
+            if tlow == "all":
+                matched = cam_ids if cam_ids else None
+                if matched is not None:
+                    continue
+            if tlow in id_map:
+                matched = [id_map[tlow]]
+                continue
+            if tlow in name_map:
+                matched = [name_map[tlow]]
+                continue
+            if len(tlow) >= 3:
+                hits = set()
+                for key, cid in id_map.items():
+                    if key.startswith(tlow):
+                        hits.add(cid)
+                for key, cid in name_map.items():
+                    if key.startswith(tlow):
+                        hits.add(cid)
+                if len(hits) == 1:
+                    matched = list(hits)
+                    continue
+        new_tokens.append(tok)
+
+    if matched is None:
+        matched = [primary_camera_id] if primary_camera_id else (cam_ids[:1] or [])
+
+    return matched, " ".join(new_tokens)
+
+
 def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
     """
     Insert or update a camera. Returns (ok, error_message).

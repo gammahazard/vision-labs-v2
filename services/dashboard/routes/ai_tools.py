@@ -32,60 +32,26 @@ TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
 # ---------------------------------------------------------------------------
 # Multi-camera helpers (Phase 9a)
 # ---------------------------------------------------------------------------
-# Tools that take a `camera` arg use these helpers to:
-#   - resolve "all" / specific id / missing into a concrete list of camera ids
-#   - build Redis keys for any camera (not just ctx.* which is the dashboard's
-#     primary CAMERA_ID env)
+# Tools that take a `camera` arg delegate to the shared resolver in cameras.py
+# so registry semantics stay consistent across AI tools, Telegram, and routes.
 #
 # Conventions for the `camera` tool arg:
 #   "all"          -> every registered camera, aggregated
 #   "<id>"         -> just that one camera (must exist in cameras:registry)
 #   missing/empty  -> the dashboard's primary camera (ctx.CAMERA_ID env)
-#                     This matches pre-multicam behavior for backward compat.
-#
-# Helper returns a LIST of camera ids; tools loop over the list or take [0].
+
+import cameras as _camreg
+
 
 def _get_camera_list() -> list:
-    """Return all enabled cameras from the registry, sorted by id."""
-    try:
-        raw = ctx.r.hgetall("cameras:registry") or {}
-        out = []
-        for cid, val in raw.items():
-            try:
-                entry = json.loads(val)
-                if entry.get("enabled", True):
-                    out.append(entry)
-            except Exception:
-                continue
-        out.sort(key=lambda c: c.get("id", ""))
-        return out
-    except Exception:
-        return []
+    """Return all enabled cameras from the registry."""
+    return _camreg.list_enabled_cameras()
 
 
 def _resolve_camera(arg: str = "") -> list:
-    """
-    Resolve a tool's `camera` arg into a concrete list of camera ids.
-
-    Returns:
-        list[str] of camera ids. Empty list if `arg` was a specific id that
-        doesn't exist (caller should error gracefully on empty).
-    """
-    arg = (arg or "").strip()
-    cams = _get_camera_list()
-    cam_ids = [c["id"] for c in cams]
-
-    if not arg or arg.lower() == "primary":
-        # Default to the dashboard's primary; fall back to first enabled
-        if ctx.CAMERA_ID in cam_ids:
-            return [ctx.CAMERA_ID]
-        return cam_ids[:1] if cam_ids else [ctx.CAMERA_ID]
-    if arg.lower() == "all":
-        return cam_ids if cam_ids else [ctx.CAMERA_ID]
-    # Specific id
-    if arg in cam_ids:
-        return [arg]
-    return []  # invalid id
+    """Resolve a tool's `camera` arg into a concrete list of camera ids.
+    Returns [] iff a specific id was passed but doesn't exist."""
+    return _camreg.resolve_camera_arg(arg, ctx.CAMERA_ID)
 
 
 def _camera_key(template: str, camera_id: str, **extra) -> str:
@@ -95,12 +61,9 @@ def _camera_key(template: str, camera_id: str, **extra) -> str:
     return stream_key(template, camera_id=camera_id, **extra)
 
 
-# Lookup for friendly camera names (used in aggregated outputs)
 def _camera_name(camera_id: str) -> str:
-    for c in _get_camera_list():
-        if c.get("id") == camera_id:
-            return c.get("name") or camera_id
-    return camera_id
+    """Look up a camera's display name (falls back to id)."""
+    return _camreg.camera_friendly_name(camera_id)
 
 
 # ---------------------------------------------------------------------------

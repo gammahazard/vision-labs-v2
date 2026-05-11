@@ -372,45 +372,24 @@ async def poll_telegram_callbacks():
 
 
 # ---------------------------------------------------------------------------
-# Multi-camera helpers (Phase 9b)
+# Multi-camera helpers (Phase 9b) — thin wrappers over cameras.py
 # ---------------------------------------------------------------------------
 # Telegram users specify a camera by typing its id ("cam2") or friendly name
-# ("basement") anywhere in the command text. The resolver scans tokens for
-# any match against the registry, strips it, and returns the remaining text
-# so per-command arg parsing (duration, date, count) still works.
-#
-# Match priority:
-#   1. exact id      (case-insensitive)
-#   2. exact name    (case-insensitive)
-#   3. unambiguous prefix match (>= 3 chars, single hit)
-#   4. "all"         -> every enabled camera
-#
-# No match -> default to the dashboard's primary camera.
+# ("basement") anywhere in the command text. The shared resolver in cameras.py
+# handles match logic so Telegram + AI tools + routes all agree on what
+# counts as a valid camera identifier.
+
+import cameras as _camreg
+
 
 def _telegram_get_cameras() -> list:
-    """Return enabled cameras from the registry (id, name, etc.) sorted by id."""
-    try:
-        raw = ctx.r.hgetall("cameras:registry") or {}
-        out = []
-        for cid, val in raw.items():
-            try:
-                entry = json.loads(val)
-                if entry.get("enabled", True):
-                    out.append(entry)
-            except Exception:
-                continue
-        out.sort(key=lambda c: c.get("id", ""))
-        return out
-    except Exception:
-        return []
+    """Enabled cameras list, used for inline-keyboard picker + help text."""
+    return _camreg.list_enabled_cameras()
 
 
 def _camera_friendly_name(cam_id: str) -> str:
-    """Look up a camera's display name. Falls back to the id if none."""
-    for c in _telegram_get_cameras():
-        if c.get("id") == cam_id:
-            return c.get("name") or cam_id
-    return cam_id
+    """Camera display name (falls back to id)."""
+    return _camreg.camera_friendly_name(cam_id)
 
 
 def _user_specified_camera(text: str) -> bool:
@@ -465,61 +444,12 @@ async def _send_camera_picker(chat_id: str, command: str, extra: str = ""):
 
 
 def _resolve_camera_token(text: str) -> tuple[list[str], str]:
-    """
-    Scan `text` for a camera token. Returns (camera_ids, remaining_text).
-
-    The remaining text still contains the leading command (/clip, /events, etc.)
-    so existing per-command arg parsing (e.g., duration for /clip) keeps working.
-
-    If no token matches, returns ([primary_cam_id], text_unchanged).
-    """
-    cams = _telegram_get_cameras()
-    cam_ids = [c["id"] for c in cams]
-
-    id_map = {c["id"].lower(): c["id"] for c in cams}
-    name_map = {(c.get("name") or "").lower(): c["id"]
-                for c in cams if c.get("name")}
-
-    tokens = (text or "").split()
-    new_tokens = []
-    matched: list[str] | None = None
-
-    for tok in tokens:
-        if matched is None:
-            tlow = tok.lower()
-            # 1. "all"
-            if tlow == "all":
-                matched = cam_ids if cam_ids else None
-                if matched:
-                    continue
-            # 2. exact id
-            if tlow in id_map:
-                matched = [id_map[tlow]]
-                continue
-            # 3. exact name
-            if tlow in name_map:
-                matched = [name_map[tlow]]
-                continue
-            # 4. unambiguous prefix (>= 3 chars)
-            if len(tlow) >= 3:
-                prefix_hits = set()
-                for key, cid in id_map.items():
-                    if key.startswith(tlow):
-                        prefix_hits.add(cid)
-                for key, cid in name_map.items():
-                    if key.startswith(tlow):
-                        prefix_hits.add(cid)
-                if len(prefix_hits) == 1:
-                    matched = list(prefix_hits)
-                    continue
-        new_tokens.append(tok)
-
-    if matched is None:
-        # Default to primary camera
-        primary = os.getenv("CAMERA_ID", "") or (cam_ids[0] if cam_ids else "")
-        matched = [primary] if primary else []
-
-    return matched, " ".join(new_tokens)
+    """Scan `text` for a camera token (id/name/prefix/'all'). Returns
+    (camera_ids, remaining_text) — matched token stripped so per-command arg
+    parsing runs on the remainder. Falls back to primary if no token matched.
+    See cameras.find_camera_in_tokens for the match-priority spec."""
+    primary = os.getenv("CAMERA_ID", "") or ctx.CAMERA_ID
+    return _camreg.find_camera_in_tokens(text, primary)
 
 
 # ---------------------------------------------------------------------------
