@@ -141,33 +141,35 @@ docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
 ## Dashboard Pages
 
 ### Home (`index.html`) — Multi-camera grid view
-The default landing page. Shows a responsive grid of camera tiles — one tile per registered camera. Each tile streams its own live feed via a dedicated WebSocket (lower FPS to keep many-tile layouts smooth). Click any tile → full-screen modal with the live feed at full FPS. Below the grid sit two global panels:
-- **Conditions** — date, sunrise/sunset, day length, current weather
+The default landing page. Responsive grid of camera tiles — one per registered camera. Each tile streams its own live feed via a dedicated WebSocket (lower FPS to keep many-tile layouts smooth). Click any tile → full-screen modal at full FPS. Below the grid:
+- **Conditions** — date, sunrise/sunset, day length, current weather (global)
+- **📋 Recent Activity** — combined event feed across every camera, newest-first, each row tagged with a `📷 <camera>` badge so you can see at a glance which camera triggered what. Click an event for details.
 - **Known Faces** — face enrollment wizard + gallery (faces are shared across all cameras)
 
 Mobile-responsive: 1 column on phones, 2 on tablets, up to 4 on big screens.
 
 ### Detail view (`single.html?camera=<id>`)
-Per-camera detailed dashboard — what the home page was before the May 2026 refactor:
+Per-camera detailed dashboard. The `?camera=` URL param scopes everything on the page to that camera:
+- **Live view** — WebSocket connects with `?camera=<id>`, page title shows the camera's friendly name (e.g. "Live View — basement")
 - **Bounding boxes**: cyan for identified people, green for unknown, orange for vehicles
-- **Face labels**: recognized names displayed on bounding boxes with sticky identity (persists when face turns away)
+- **Face labels**: recognized names with sticky identity (persists when face turns away)
 - **Action labels**: classified poses (standing, sitting, crouching, lying)
-- **Zone overlays**: drawn zones with color-coded alert levels
-- **Settings panel**: adjustable confidence threshold, IoU, lost timeout, vehicle confidence, idle timeout, notification toggles
-- **Event feed**: real-time detection events with inline snapshot photos
-- **Zone editor**: draw/edit/delete detection zones with per-time-period alert rules
-- **Browse panel**: vehicle snapshots organized by day + enrolled faces gallery
+- **Zone overlays**: drawn zones with color-coded alert levels (per-camera)
+- **Settings panel**: confidence, IoU, lost timeout, vehicle confidence, idle timeout, notification toggles — all writes go to `config:{camera_id}` so each camera tunes independently
+- **Event feed**: only events from this camera (no badge needed since context is obvious)
+- **Zone editor**: draw/edit/delete zones for this camera
+- **Browse panel**: vehicle snapshots organized by camera/day + enrolled faces gallery
 
-> **Phase 8b iter 2 (pending):** the `?camera=X` query param doesn't yet drive the side panels — they still read front_door regardless. The WebSocket part of single.html does honor `?camera=`.
+Grid tiles link to `/single.html?camera=<id>` by default. Visiting `/single.html` with no param falls back to the primary camera.
 
 ### Cameras (`cameras.html`) — Registry admin
 Add/edit/delete cameras. Test RTSP URLs via the **Test Connection** button (runs ffprobe in the dashboard container). Choose per-camera which detectors run (Persons / Vehicles / Faces). When you Save, the UI shows the docker compose command to start the new camera's detection services.
 
 ### AI Assistant (`ai.html`)
 Three-tab interface:
-- **Chat tab**: conversational AI assistant (Qwen 3 14B) with 18 tool functions
+- **Chat tab**: conversational AI assistant (Qwen 3 14B) with 18 tool functions, all multi-camera-aware (LLM can call any tool with a specific `camera` arg or `"all"` for system-wide queries)
 - **Vision tab**: upload images or capture live frames for MiniCPM-V analysis
-- **DVR tab**: browse and play back recorded camera footage by date/segment (requires QNAP profile)
+- **DVR tab**: browse and play back recorded camera footage with a per-camera **Camera** dropdown (lists every camera that actually has recordings on disk) plus a date picker; click a segment to play. Runs locally on disk by default (no QNAP required).
 
 ### Image Generation (`ai.html` — Generate tab)
 ComfyUI-powered. Drop SDXL `.safetensors` files into `models/comfyui/checkpoints/` to enable — none are auto-downloaded.
@@ -185,26 +187,35 @@ Session-based authentication with blurred camera background. **On first login wi
 
 ## Telegram Bot Commands
 
+Most commands accept an optional `[camera]` token at the end: type a camera's
+id (`cam2`), friendly name (`basement`), an unambiguous prefix (`base`), or
+`all` to fan out. Bare `/snapshot` or `/clip` with multiple cameras replies
+with an inline-keyboard tap-to-pick.
+
 | Command | Description |
 |---------|-------------|
-| `/snapshot` | Send a live camera photo with AI scene description |
-| `/clip [N]` | Capture and send a video clip (5-40 seconds, default 5) with AI analysis |
-| `/status` | System health summary — services, GPU, people count, uptime |
-| `/ask <question>` | Ask the Qwen 3 14B AI assistant directly |
-| `/arm` | Enable all notifications (admin only) |
-| `/disarm` | Disable all notifications (admin only) |
-| `/who` | Report who/what is currently in the camera frame |
-| `/events [N]` | Show recent detection events with snapshot images |
-| `/zones` | Snapshot with all zone overlays drawn |
-| `/rules` | Overview of time-of-day zone alert rules |
-| `/night` | Night override status |
-| `/faces` | List enrolled faces |
-| `/timelapse [YYYY-MM-DD]` | Build a day timelapse from snapshots |
-| `/analyze` | Analyze the live camera frame with MiniCPM-V |
-| `/help` | List available commands |
-| *Send a photo* | Analyze any user-sent photo with MiniCPM-V vision model |
+| `/snapshot [camera]` | 📸 Live photo + AI scene description. No arg + 2+ cams → tap-to-pick picker. `all` = one photo per camera. |
+| `/clip [5-40s] [camera]` | 🎬 Video clip with AI analysis. Order-agnostic args. `all` = one clip per camera. |
+| `/status [camera]` | 📊 System health. No arg = per-camera breakdown across all cameras. |
+| `/who [camera]` | 👁️ Who's in frame. Defaults to **all cameras** (aggregated). |
+| `/events [N] [camera]` | 📋 Recent detections (1-20). No camera = merged across cameras with `📷 <name>` prefix on each row. |
+| `/zones [camera]` | 🗺️ Snapshot with zone overlays. `all` = one image per camera. |
+| `/analyze [camera] [prompt]` | 👁️ MiniCPM-V vision analysis of a live frame. |
+| `/cameras` | 📷 List configured cameras with online status + which detectors are enabled. |
+| `/timelapse [YYYY-MM-DD] [camera]` | ⏩ Day timelapse from event snapshots. |
+| `/rules` | 📜 Notification rules overview (global). |
+| `/night` | 🌙 Night override status (global). |
+| `/faces` | 👤 Enrolled faces (shared DB, not per-camera). |
+| `/ask <question>` | 🧠 Ask the Qwen 3 14B AI assistant directly. |
+| `/arm` / `/disarm` | 🟢/🔴 Enable / disable notifications (admin only). |
+| `/help` | List available commands. |
+| *Send a photo* | Analyze with MiniCPM-V. |
 
-The bot is **authorized via `TELEGRAM_ALLOWED_USERS` env + dashboard Telegram Access Manager**. Unauthorized commands are silently dropped and logged. The Telegram update offset is persisted to Redis so dashboard restarts don't replay old commands.
+Tab-completion in Telegram clients shows each command's expected args (e.g.
+`/snapshot 📸 Live photo · [camera]`). The bot is **authorized via
+`TELEGRAM_ALLOWED_USERS` env + dashboard Telegram Access Manager**.
+Unauthorized commands are silently dropped and logged. The Telegram update
+offset is persisted to Redis so dashboard restarts don't replay old commands.
 
 ---
 
@@ -268,22 +279,35 @@ vehicle_snapshot:*              ← Tracker: vehicle detection snapshots (24h TT
 
 ### Storage Layout
 
-Without QNAP, all of `/data/*` is backed by local Docker volumes (data persists across container restarts, lives inside the WSL VM disk):
-
 ```
-/data/snapshots/           ← Person + vehicle event snapshots (pruned by SNAPSHOT_RETENTION_DAYS)
-/data/snapshots/vehicles/  ← Vehicle snapshots organized by day
-/data/events/              ← Event journal (daily JSONL files, pruned)
-/data/telegram/            ← Per-user Telegram command audit trail
-/data/generations/         ← ComfyUI output images
-/data/clips/               ← Captured video clips
-/data/recordings/          ← DVR recordings (only populated when QNAP profile is on)
-/data/auth.db              ← Session/auth SQLite DB
-/data/ai.db                ← AI chat history SQLite DB
-/data/faces.db             ← InsightFace enrollments
+./data/recordings/                              ← BIND MOUNT on the WSL host
+└── {camera_id}/                                ← (browseable from Windows Explorer
+    └── YYYY-MM-DD/                              ← without sudo: \\wsl$\<distro>\...\
+        └── HH-MM.ts                            ←  data\recordings\)
+                                                ← 1h MPEG-TS segments, 3-day retention
+
+/data/snapshots/                                ← Docker volume qnap-snapshots
+├── {camera_id}/{event_id}.jpg                  ← person+event snapshots, per-camera
+├── vehicles/{camera_id}/{date}/                ← vehicle snapshots, per-camera+date
+└── clips/                                      ← AI + Telegram /clip outputs (3-day)
+
+/data/events/YYYY-MM-DD.jsonl                   ← Docker volume qnap-events
+                                                ← every entry tagged with "camera"
+
+/data/telegram/{user}/                          ← Docker volume qnap-telegram
+/data/generations/                              ← Docker volume qnap-generations
+/data/auth.db, /data/ai.db, /data/faces.db      ← Docker volumes (separate)
 ```
 
-With QNAP (`--profile nas` + override file), the seven CIFS-backed paths route to `//QNAP_IP/vision-labs/<subdir>` instead.
+**Retention defaults** (env-configurable on the dashboard):
+- `SNAPSHOT_RETENTION_DAYS=4` → person/vehicle snapshots + event journal
+- `CLIP_RETENTION_DAYS=3`     → AI/Telegram clips at `/data/snapshots/clips/`
+- `RETENTION_DAYS=3` (recorder) → continuous DVR segments
+
+**With QNAP** (`docker-compose.qnap.yml` overlay): the 6 `qnap-*` volumes
+flip to CIFS mounts pointing at `//QNAP_IP/vision-labs/<subdir>`. The
+recordings bind mount can stay local or be swapped to an NFS mount — code
+paths inside containers (`/recordings/...`) stay identical either way.
 
 ---
 
