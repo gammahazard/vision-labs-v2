@@ -19,8 +19,10 @@ WHEN TO DISABLE:
     or if you want full local history during testing.
 
 WHAT GETS PRUNED:
-    1. `/data/snapshots/*.jpg` — flat person/event snapshots, by mtime
-    2. `/data/snapshots/vehicles/YYYY-MM-DD/` — vehicle subfolders, by name
+    1a. `/data/snapshots/*.jpg` — legacy flat snapshots (pre-fan-out), by mtime
+    1b. `/data/snapshots/{camera_id}/*.jpg` — per-camera snapshots, by mtime
+    2a. `/data/snapshots/vehicles/YYYY-MM-DD/` — legacy vehicle subfolders, by name
+    2b. `/data/snapshots/vehicles/{camera_id}/YYYY-MM-DD/` — per-camera, by name
     3. `/data/events/YYYY-MM-DD.jsonl` — event journals, by filename date
 
 CADENCE:
@@ -62,8 +64,10 @@ async def retention_poller():
             removed_files = 0
             removed_bytes = 0
 
-            # 1. Flat /data/snapshots/*.jpg (person snapshots, written by event poller)
+            # 1a. Legacy flat /data/snapshots/*.jpg (pre-fan-out snapshots)
+            # 1b. Per-camera /data/snapshots/{camera_id}/*.jpg (current layout)
             if os.path.isdir(SNAPSHOT_DIR):
+                # Legacy root
                 for entry in os.scandir(SNAPSHOT_DIR):
                     if entry.is_file() and entry.name.endswith(".jpg"):
                         try:
@@ -74,23 +78,61 @@ async def retention_poller():
                                 removed_bytes += st.st_size
                         except Exception:
                             pass
+                # Per-camera subdirs (skip reserved subdirs)
+                RESERVED_SUBDIRS = {"vehicles", "clips"}
+                for cam_entry in os.scandir(SNAPSHOT_DIR):
+                    if not cam_entry.is_dir() or cam_entry.name in RESERVED_SUBDIRS:
+                        continue
+                    try:
+                        for entry in os.scandir(cam_entry.path):
+                            if entry.is_file() and entry.name.endswith(".jpg"):
+                                try:
+                                    st = entry.stat()
+                                    if st.st_mtime < cutoff_ts:
+                                        os.remove(entry.path)
+                                        removed_files += 1
+                                        removed_bytes += st.st_size
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
 
-            # 2. Vehicle snapshots organized as /data/snapshots/vehicles/YYYY-MM-DD/
+            # 2a. Legacy vehicle snapshots: /data/snapshots/vehicles/YYYY-MM-DD/
+            # 2b. Per-camera: /data/snapshots/vehicles/{camera_id}/YYYY-MM-DD/
             vehicles_dir = os.path.join(SNAPSHOT_DIR, "vehicles")
             if os.path.isdir(vehicles_dir):
                 for entry in os.scandir(vehicles_dir):
                     if not entry.is_dir():
                         continue
+                    # Try legacy YYYY-MM-DD directly under vehicles/
                     try:
                         day = datetime.strptime(entry.name, "%Y-%m-%d").date()
-                    except ValueError:
+                        if day < cutoff_date:
+                            try:
+                                shutil.rmtree(entry.path)
+                                removed_files += 1
+                            except Exception:
+                                pass
                         continue
-                    if day < cutoff_date:
-                        try:
-                            shutil.rmtree(entry.path)
-                            removed_files += 1
-                        except Exception:
-                            pass
+                    except ValueError:
+                        pass
+                    # Otherwise it's a per-camera dir; walk its date subdirs
+                    try:
+                        for day_entry in os.scandir(entry.path):
+                            if not day_entry.is_dir():
+                                continue
+                            try:
+                                day = datetime.strptime(day_entry.name, "%Y-%m-%d").date()
+                            except ValueError:
+                                continue
+                            if day < cutoff_date:
+                                try:
+                                    shutil.rmtree(day_entry.path)
+                                    removed_files += 1
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
 
             # 3. Event journals at /data/events/YYYY-MM-DD.jsonl
             if os.path.isdir(EVENT_DIR):

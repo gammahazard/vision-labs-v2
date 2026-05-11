@@ -816,29 +816,45 @@ def _tool_browse_vehicles(args: dict) -> str:
     else:
         target_date = date_str
 
-    snapshot_dir = ctx.VEHICLE_SNAPSHOT_DIR
-    day_dir = os.path.join(snapshot_dir, target_date) if snapshot_dir else f"/data/vehicle_snapshots/{target_date}"
+    snapshot_dir = ctx.VEHICLE_SNAPSHOT_DIR or "/data/snapshots/vehicles"
+
+    # Build per-camera + legacy day-dir list. Per-camera path takes precedence;
+    # legacy /data/snapshots/vehicles/{date}/ is walked too for old data.
+    candidate_dirs: list[tuple[str, str]] = []  # (camera_id or "", path)
+    for cid in cams_with_vehicles:
+        p = os.path.join(snapshot_dir, cid, target_date)
+        if os.path.isdir(p):
+            candidate_dirs.append((cid, p))
+    # Legacy root (only include if camera_arg is unset or "all")
+    if not camera_arg or camera_arg.lower() == "all":
+        legacy = os.path.join(snapshot_dir, target_date)
+        if os.path.isdir(legacy):
+            candidate_dirs.append(("", legacy))
 
     try:
-        if not os.path.isdir(day_dir):
+        if not candidate_dirs:
             return json.dumps({"date": target_date, "count": 0, "snapshots": [], "message": f"No vehicle snapshots for {target_date}"})
 
-        files = sorted(glob.glob(os.path.join(day_dir, "*.jpg")))
         snapshots = []
-        for f in files:
-            basename = os.path.basename(f)
-            # Parse filename: HH-MM-SS_classname.jpg
-            base_name = basename.rsplit(".", 1)[0]
-            parts = base_name.split("_", 1)
-            time_str = parts[0].replace("-", ":") if parts else ""
-            vehicle_class = parts[1] if len(parts) > 1 else "vehicle"
-            snapshots.append({
-                "filename": basename,
-                "time": time_str,
-                "vehicle_class": vehicle_class,
-                "size_kb": round(os.path.getsize(f) / 1024, 1),
-                "url": f"/api/browse/snapshot/{target_date}/{basename}",
-            })
+        for src_cam, day_dir in candidate_dirs:
+            files = sorted(glob.glob(os.path.join(day_dir, "*.jpg")))
+            for f in files:
+                basename = os.path.basename(f)
+                base_name = basename.rsplit(".", 1)[0]
+                parts = base_name.split("_", 1)
+                time_str = parts[0].replace("-", ":") if parts else ""
+                vehicle_class = parts[1] if len(parts) > 1 else "vehicle"
+                cam_segment = src_cam if src_cam else "_legacy"
+                snapshots.append({
+                    "filename": basename,
+                    "time": time_str,
+                    "vehicle_class": vehicle_class,
+                    "camera": src_cam,
+                    "size_kb": round(os.path.getsize(f) / 1024, 1),
+                    "url": f"/api/browse/snapshot/{cam_segment}/{target_date}/{basename}",
+                })
+        # Sort by time across cameras
+        snapshots.sort(key=lambda s: s.get("time", ""))
 
         # Stash the last N images for inline display in the chat
         display_snapshots = snapshots[-count_requested:]

@@ -24,36 +24,93 @@ import routes as ctx
 router = APIRouter(prefix="/api/browse", tags=["browse"])
 
 
-@router.get("/days")
-async def list_days():
+# Vehicle snapshots are stored per-camera at:
+#   {VEHICLE_SNAPSHOT_DIR}/{camera_id}/{YYYY-MM-DD}/{HH-MM-SS}_{class}.jpg
+# Legacy (pre-fan-out) snapshots may exist at:
+#   {VEHICLE_SNAPSHOT_DIR}/{YYYY-MM-DD}/{HH-MM-SS}_{class}.jpg
+# These helpers walk both layouts and consolidate.
+
+def _is_camera_dir(name: str) -> bool:
+    """A subdir of VEHICLE_SNAPSHOT_DIR is treated as a camera if it does NOT
+    look like a YYYY-MM-DD date."""
+    try:
+        datetime.strptime(name, "%Y-%m-%d")
+        return False
+    except ValueError:
+        return True
+
+
+def _enumerate_day_dirs(camera: str = "") -> dict:
     """
-    List available day folders containing vehicle snapshots.
-    Returns [{date, count, path}] sorted newest-first.
+    Return {date_str: [(camera_id_or_empty, dir_path), ...]} across all cameras.
+    If `camera` is specified, scope to that camera only.
+    Camera id is "" for legacy flat-layout entries.
     """
     base = ctx.VEHICLE_SNAPSHOT_DIR
+    out: dict[str, list] = {}
     if not os.path.isdir(base):
-        return []
+        return out
+    for name in os.listdir(base):
+        path = os.path.join(base, name)
+        if not os.path.isdir(path):
+            continue
+        if _is_camera_dir(name):
+            # Per-camera subdir
+            if camera and name != camera:
+                continue
+            try:
+                for day_name in os.listdir(path):
+                    day_path = os.path.join(path, day_name)
+                    if os.path.isdir(day_path):
+                        try:
+                            datetime.strptime(day_name, "%Y-%m-%d")
+                            out.setdefault(day_name, []).append((name, day_path))
+                        except ValueError:
+                            continue
+            except Exception:
+                continue
+        else:
+            # Legacy date directory at the root
+            if camera:
+                continue  # legacy entries can't be attributed to a camera
+            try:
+                datetime.strptime(name, "%Y-%m-%d")
+                out.setdefault(name, []).append(("", path))
+            except ValueError:
+                continue
+    return out
 
-    days = []
+
+@router.get("/days")
+async def list_days(camera: str = ""):
+    """
+    List available day folders containing vehicle snapshots.
+    Returns [{date, count}] sorted newest-first.
+    Optional `?camera=<id>` scopes to one camera.
+    """
     try:
-        for name in sorted(os.listdir(base), reverse=True):
-            day_path = os.path.join(base, name)
-            if os.path.isdir(day_path):
-                # Count JPEG files in this day folder
-                count = sum(1 for f in os.listdir(day_path) if f.lower().endswith(".jpg"))
-                days.append({"date": name, "count": count})
+        day_map = _enumerate_day_dirs(camera=camera)
     except Exception as e:
         ctx.logger.warning(f"Browse days error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+    days = []
+    for date_str in sorted(day_map.keys(), reverse=True):
+        total = 0
+        for _cam, day_path in day_map[date_str]:
+            try:
+                total += sum(1 for f in os.listdir(day_path) if f.lower().endswith(".jpg"))
+            except Exception:
+                continue
+        days.append({"date": date_str, "count": total})
     return days
 
 
 @router.get("/days/{date}")
-async def list_day_snapshots(date: str):
+async def list_day_snapshots(date: str, camera: str = ""):
     """
-    List snapshot files for a specific day.
-    Returns [{filename, timestamp, vehicle_class, url}] sorted newest-first.
+    List snapshot files for a specific day across cameras (or scoped to one).
+    Returns [{filename, time, vehicle_class, camera, url}] sorted newest-first.
     """
     # Validate date format to prevent path traversal
     try:
@@ -61,50 +118,53 @@ async def list_day_snapshots(date: str):
     except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid date format, use YYYY-MM-DD"})
 
-    day_path = os.path.join(ctx.VEHICLE_SNAPSHOT_DIR, date)
-    if not os.path.isdir(day_path):
-        return []
-
+    day_map = _enumerate_day_dirs(camera=camera)
     snapshots = []
     try:
-        for fname in sorted(os.listdir(day_path), reverse=True):
-            if not fname.lower().endswith(".jpg"):
-                continue
-
-            # Parse filename: HH-MM-SS_classname.jpg
-            base_name = fname.rsplit(".", 1)[0]  # strip .jpg
-            parts = base_name.split("_", 1)
-            time_str = parts[0] if parts else ""
-            vehicle_class = parts[1] if len(parts) > 1 else "vehicle"
-
-            snapshots.append({
-                "filename": fname,
-                "time": time_str.replace("-", ":"),
-                "vehicle_class": vehicle_class,
-                "url": f"/api/browse/snapshot/{date}/{fname}",
-            })
+        for src_cam, day_path in day_map.get(date, []):
+            for fname in sorted(os.listdir(day_path), reverse=True):
+                if not fname.lower().endswith(".jpg"):
+                    continue
+                base_name = fname.rsplit(".", 1)[0]
+                parts = base_name.split("_", 1)
+                time_str = parts[0] if parts else ""
+                vehicle_class = parts[1] if len(parts) > 1 else "vehicle"
+                # URL encodes camera in path; legacy entries use empty segment
+                cam_segment = src_cam if src_cam else "_legacy"
+                snapshots.append({
+                    "filename": fname,
+                    "time": time_str.replace("-", ":"),
+                    "vehicle_class": vehicle_class,
+                    "camera": src_cam,
+                    "url": f"/api/browse/snapshot/{cam_segment}/{date}/{fname}",
+                })
     except Exception as e:
         ctx.logger.warning(f"Browse day {date} error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+    # Re-sort by time desc across cameras
+    snapshots.sort(key=lambda s: s["time"], reverse=True)
     return snapshots
 
 
-@router.get("/snapshot/{date}/{filename}")
-async def serve_snapshot(date: str, filename: str):
+@router.get("/snapshot/{camera_or_legacy}/{date}/{filename}")
+async def serve_snapshot(camera_or_legacy: str, date: str, filename: str):
     """
-    Serve a specific vehicle snapshot JPEG from disk.
-    Date and filename are validated to prevent path traversal.
+    Serve a vehicle snapshot from disk.
+    `camera_or_legacy` is either a camera id or the literal "_legacy" for
+    pre-fan-out snapshots stored at the flat root.
     """
-    # Validate date format
     try:
         datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
         return JSONResponse(status_code=400, content={"error": "Invalid date"})
 
-    # Prevent path traversal in filename
     safe_name = os.path.basename(filename)
-    path = os.path.join(ctx.VEHICLE_SNAPSHOT_DIR, date, safe_name)
+    safe_cam = os.path.basename(camera_or_legacy)
+    if safe_cam == "_legacy":
+        path = os.path.join(ctx.VEHICLE_SNAPSHOT_DIR, date, safe_name)
+    else:
+        path = os.path.join(ctx.VEHICLE_SNAPSHOT_DIR, safe_cam, date, safe_name)
 
     if not os.path.isfile(path):
         return JSONResponse(status_code=404, content={"error": "Snapshot not found"})
@@ -113,6 +173,36 @@ async def serve_snapshot(date: str, filename: str):
         data = f.read()
 
     return Response(content=data, media_type="image/jpeg")
+
+
+# Backward-compat: old /api/browse/snapshot/{date}/{filename} (no camera segment)
+# tries legacy root first, then walks all camera subdirs.
+@router.get("/snapshot/{date}/{filename}", name="serve_snapshot_legacy")
+async def serve_snapshot_legacy(date: str, filename: str):
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Invalid date"})
+    safe_name = os.path.basename(filename)
+
+    # Try legacy flat first
+    legacy_path = os.path.join(ctx.VEHICLE_SNAPSHOT_DIR, date, safe_name)
+    if os.path.isfile(legacy_path):
+        with open(legacy_path, "rb") as f:
+            return Response(content=f.read(), media_type="image/jpeg")
+
+    # Walk camera subdirs
+    base = ctx.VEHICLE_SNAPSHOT_DIR
+    if os.path.isdir(base):
+        for name in os.listdir(base):
+            if not _is_camera_dir(name):
+                continue
+            cam_path = os.path.join(base, name, date, safe_name)
+            if os.path.isfile(cam_path):
+                with open(cam_path, "rb") as f:
+                    return Response(content=f.read(), media_type="image/jpeg")
+
+    return JSONResponse(status_code=404, content={"error": "Snapshot not found"})
 
 
 @router.get("/faces")
