@@ -1179,57 +1179,40 @@ async def _cmd_events(chat_id: str = "", text: str = "", **kwargs):
             chat_id=chat_id,
         )
 
+        # Build captions + photos using the shared renderer so this matches
+        # whatever the web event feed shows. New event types are added in
+        # event_renderer.py once and both consumers pick them up.
+        from event_renderer import render_event
+        from routes.events import resolve_event_snapshot_path
+
         for msg_id, data, src_cid in merged:
-            etype = data.get("event_type", "unknown")
-            identity = data.get("identity_name", "")
-            person_id = data.get("person_id", "")
-            zone = data.get("zone", "")
-            ts_raw = data.get("timestamp", "")
-
-            icons = {
-                "person_appeared": "🚨",
-                "person_identified": "👤",
-                "vehicle_detected": "🚗",
-                "vehicle_idle": "🚗",
-            }
-            icon = icons.get(etype, "📌")
-            who = identity if identity else person_id if person_id else "unknown"
-
-            # Format timestamp: convert unix float to readable time
-            time_str = ""
-            if ts_raw:
-                try:
-                    ts_float = float(ts_raw)
-                    dt = datetime.fromtimestamp(ts_float, tz=TZ_LOCAL)
-                    time_str = dt.strftime("%I:%M %p")
-                except (ValueError, OSError):
-                    time_str = ts_raw  # Fallback to raw if not a float
+            mid = msg_id if isinstance(msg_id, str) else msg_id.decode()
+            # Build the same dict shape the API returns, then render it.
+            evt = {**data, "id": mid, "camera_id": data.get("camera_id", src_cid)}
+            r = render_event(evt)
 
             # Prefix with camera name only when reporting across multiple cameras
-            src_label = _camera_friendly_name(src_cid)
-            cam_prefix = f"📷 {src_label} · " if len(cam_ids) > 1 else ""
-            caption = f"{cam_prefix}{icon} <b>{etype.replace('_', ' ').title()}</b>"
-            if who and who != "unknown":
-                caption += f" — {who}"
-            if zone:
-                caption += f" ({zone})"
-            if time_str:
-                caption += f"\n🕐 {time_str}"
+            cam_prefix = (f"📷 {_camera_friendly_name(src_cid)} · "
+                          if len(cam_ids) > 1 else "")
+            caption_parts = [f"{cam_prefix}{r['icon']} <b>{r['title']}</b>"]
+            if r["subtitle"]:
+                caption_parts.append(r["subtitle"])
+            caption = "\n".join(caption_parts)
 
-            # Try to send event snapshot as photo (per-camera path)
-            from routes.events import resolve_event_snapshot_path
-            mid = msg_id if isinstance(msg_id, str) else msg_id.decode()
-            snap_path = resolve_event_snapshot_path(mid, camera_id=src_cid)
+            # Try to send an event snapshot photo if the renderer asked for one
             sent_photo = False
-            if snap_path and os.path.isfile(snap_path):
-                try:
-                    with open(snap_path, "rb") as f:
-                        snap_bytes = f.read()
-                    if snap_bytes:
-                        await send_photo(snap_bytes, caption, chat_id=chat_id)
-                        sent_photo = True
-                except Exception:
-                    pass
+            photo = r.get("photo")
+            if photo and photo.get("kind") in ("face", "event_snapshot"):
+                snap_path = resolve_event_snapshot_path(mid, camera_id=src_cid)
+                if snap_path and os.path.isfile(snap_path):
+                    try:
+                        with open(snap_path, "rb") as f:
+                            snap_bytes = f.read()
+                        if snap_bytes:
+                            await send_photo(snap_bytes, caption, chat_id=chat_id)
+                            sent_photo = True
+                    except Exception:
+                        pass
 
             if not sent_photo:
                 await send_text(caption, chat_id=chat_id)

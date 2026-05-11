@@ -31,6 +31,7 @@ COPY server.py .
 COPY ai_db.py .
 COPY constants.py .
 COPY cameras.py .
+COPY event_renderer.py .
 COPY websocket.py .
 COPY helpers/ helpers/
 COPY pollers/ pollers/

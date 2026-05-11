@@ -121,99 +121,45 @@ async function pollEvents() {
 
 /**
  * Render a single event in the event feed.
+ *
+ * Display fields come from the server (`evt.render`, computed by
+ * event_renderer.py). This keeps the frontend and Telegram bot in
+ * lockstep — new event types are wired in one Python module, not two.
  */
 function renderEvent(evt) {
     const item = document.createElement("div");
-    const isAppeared = evt.event_type === "person_appeared";
-    const isLeft = evt.event_type === "person_left";
-    const isActionChanged = evt.event_type === "action_changed";
-    const isFaceEvent = evt.event_type === "face_reconciled" || evt.event_type === "face_enrolled" || evt.event_type === "person_identified";
-    const isVehicle = evt.event_type === "vehicle_detected";
-    const isVehicleIdle = evt.event_type === "vehicle_idle";
-    const isUnauthorized = evt.event_type === "unauthorized_access";
-    const isAlert = evt.alert_triggered === "True" || evt.alert_triggered === "true";
+    const r = evt.render || {};
+    const icon = r.icon || "📌";
+    const title = r.title || evt.event_type || "Event";
+    const meta = r.subtitle || "";
+    const cssExtra = r.css_classes || "";
 
-    item.className = `event-item ${isAppeared ? "appeared" : ""} ${isLeft ? "left" : ""} ${isAlert || isUnauthorized ? "alert" : ""} ${isFaceEvent || isActionChanged ? "appeared" : ""} ${isVehicle ? "appeared" : ""} ${isVehicleIdle ? "alert" : ""}`;
-
-    // Format timestamp
-    const ts = parseFloat(evt.timestamp);
-    const time = new Date(ts * 1000).toLocaleTimeString("en-US", {
-        timeZone: "America/Toronto",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-    });
-
-    let icon, title, meta;
-    // Show identity name (e.g. "Alice") when available, fall back to person_id
-    const displayName = evt.identity_name || evt.person_id;
-    const idSuffix = evt.identity_name ? ` (${evt.person_id})` : "";
-
-    if (isUnauthorized) {
-        icon = "🔒";
-        const tgUser = evt.telegram_username ? `@${evt.telegram_username}` : `ID:${evt.telegram_user_id || "?"}`;
-        const attemptedCmd = evt.action || "unknown";
-        title = `Unauthorized Access — ${displayName || tgUser}`;
-        meta = `${time} · ${tgUser} tried ${attemptedCmd} · 🚨 Blocked`;
-    } else if (isVehicle || isVehicleIdle) {
-        // Vehicle event — show vehicle-specific icon and info
-        const vClass = evt.vehicle_class || "vehicle";
-        const vConf = evt.vehicle_confidence ? parseFloat(evt.vehicle_confidence) : 0;
-        const vehicleIcons = { car: "🚗", truck: "🚛", motorcycle: "🏍️", bus: "🚌" };
-        icon = isVehicleIdle ? "🚨" : (vehicleIcons[vClass] || "🚗");
-        if (isVehicleIdle) {
-            title = `Vehicle Idling — ${vClass.charAt(0).toUpperCase() + vClass.slice(1)}`;
-            meta = `${time} · ⏱️ ${evt.duration}s · ${(vConf * 100).toFixed(0)}% confidence${evt.zone ? ` · 📍${evt.zone}` : ""} · 🚨 Alert`;
-        } else {
-            title = `Vehicle Detected — ${vClass.charAt(0).toUpperCase() + vClass.slice(1)}`;
-            meta = `${time} · ${(vConf * 100).toFixed(0)}% confidence${evt.zone ? ` · 📍${evt.zone}` : ""}${isAlert ? " · 🚨 Alert" : ""}`;
-        }
-    } else if (evt.event_type === "person_identified") {
-        icon = "👤";
-        title = `Person Identified — ${displayName}`;
-        meta = `${time} · ${evt.person_id} recognized as ${evt.identity_name}${evt.action && evt.action !== "unknown" ? ` · ${evt.action}` : ""}`;
-    } else if (evt.event_type === "face_reconciled") {
-        icon = "🔗";
-        title = `Face Matched — ${displayName}`;
-        meta = `${time} · ${evt.action || "Cleared unknown"}`;
-    } else if (evt.event_type === "face_enrolled") {
-        icon = "✅";
-        title = `Face Enrolled — ${displayName}`;
-        meta = `${time} · ${evt.action || "New enrollment"}`;
-    } else if (isActionChanged) {
-        icon = "🔄";
-        title = `Action Changed — ${displayName}`;
-        meta = `${time} · ${evt.prev_action || "?"} → ${evt.action}${evt.zone ? ` · 📍${evt.zone}` : ""}`;
-    } else {
-        icon = isAlert ? "🚨" : (isAppeared ? "🟢" : "🟡");
-        title = `${isAppeared ? "Person Appeared" : "Person Left"} — ${displayName}`;
-        meta = `${time} · ${evt.duration}s · ${evt.direction}${evt.action && evt.action !== "unknown" ? ` · ${evt.action}` : ""}${evt.zone ? ` · 📍${evt.zone}` : ""}${isAlert ? " · 🚨 Alert" : ""}`;
-    }
+    item.className = `event-item ${cssExtra}`.trim();
 
     // -----------------------------------------------------------------------
-    // Build photo thumbnail HTML
+    // Photo thumbnail (the server tells us which kind to use)
     // -----------------------------------------------------------------------
     let photoHtml = "";
-    const identityName = evt.identity_name || (evt.event_type === "face_enrolled" ? evt.person_id : null);
+    const ph = r.photo;
+    if (ph) {
+        let photoUrl = "";
+        const caption = (ph.caption || "Snapshot").replace(/'/g, "\\'");
 
-    if ((isVehicle || isVehicleIdle) && evt.snapshot_key) {
-        // Vehicle snapshot from Redis
-        const snapshotUrl = `/api/vehicles/snapshot/${encodeURIComponent(evt.snapshot_key)}`;
-        const caption = `Vehicle — ${evt.vehicle_class || "unknown"}`;
-        photoHtml = `<img class="event-photo" src="${snapshotUrl}" alt="${caption}" onclick="_openEventPhoto('${snapshotUrl}', '${caption.replace(/'/g, "\\'")}')"
-            onerror="this.style.display='none'">`;
-    } else if (identityName && _faceIdCache[identityName]) {
-        // Known person — use enrolled face photo
-        const fid = _faceIdCache[identityName];
-        const photoUrl = `/api/faces/${fid}/photo`;
-        photoHtml = `<img class="event-photo" src="${photoUrl}" alt="${identityName}" onclick="_openEventPhoto('${photoUrl}', '${identityName.replace(/'/g, "\\'")}')"
-            onerror="this.style.display='none'">`;
-    } else if (isAppeared || isLeft) {
-        // Unknown person or person_left — use camera snapshot
-        const snapshotUrl = `/api/events/${encodeURIComponent(evt.id)}/snapshot`;
-        const caption = displayName || "Camera snapshot";
-        photoHtml = `<img class="event-photo" src="${snapshotUrl}" alt="${caption}" onclick="_openEventPhoto('${snapshotUrl}', '${caption.replace(/'/g, "\\'")}')"
-            onerror="this.style.display='none'">`;
+        if (ph.kind === "face" && ph.identity_name && _faceIdCache[ph.identity_name]) {
+            // Known person — use enrolled face photo from the cache
+            const fid = _faceIdCache[ph.identity_name];
+            photoUrl = `/api/faces/${fid}/photo`;
+        } else if ((ph.kind === "face" || ph.kind === "event_snapshot") && ph.event_id) {
+            // Fall back to the event's saved snapshot on disk
+            const camQ = ph.camera_id ? `?camera=${encodeURIComponent(ph.camera_id)}` : "";
+            photoUrl = `/api/events/${encodeURIComponent(ph.event_id)}/snapshot${camQ}`;
+        } else if (ph.kind === "vehicle" && ph.snapshot_key) {
+            photoUrl = `/api/vehicles/snapshot/${encodeURIComponent(ph.snapshot_key)}`;
+        }
+
+        if (photoUrl) {
+            photoHtml = `<img class="event-photo" src="${photoUrl}" alt="${caption}" onclick="_openEventPhoto('${photoUrl}', '${caption}')" onerror="this.style.display='none'">`;
+        }
     }
 
     // AI scene analysis (if available)

@@ -71,6 +71,7 @@ async def get_events(count: int = 50, camera: str = ""):
         merged.sort(key=lambda x: _ms(x[0]), reverse=True)
         merged = merged[:count]
 
+        from event_renderer import render_event
         events = []
         for event_id, data, src_cam in merged:
             evt = {
@@ -92,10 +93,15 @@ async def get_events(count: int = 50, camera: str = ""):
                 "vehicle_class": data.get("vehicle_class", ""),
                 "vehicle_confidence": data.get("vehicle_confidence", ""),
                 "snapshot_key": data.get("snapshot_key", ""),
+                # Telegram-specific (only set for unauthorized_access events)
+                "telegram_username": data.get("telegram_username", ""),
+                "telegram_user_id": data.get("telegram_user_id", ""),
             }
             ai_desc = ctx.r.get(f"scene_analysis:{event_id}")
             if ai_desc:
                 evt["ai_description"] = ai_desc
+            # Single source of truth for display: see services/dashboard/event_renderer.py
+            evt["render"] = render_event(evt)
             events.append(evt)
         return {"events": events, "cameras": cam_ids}
     except redis.ConnectionError:
