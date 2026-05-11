@@ -6,7 +6,7 @@
 
 ---
 
-## ⚡ RESUME HERE — current state (as of `667f0ab`, commit 24)
+## ⚡ RESUME HERE — current state (as of `ed2c3c2`, May 10 2026)
 
 If you're picking this up cold, read this section first.
 
@@ -28,6 +28,17 @@ front_door  → Wheatley,  rtsp://admin:.../h264Preview_01_sub,  all 3 detectors
 cam2        → basement,  rtsp://192.168.5.45:8554/basement,    pose + face only (no vehicle)
 ```
 
+**Disk layout (current — all per-camera):**
+```
+./data/recordings/{camera_id}/{date}/HH-MM.ts   ← bind mount, MPEG-TS, 1h segments, 3-day retention
+                                                  Windows path: \\wsl$\<distro>\…\data\recordings\
+/data/snapshots/{camera_id}/{event_id}.jpg      ← Docker volume qnap-snapshots, 4-day retention
+/data/snapshots/vehicles/{camera_id}/{date}/…    ← same volume, per-camera + date subdirs
+/data/snapshots/clips/                          ← AI + /clip outputs, 3-day retention
+/data/events/{date}.jsonl                       ← Docker volume qnap-events, each entry tagged with camera
+/data/telegram/{user_id}/                       ← Docker volume qnap-telegram, audit copies
+```
+
 ### File layout (post-refactor, all verified to exist)
 
 ```
@@ -44,30 +55,41 @@ services/dashboard/
 │   ├── reminders.py         (69 — Telegram reminders every 60s)
 │   ├── ollama_warmup.py     (95 — pulls Qwen 3 14B, warms GPU)
 │   ├── comfyui_cleanup.py   (73 — clears stale ComfyUI queue + gpu:* locks at startup)
-│   ├── retention.py         (121 — daily prune of /data/snapshots and /data/events)
-│   └── events.py            (320 — event poller + Telegram broadcast + snapshot save)
+│   ├── retention.py         (~170 — prunes per-camera snapshots, clips, vehicle dirs, events)
+│   └── events.py            (397 — multi-camera fan-out poller, watches every events:{cam} stream)
 ├── routes/
 │   ├── __init__.py          (shared context: r, r_bin, stream key constants)
 │   ├── auth.py              (login, logout, change-password, forced rotation)
-│   ├── ai.py, ai_tools.py, ai_prompts.py, ai_state.py (AI assistant)
-│   ├── bot_commands.py      (Telegram bot polling + 15 commands)
-│   ├── cameras.py           (NEW — REST API: GET/POST/PUT/DELETE /api/cameras, test-rtsp endpoint)
-│   ├── conditions.py, config.py, events.py, faces.py, image_gen.py
-│   ├── metrics.py, notifications.py, recordings.py, telegram_access.py
-│   ├── unknowns.py, zones.py, browse.py, clips.py
+│   ├── ai.py                (chat completion loop)
+│   ├── ai_tools.py          (1641 lines — 18 LLM tool defs + executors, all camera-aware)
+│   ├── ai_prompts.py        (system prompt builder; injects camera list into context)
+│   ├── ai_state.py          (shared AI assistant state)
+│   ├── bot_commands.py      (1902 lines — Telegram polling + 15 commands w/ camera args)
+│   ├── notifications.py     (961 lines — Telegram API helpers, build_clip(camera_id=))
+│   ├── events.py            (225 lines — /api/events?camera= aggregate or filter)
+│   ├── config.py            (~100 — /api/config?camera= per-camera config)
+│   ├── zones.py             (~115 — /api/zones?camera= per-camera CRUD)
+│   ├── cameras.py           (REST API: GET/POST/PUT/DELETE /api/cameras, test-rtsp endpoint)
+│   ├── recordings.py        (per-camera DVR API + /api/recordings/cameras lister)
+│   ├── browse.py, clips.py, conditions.py, faces.py, unknowns.py
+│   ├── image_gen.py, metrics.py, telegram_access.py
 └── static/
-    ├── index.html          (NEW — multi-cam GRID view, mobile-responsive)
-    ├── grid.js              (NEW — per-tile WebSocket + modal logic)
-    ├── single.html         (the old index.html — full per-camera dashboard at /single.html?camera=X)
-    ├── cameras.html, cameras.js (camera registry admin UI)
-    ├── app.js, faces.js, zones.js, events.js, conditions.js, ... (existing JS modules)
-    ├── ai.html, telegram.html, monitoring.html, login.html
+    ├── index.html          (multi-cam GRID home + Recent Activity feed + Conditions + Faces)
+    ├── grid.js              (per-tile WebSocket + modal logic, click → /single.html?camera=X)
+    ├── single.html         (per-camera detail view, wired to ?camera= URL param)
+    ├── app.js               (CAMERA_ID from URL, withCamera() helper, live-title update)
+    ├── events.js            (reads camera from URL, badge on aggregate feed)
+    ├── zones.js             (per-camera zones via withCamera())
+    ├── ai.html, ai.js       (AI chat + DVR tab with per-camera picker)
+    ├── cameras.html, cameras.js (registry admin UI)
+    ├── faces.js, conditions.js, browse.js, unknowns.js, auth.js
+    ├── telegram.html, monitoring.html, login.html
     └── style.css
 ```
 
 ### Phase status — what's done, what's next
 
-**✅ Done (24 commits, dashboard never broke during the refactor):**
+**✅ Done (35+ commits, dashboard never broke during the refactor):**
 | Phase | Result |
 |-------|--------|
 | 1 — Surgical bug fixes | Real metrics.py `state.persons` bug fixed |
@@ -82,61 +104,61 @@ services/dashboard/
 | 8b iter 1 — Grid view | /index.html is now the grid; /single.html is the detail view |
 | 8b iter 1.1 — Home panels | Conditions + Known Faces panels below the grid |
 | 9a iter 1 — AI multi-camera (3 tools) | get_live_scene aggregates; query_events + capture_snapshot take `camera` arg; system prompt lists cameras |
+| 9a iter 2 — AI multi-camera (all 18 tools) | All remaining tools (`query_events_by_date`, `query_zones`, `browse_vehicles`, `query_event_patterns`, `query_activity_heatmap`, `capture_clip`, `get_system_status`) accept `camera` arg via `_resolve_camera()` helper |
+| 9b iter 1 — Telegram multi-camera | `/snapshot [camera]`, `/clip [N] [camera]`, `/events [N] [camera]`, `/who`, `/zones`, `/timelapse`, `/analyze`, `/status` all parse camera token (id/name/fuzzy/`all`); new `/cameras` helper command; inline-keyboard camera picker for bare `/snapshot` and `/clip` |
+| 9b iter 2 — Event poller fan-out | `pollers/events.py` now watches every enabled camera's `events:{id}` stream via multi-stream xread; refreshes registry every ~60s so added cameras are picked up live; injects `camera_id` into each event |
+| 9b iter 3 — Per-camera disk layout | Snapshots `/data/snapshots/{camera_id}/`, vehicle snapshots `/data/snapshots/vehicles/{camera_id}/{date}/`, event journal entries tagged with camera; retention pruner walks subdirs; `routes/events.py` adds `resolve_event_snapshot_path()` with legacy-flat fallback |
+| 8b iter 2 — Per-camera detail view | `/single.html?camera=X` scopes WebSocket + config sliders + zones + events to that camera; backend `/api/config`, `/api/zones`, `/api/events`, `/api/stats` all accept `?camera=` |
+| DVR enabled locally | `recorder` (front_door) + `recorder-cam2` (basement) running by default; 3-day retention; 1h MPEG-TS segments; `/ai.html` DVR tab has per-camera picker (`/api/recordings/cameras` lists what's actually on disk) |
+| Ingester auto-reconnect | Wallclock-based: if no decoded frame in 30s, close+reopen `cv2.VideoCapture`. Self-heals after unplug within ~1 min |
+| Recordings → bind mount | `./data/recordings/` on host (was `vision-labs_qnap-recordings` named volume). Browseable from Windows Explorer without sudo |
 
 **🔜 Next up (in priority order):**
 
-1. **Phase 9a iter 2 — wire the remaining 7 AI tools** (~2 hours)
-   - `query_events_by_date`, `query_zones`, `browse_vehicles` — accept `camera` arg
-   - `query_event_patterns`, `query_activity_heatmap` — accept `camera` arg
-   - `capture_clip` — accept `camera` arg
-   - `get_system_status` — enumerate per-camera health
-   - Each follows the same pattern: use `_resolve_camera()` helper in `ai_tools.py:33-105`
-
-2. **Phase 9b — Telegram bot multi-camera** (~2-3 hours)
-   - Parse trailing camera id from commands: `/snapshot basement`, `/clip 10 cam2`, `/who all`
-   - Update `_cmd_snapshot`, `_cmd_clip`, `_cmd_who`, `_cmd_events`, `_cmd_zones`, `_cmd_timelapse`, `_cmd_analyze`
-   - `/status` should enumerate both cameras' health
-
-3. **Phase 8b iter 2 — single-camera view parameterization** (~3 hours)
-   - `/single.html?camera=cam2` should drive all the side panels (events, zones, faces enrollment, browse) for cam2 specifically
-   - Most REST endpoints (events, zones) already accept `?camera=X` via the WebSocket pattern; need to wire the JS in `app.js`, `zones.js`, `events.js` to honor the URL param
-   - Currently single.html shows front_door state regardless of `?camera=` value
-
-4. **Phase 8b iter 3 — modal drill-in with full controls** (later)
-   - Click a grid tile → modal opens with full sidebar controls (not just feed)
-   - Less needed once iter 2 is done since you can navigate to /single.html?camera=X
-
-5. **Phase 7d — Auto-discovery** (later)
+1. **Phase 7d — Auto-discovery** (~few hours)
    - ONVIF discovery for IP cameras
    - mDNS for Pi-style streamers
 
-6. **Phase 8 — TV dashboard** (later)
+2. **Phase 8 — TV dashboard** (~few hours)
    - `/tv.html` with 10-foot UI
 
-7. **Phase 9 — HomeKit** (later — Homebridge container as a new compose service)
+3. **Phase 9 — HomeKit** (later — Homebridge container as a new compose service)
+
+4. **Other bind mounts** — if you want `/data/snapshots`, `/data/events`, `/data/telegram` etc. also bind-mounted to `./data/...` for Windows browsability, same pattern as recordings (copy → swap mount in compose → remove named volume).
 
 ### Known small loose ends (none blocking)
 
-- `single.html` still serves only front_door regardless of `?camera=X` URL param. The new WebSocket reads the query param fine; the rest of the panels need wiring (event #3 above).
-- The 7 AI tools listed in 9a iter 2 currently default to front_door even if the LLM passes `camera=cam2`. Not broken — just silently single-camera.
-- `cam3` and `cam4` slots not yet in `docker-compose.yml`. To add: copy the cam2 service block (5 services) and rename. Then append `"cam3"` / `"cam4"` to `AVAILABLE_SLOTS` in `cameras.py`.
+- **cam3/cam4 slots not yet in `docker-compose.yml`.** To add: copy the cam2 service block (5 services: ingester, pose-detector, vehicle-detector, tracker, recorder) and rename. Append `"cam3"` / `"cam4"` to `AVAILABLE_SLOTS` in `cameras.py`.
+- **`/api/login-bg` is hardcoded to primary camera.** Low priority cosmetic — login background image always pulls from `frame_hd:front_door` regardless of multi-camera state.
+- **PHASES.md Tier 2 bugs** still pending:
+  - Vehicle stationarity reference never resets (`tracker.py:215-228`) — a parked car nudged 31px is "non-stationary forever" until next idle timeout.
+  - GPU pause race: dashboard unloads Ollama models *before* setting `gpu:generation_active` flag → detectors may have inference mid-flight during ComfyUI load.
+  - `pose-detector` schema defensiveness: only reads `data[b"frame"]` (vs vehicle-detector which also checks `frame_bytes`). KeyError if upstream changes field name.
+- **`faces.js` enrollment wizard** has not been audited for `?camera=` parameter handling. It works for primary; may use primary's frame for enrollment regardless of selected camera. Faces themselves are a global DB so this matters less than it sounds.
 
 ### Decision log (so we don't re-debate)
 
-- **Auto-spawn cameras via Docker socket**: deferred. Slot-based + manual `docker compose --profile camN up -d` is the current model. Auto-spawn (Phase 7e) is fine for a home setup security-wise but not built yet.
+- **Auto-spawn cameras via Docker socket**: deferred. Slot-based + manual `docker compose --profile camN up -d` is the current model.
 - **Grid as the home page**: chosen. Old single-camera dashboard moved to `/single.html`.
-- **Conditions + Known Faces on home page**: chosen — these are global, not per-camera.
-- **Per-camera Settings + Events + Zones**: stay in `/single.html?camera=X` (drill-in).
+- **Conditions + Known Faces on home page**: chosen — these are global, not per-camera. **Recent Activity** also lives on the home page as the aggregate feed.
+- **Per-camera Settings + Events + Zones**: live in `/single.html?camera=X` (drill-in).
 - **Auth redirect**: 303 instead of 307 (more universally followed).
+- **Recordings storage**: bind-mounted local disk (3-day retention) until QNAP arrives. Same compose interface works when QNAP is added (just swap mount in compose).
+- **Aggregate vs scoped feed semantics**: home page = aggregate ALL cameras with camera badges; single.html = scoped to one camera (no badges). Telegram `/events` no-arg = aggregate; `/events basement` = scoped.
+- **Event snapshot storage**: per-camera subdirs `/data/snapshots/{camera_id}/`. Legacy flat `/data/snapshots/*.jpg` still readable via `resolve_event_snapshot_path()` for older events.
+- **Camera picker UX in Telegram**: bare `/snapshot` or `/clip` (no camera token + >1 camera) replies with inline-keyboard tap-to-pick buttons. With camera token, runs directly. `/clip 10` (duration but no camera) → picker preserves the 10s through callback_data.
 
 ### How to verify state after a session restart
 
 ```bash
 cd ~/projects/vision-labs
-docker compose ps                                  # 14 base + 4 cam2 services should be up
+docker compose --profile cam2 ps                   # ~20 services up (base + cam2 slot)
 docker compose exec -T redis redis-cli HGETALL cameras:registry   # both cameras
-git log --oneline | head -5                        # last commit should be 667f0ab or later
+ls data/recordings/                                # front_door/  cam2/ (per-camera dirs)
+ls data/recordings/front_door/                     # date dirs YYYY-MM-DD
+git log --oneline | head -5                        # last commit should be ed2c3c2 or later
 curl -ks -o /dev/null -w "%{http_code}\n" http://localhost:8080/   # 303 (redirect to login)
+docker compose logs --tail=5 recorder recorder-cam2 | grep "ffmpeg started"   # both recorders writing
 ```
 
 ---
