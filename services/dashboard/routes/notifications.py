@@ -153,17 +153,23 @@ def _get_all_chat_ids() -> list[str]:
 # ---------------------------------------------------------------------------
 # Telegram API helpers
 # ---------------------------------------------------------------------------
-async def send_text(message: str, chat_id: str = "") -> bool:
-    """Send a plain text message to a specific Telegram chat."""
+async def send_text(message: str, chat_id: str = "",
+                    reply_markup: dict | None = None) -> bool:
+    """Send a plain text message to a specific Telegram chat.
+    `reply_markup` accepts a Telegram InlineKeyboardMarkup dict (used to
+    attach tap-to-pick buttons under the message)."""
     if not is_configured():
         logger.warning("Telegram not configured — skipping notification")
         return False
     target = chat_id or TELEGRAM_CHAT_ID
     try:
+        payload = {"chat_id": target, "text": message, "parse_mode": "HTML"}
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{TELEGRAM_API}/sendMessage",
-                json={"chat_id": target, "text": message, "parse_mode": "HTML"},
+                json=payload,
                 timeout=10,
             )
             if resp.status_code != 200:

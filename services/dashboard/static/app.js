@@ -18,6 +18,49 @@
  */
 
 // ---------------------------------------------------------------------------
+// Camera selection (multi-camera)
+// ---------------------------------------------------------------------------
+// `single.html?camera=<id>` scopes the whole page (WebSocket, config, zones,
+// events, state) to that camera. If absent, defaults to the dashboard's
+// primary camera (server-side env CAMERA_ID); the backend handles that.
+const CAMERA_ID = (() => {
+    try {
+        const fromUrl = new URLSearchParams(window.location.search).get("camera");
+        if (fromUrl) return fromUrl;
+    } catch (e) { /* no-op */ }
+    return "";
+})();
+// Convenience for appending the param to API calls
+const _cameraQ = CAMERA_ID ? `camera=${encodeURIComponent(CAMERA_ID)}` : "";
+function withCamera(url) {
+    if (!_cameraQ) return url;
+    return url + (url.includes("?") ? "&" : "?") + _cameraQ;
+}
+// Expose so events.js (and other modules) can read the same id
+window.EVENT_FEED_CAMERA = CAMERA_ID;
+
+/** Fetch camera friendly-name from registry and update the page title. */
+async function _updateLiveViewTitle() {
+    const titleEl = document.getElementById("liveViewTitle");
+    if (!titleEl) return;
+    try {
+        const res = await fetch("/api/cameras");
+        const data = await res.json();
+        const cams = data.cameras || [];
+        // Resolve which camera we're showing: URL param > server primary
+        const id = CAMERA_ID || (cams.find(c => c.is_primary) || cams[0] || {}).id;
+        const match = cams.find(c => c.id === id);
+        const label = match ? (match.name || match.id) : (id || "Primary");
+        titleEl.textContent = `📹 Live View — ${label}`;
+        document.title = `${label} · Vision Labs`;
+    } catch (e) {
+        titleEl.textContent = CAMERA_ID
+            ? `📹 Live View — ${CAMERA_ID}`
+            : "📹 Live View";
+    }
+}
+
+// ---------------------------------------------------------------------------
 // DOM Elements
 // ---------------------------------------------------------------------------
 const liveFrame = document.getElementById("liveFrame");
@@ -103,7 +146,8 @@ function _updateStreamToggleBtn() {
  */
 function connectWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = `${protocol}://${window.location.host}/ws/live`;
+    let wsUrl = `${protocol}://${window.location.host}/ws/live`;
+    if (CAMERA_ID) wsUrl += `?camera=${encodeURIComponent(CAMERA_ID)}`;
 
     ws = new WebSocket(wsUrl);
 
@@ -178,7 +222,7 @@ function connectWebSocket() {
  */
 async function updateConfig(key, value) {
     try {
-        const response = await fetch("/api/config", {
+        const response = await fetch(withCamera("/api/config"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ [key]: value }),
@@ -232,7 +276,7 @@ vehicleIdleSlider.addEventListener("input", () => {
 // ---------------------------------------------------------------------------
 async function loadConfig() {
     try {
-        const response = await fetch("/api/config");
+        const response = await fetch(withCamera("/api/config"));
         const data = await response.json();
         const config = data.config || {};
 
@@ -327,6 +371,9 @@ async function testNotification() {
 // Initialize — orchestrate all modules
 // ---------------------------------------------------------------------------
 function init() {
+    // Update the title bar to show which camera we're scoped to
+    _updateLiveViewTitle();
+
     // Connect to live stream
     connectWebSocket();
 

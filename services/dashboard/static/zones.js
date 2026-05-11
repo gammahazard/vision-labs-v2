@@ -330,7 +330,7 @@ async function saveZone() {
     const alertLevel = document.getElementById("zoneAlertLevel").value;
 
     try {
-        const resp = await fetch("/api/zones", {
+        const resp = await fetch(withCamera("/api/zones"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -434,7 +434,7 @@ function _drawEditOverlay() {
 async function _saveEditedZone() {
     if (!_editingZone) return;
     try {
-        await fetch(`/api/zones/${_editingZone.id}`, {
+        await fetch(withCamera(`/api/zones/${_editingZone.id}`), {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ points: _editingZone.points }),
@@ -469,7 +469,7 @@ function cancelEditMode() {
  */
 async function loadZones() {
     try {
-        const resp = await fetch("/api/zones");
+        const resp = await fetch(withCamera("/api/zones"));
         const data = await resp.json();
         savedZones = data.zones || [];
 
@@ -508,7 +508,7 @@ async function deleteZone(zoneId, name) {
     if (!confirm(`Delete zone "${name}"?`)) return;
 
     try {
-        await fetch(`/api/zones/${zoneId}`, { method: "DELETE" });
+        await fetch(withCamera(`/api/zones/${zoneId}`), { method: "DELETE" });
         loadZones();
     } catch (err) {
         console.error("Delete zone error:", err);

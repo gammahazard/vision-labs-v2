@@ -273,7 +273,31 @@ async def poll_telegram_callbacks():
                         except Exception:
                             pass
                         continue
-                    # Answer the callback query with a simple acknowledgement
+                    # Inline-keyboard "pick a camera" buttons send callback_data
+                    # like "cmd:snapshot:cam2" or "cmd:clip:cam2:10". Reconstitute
+                    # those into a synthetic command and re-dispatch.
+                    cb_data = cb.get("data", "") or ""
+                    if cb_data.startswith("cmd:"):
+                        parts = cb_data.split(":")
+                        # parts: ["cmd", "<command>", "<camera>", "<extra>...?"]
+                        if len(parts) >= 3:
+                            cmd_name = "/" + parts[1]
+                            cam_token = parts[2]
+                            extra = " ".join(parts[3:]) if len(parts) > 3 else ""
+                            synth_text = f"{cmd_name} {cam_token}".strip()
+                            if extra:
+                                synth_text += " " + extra
+                            await answer_callback_query(cb.get("id", ""), f"📷 {cam_token}")
+                            await _handle_command(
+                                cmd_name,
+                                chat_id=str(cb_chat_id) if cb_chat_id else "",
+                                text=synth_text,
+                                user_id=str(cb_user_id),
+                                username=cb_username,
+                            )
+                            continue
+
+                    # Default: just ack
                     await answer_callback_query(cb.get("id", ""), "OK")
                     continue
 
@@ -387,6 +411,57 @@ def _camera_friendly_name(cam_id: str) -> str:
         if c.get("id") == cam_id:
             return c.get("name") or cam_id
     return cam_id
+
+
+def _user_specified_camera(text: str) -> bool:
+    """True iff `text` contains a token that matches a known camera id/name
+    (or "all"). Used to decide whether to show the tap-to-pick keyboard."""
+    cams = _telegram_get_cameras()
+    ids = {c["id"].lower() for c in cams}
+    names = {(c.get("name") or "").lower() for c in cams if c.get("name")}
+    for tok in (text or "").split():
+        t = tok.lower()
+        if t == "all" or t in ids or t in names:
+            return True
+    return False
+
+
+async def _send_camera_picker(chat_id: str, command: str, extra: str = ""):
+    """Send a tap-to-pick inline keyboard for the camera arg of a command.
+    `command` is the bare command name (e.g. "snapshot", "clip").
+    `extra` is appended to the callback so the chosen command gets the original
+    non-camera args back (e.g. clip duration).
+    """
+    cams = _telegram_get_cameras()
+    if not cams:
+        await send_text("⚠️ No cameras configured.", chat_id=chat_id)
+        return
+    # 2 buttons per row
+    rows: list[list[dict]] = []
+    cur: list[dict] = []
+    for c in cams:
+        label = f"📷 {c.get('name') or c.get('id')}"
+        data = f"cmd:{command}:{c['id']}"
+        if extra:
+            data += f":{extra}"
+        cur.append({"text": label, "callback_data": data})
+        if len(cur) == 2:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    # "All" button at the bottom for fan-out
+    all_data = f"cmd:{command}:all"
+    if extra:
+        all_data += f":{extra}"
+    rows.append([{"text": "🎞 All cameras", "callback_data": all_data}])
+
+    await send_text(
+        f"📷 <b>Which camera?</b>\nTap one to run <code>/{command}</code>"
+        + (f" with <code>{extra}</code>" if extra else "") + ".",
+        chat_id=chat_id,
+        reply_markup={"inline_keyboard": rows},
+    )
 
 
 def _resolve_camera_token(text: str) -> tuple[list[str], str]:
@@ -520,10 +595,15 @@ async def _cmd_snapshot(chat_id: str = "", text: str = "",
     """Send a live camera snapshot with AI scene description.
 
     Examples:
-      /snapshot           — primary camera
+      /snapshot           — interactive picker if >1 camera (else primary)
       /snapshot basement  — that camera
       /snapshot all       — one photo per enabled camera
     """
+    # Bare /snapshot with multiple cameras → ask which one with buttons
+    if not _user_specified_camera(text) and len(_telegram_get_cameras()) > 1:
+        await _send_camera_picker(chat_id, "snapshot")
+        return
+
     cam_ids, _ = _resolve_camera_token(text)
     if not cam_ids:
         await send_text("⚠️ No cameras configured. Add one in the dashboard.", chat_id=chat_id)
@@ -559,12 +639,28 @@ async def _cmd_clip(chat_id: str = "", text: str = "",
     """Capture and send a video clip (5-40s, default 5) with AI analysis.
 
     Examples:
-      /clip             — 5s on primary
-      /clip 15          — 15s on primary
+      /clip             — interactive picker if >1 camera (else primary 5s)
+      /clip 15          — picker, will use 15s on the chosen camera
       /clip basement    — 5s on basement
       /clip 10 basement — 10s on basement (order doesn't matter)
       /clip all         — 5s clip from each enabled camera, sent in sequence
     """
+    # No camera token + multiple cameras → ask which one with buttons.
+    # Preserve any numeric duration the user typed by passing it through as
+    # extra so the callback re-issues the command with both args set.
+    if not _user_specified_camera(text) and len(_telegram_get_cameras()) > 1:
+        extra = ""
+        for tok in (text or "").split()[1:]:
+            try:
+                d = float(tok)
+                if 5.0 <= d <= 40.0:
+                    extra = str(int(d))
+                    break
+            except ValueError:
+                continue
+        await _send_camera_picker(chat_id, "clip", extra=extra)
+        return
+
     cam_ids, remaining_text = _resolve_camera_token(text)
     if not cam_ids:
         await send_text("⚠️ No cameras configured.", chat_id=chat_id)

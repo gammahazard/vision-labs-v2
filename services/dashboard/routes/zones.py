@@ -1,14 +1,10 @@
 """
-routes/zones.py — Zone CRUD endpoints.
+routes/zones.py — Zone CRUD endpoints (per-camera).
 
 PURPOSE:
-    Manage detection zones stored in Redis. Zones are polygons
-    drawn on the camera feed with associated alert levels.
-
-ENDPOINTS:
-    GET    /api/zones          — List all zones
-    POST   /api/zones          — Create a new zone
-    DELETE /api/zones/{zone_id} — Delete a zone
+    Manage detection zones stored in Redis. Zones are per-camera polygons
+    (zones:{camera_id} hash). Pass `?camera=<id>` on every endpoint to scope
+    operations to that camera; omit to default to the dashboard's primary.
 """
 
 import json
@@ -22,24 +18,32 @@ import routes as ctx
 router = APIRouter(prefix="/api", tags=["zones"])
 
 
+def _zone_key(camera: str) -> str:
+    """Return the Redis zone-hash key for `camera` (defaults to primary)."""
+    if not camera or camera == ctx.CAMERA_ID:
+        return ctx.ZONE_KEY
+    from contracts.streams import ZONE_KEY as _ZONE_TMPL, stream_key as _stream_key
+    return _stream_key(_ZONE_TMPL, camera_id=camera)
+
+
 @router.get("/zones")
-async def list_zones():
-    """List all defined zones."""
+async def list_zones(camera: str = ""):
+    """List zones for a camera. Pass ?camera=<id> to scope."""
     try:
-        raw = ctx.r.hgetall(ctx.ZONE_KEY)
+        raw = ctx.r.hgetall(_zone_key(camera))
         zones = []
         for zone_id, zone_json in raw.items():
             zone = json.loads(zone_json)
             zone["id"] = zone_id
             zones.append(zone)
-        return {"zones": zones}
+        return {"zones": zones, "camera": camera or ctx.CAMERA_ID}
     except Exception as e:
         ctx.logger.warning(f"List zones failed: {e}")
         return {"zones": []}
 
 
 @router.post("/zones")
-async def create_zone(data: dict):
+async def create_zone(data: dict, camera: str = ""):
     """
     Create a new zone.
 
@@ -70,16 +74,18 @@ async def create_zone(data: dict):
         "alert_level": alert_level,
     }
 
-    ctx.r.hset(ctx.ZONE_KEY, zone_id, json.dumps(zone_data))
+    zk = _zone_key(camera)
+    ctx.r.hset(zk, zone_id, json.dumps(zone_data))
 
-    ctx.logger.info(f"Zone created: {zone_id} ({name}, {alert_level})")
+    ctx.logger.info(f"Zone created on {zk}: {zone_id} ({name}, {alert_level})")
     return {"id": zone_id, **zone_data}
 
 
 @router.put("/zones/{zone_id}")
-async def update_zone(zone_id: str, data: dict):
+async def update_zone(zone_id: str, data: dict, camera: str = ""):
     """Update an existing zone's points, name, or alert_level."""
-    raw = ctx.r.hget(ctx.ZONE_KEY, zone_id)
+    zk = _zone_key(camera)
+    raw = ctx.r.hget(zk, zone_id)
     if not raw:
         return JSONResponse(status_code=404, content={"error": "Zone not found"})
 
@@ -94,17 +100,18 @@ async def update_zone(zone_id: str, data: dict):
     if "alert_level" in data:
         zone["alert_level"] = data["alert_level"]
 
-    ctx.r.hset(ctx.ZONE_KEY, zone_id, json.dumps(zone))
-    ctx.logger.info(f"Zone updated: {zone_id}")
+    ctx.r.hset(zk, zone_id, json.dumps(zone))
+    ctx.logger.info(f"Zone updated on {zk}: {zone_id}")
     return {"id": zone_id, **zone}
 
 
 @router.delete("/zones/{zone_id}")
-async def delete_zone(zone_id: str):
+async def delete_zone(zone_id: str, camera: str = ""):
     """Delete a zone by ID."""
-    deleted = ctx.r.hdel(ctx.ZONE_KEY, zone_id)
+    zk = _zone_key(camera)
+    deleted = ctx.r.hdel(zk, zone_id)
 
     if deleted:
-        ctx.logger.info(f"Zone deleted: {zone_id}")
+        ctx.logger.info(f"Zone deleted from {zk}: {zone_id}")
         return {"deleted": True}
     return JSONResponse(status_code=404, content={"error": "Zone not found"})
