@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision Labs — Security Dashboard</title>
+    <meta name="description" content="Real-time AI security camera monitoring dashboard">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="style.css?v=3">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<!-- Navbar (consolidated — logo, nav, live stats) -->
+<nav class="navbar">
+    <div class="navbar-left">
+        <a href="/" class="navbar-brand">
+            <span class="navbar-logo">◉</span> Vision Labs
+        </a>
+        <span class="status-badge" id="connectionStatus">Connecting...</span>
+        <div class="navbar-links">
+            <a href="/" class="nav-link nav-link--active">🏠 Home</a>
+            <a href="/grid.html" class="nav-link">🔲 Grid</a>
+            <a href="/cameras.html" class="nav-link">📹 Cameras</a>
+            <a href="/ai.html" class="nav-link">🤖 AI</a>
+            <a href="/telegram.html" class="nav-link">🔐 Telegram</a>
+            <a href="/monitoring.html" class="nav-link">📊 Monitoring</a>
+        </div>
+    </div>
+    <div class="navbar-stats">
+        <div class="stat" id="fpsDisplay">
+            <span class="stat-label">FPS</span>
+            <span class="stat-value">--</span>
+        </div>
+        <div class="stat" id="inferenceDisplay">
+            <span class="stat-label">Inference</span>
+            <span class="stat-value">--ms</span>
+        </div>
+        <div class="stat" id="peopleDisplay">
+            <span class="stat-label">People</span>
+            <span class="stat-value">0</span>
+        </div>
+    </div>
+</nav>
+
+<!-- Main Content -->
+<main id="main">
+    <!-- Live Camera View -->
+    <section class="panel live-view-panel" id="liveViewPanel">
+        <div class="panel-header">
+            <h2>📹 Live View — Front Door</h2>
+            <div class="live-view-controls">
+                <div class="live-badge" id="liveBadge">● LIVE</div>
+                <button class="stream-toggle-btn" id="streamToggleBtn" onclick="toggleStreamMode()"
+                    title="Switch between SD (with overlays) and HD (raw main stream)">SD</button>
+                <button class="zone-toggle-btn" id="zoneToggleBtn" onclick="toggleZoneMode()">🔲 Draw Zone</button>
+            </div>
+        </div>
+        <div class="video-container" id="videoContainer">
+            <img id="liveFrame" alt="Live camera feed">
+            <canvas id="zoneCanvas"></canvas>
+            <div class="no-signal" id="noSignal">
+                <span class="no-signal-icon">📡</span>
+                <p>Connecting to camera...</p>
+            </div>
+        </div>
+        <!-- Zone toolbar (shown when in draw mode) -->
+        <div class="zone-toolbar" id="zoneToolbar" style="display: none;">
+            <input type="text" id="zoneName" placeholder="Label (e.g. MAIN AREA)" class="zone-name-input"
+                maxlength="30">
+            <select id="zoneAlertLevel" class="zone-select">
+                <option value="always">🔴 Always Alert</option>
+                <option value="night_only">🟠 Night Only</option>
+                <option value="log_only" selected>🔵 Log Only</option>
+                <option value="ignore">⚫ Ignore</option>
+                <option value="dead_zone">💀 Dead Zone</option>
+            </select>
+            <button class="zone-save-btn" id="zoneSaveBtn" onclick="saveZone()" disabled>💾 Save Zone</button>
+            <button class="zone-cancel-btn" onclick="cancelZoneDraw()">✕ Cancel</button>
+            <span class="zone-hint" id="zoneHint">Click on the video to place points. Double-click to close
+                polygon.</span>
+        </div>
+    </section>
+
+    <!-- Right Sidebar -->
+    <aside class="sidebar">
+        <!-- Settings Panel -->
+        <section class="panel settings-panel collapsed" id="settingsPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>⚙️ Detection Settings</h2>
+                <span class="panel-toggle">▼</span>
+            </div>
+            <div class="panel-body">
+                <p class="setting-hint" style="margin-bottom: 10px; font-weight: 500; color: #94a3b8;">👤 Person
+                    Detection</p>
+
+                <div class="setting">
+                    <div class="setting-header">
+                        <label for="confidenceSlider">Person Confidence</label>
+                        <span class="setting-value" id="confidenceValue">0.50</span>
+                    </div>
+                    <input type="range" id="confidenceSlider" min="0.1" max="0.95" step="0.05" value="0.5">
+                    <p class="setting-hint">Min YOLO confidence to accept a person detection. Higher = fewer false
+                        positives but may miss distant/angled people.</p>
+                </div>
+
+                <div class="setting">
+                    <div class="setting-header">
+                        <label for="iouSlider">Tracking IoU</label>
+                        <span class="setting-value" id="iouValue">0.30</span>
+                    </div>
+                    <input type="range" id="iouSlider" min="0.1" max="0.8" step="0.05" value="0.3">
+                    <p class="setting-hint">Min bounding-box overlap between frames to consider it the same person.
+                        Lower = tracks faster-moving people but risks merging separate detections.</p>
+                </div>
+
+                <div class="setting">
+                    <div class="setting-header">
+                        <label for="lostTimeoutSlider">Lost Timeout</label>
+                        <span class="setting-value" id="lostTimeoutValue">5.0</span>
+                    </div>
+                    <input type="range" id="lostTimeoutSlider" min="1" max="30" step="0.5" value="5">
+                    <p class="setting-hint">Seconds a person can vanish from frame before "person_left" fires. Higher =
+                        tolerates brief occlusions but delays departure alerts.</p>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid rgba(148,163,184,0.15); margin: 12px 0;">
+                <p class="setting-hint" style="margin-bottom: 10px; font-weight: 500; color: #94a3b8;">🚗 Vehicle
+                    Detection</p>
+
+                <div class="setting">
+                    <div class="setting-header">
+                        <label for="vehicleConfSlider">Vehicle Confidence</label>
+                        <span class="setting-value" id="vehicleConfValue">0.35</span>
+                    </div>
+                    <input type="range" id="vehicleConfSlider" min="0.1" max="0.8" step="0.05" value="0.35">
+                    <p class="setting-hint">Min YOLO confidence for vehicle detections (car, truck, bus, motorcycle).
+                        Lower catches more but increases false positives from reflections/shadows.</p>
+                </div>
+
+                <div class="setting">
+                    <div class="setting-header">
+                        <label for="vehicleIdleSlider">Idle Timeout</label>
+                        <span class="setting-value" id="vehicleIdleValue">90</span>
+                    </div>
+                    <input type="range" id="vehicleIdleSlider" min="30" max="300" step="10" value="90">
+                    <p class="setting-hint">Seconds a stationary vehicle must stay before a "vehicle_idle" alert fires.
+                        Lower catches lingering vehicles faster but may false-alert on parked cars.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Event Feed -->
+        <section class="panel events-panel collapsed" id="eventsPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>📋 Event Feed</h2>
+                <div style="display:flex;align-items:center;gap:6px;"><span class="event-count" id="eventCount">0
+                        events</span><span class="panel-toggle">▼</span></div>
+            </div>
+            <div class="panel-body">
+                <div class="event-list" id="eventList">
+                    <div class="empty-state">No events yet — waiting for activity...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Zones Panel -->
+        <section class="panel zones-panel collapsed" id="zonesPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>🗺️ Zones</h2>
+                <div style="display:flex;align-items:center;gap:6px;"><span class="zone-count" id="zoneCount">0
+                        zones</span><span class="panel-toggle">▼</span></div>
+            </div>
+            <div class="panel-body">
+                <div class="zone-list" id="zoneList">
+                    <div class="empty-state">No zones defined — use "Draw Zone" above</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Conditions Panel -->
+        <section class="panel conditions-panel collapsed" id="conditionsPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>🌤️ Conditions</h2>
+                <div style="display:flex;align-items:center;gap:6px;"><span class="conditions-period"
+                        id="conditionsPeriod">--</span><span class="night-watch-icon" id="nightWatchIcon"
+                        aria-label="All person detections will be alerted during night and late night">👁️</span><span
+                        class="panel-toggle">▼</span></div>
+            </div>
+            <div class="panel-body">
+                <div class="conditions-grid" id="conditionsGrid">
+                    <div class="condition-item" style="grid-column: span 2;">
+                        <span class="condition-icon">📅</span>
+                        <span class="condition-label">Date</span>
+                        <span class="condition-value" id="condDate">--</span>
+                    </div>
+                    <div class="condition-item">
+                        <span class="condition-icon">🌅</span>
+                        <span class="condition-label">Sunrise</span>
+                        <span class="condition-value" id="condSunrise">--</span>
+                    </div>
+                    <div class="condition-item">
+                        <span class="condition-icon">🌇</span>
+                        <span class="condition-label">Sunset</span>
+                        <span class="condition-value" id="condSunset">--</span>
+                    </div>
+                    <div class="condition-item">
+                        <span class="condition-icon">📏</span>
+                        <span class="condition-label">Day Length</span>
+                        <span class="condition-value" id="condDayLength">--</span>
+                    </div>
+                    <div class="condition-item" id="condFeelsLikeItem" style="display: none;">
+                        <span class="condition-icon">🤷</span>
+                        <span class="condition-label">Feels Like</span>
+                        <span class="condition-value" id="condFeelsLikeValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condHumidityItem" style="display: none;">
+                        <span class="condition-icon">💧</span>
+                        <span class="condition-label">Humidity</span>
+                        <span class="condition-value" id="condHumidityValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condCloudsItem" style="display: none;">
+                        <span class="condition-icon">☁️</span>
+                        <span class="condition-label">Cloud Cover</span>
+                        <span class="condition-value" id="condCloudsValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condWeatherItem" style="display: none;">
+                        <span class="condition-icon" id="condWeatherIcon">🌡️</span>
+                        <span class="condition-label" id="condWeatherLabel">Weather</span>
+                        <span class="condition-value" id="condWeatherValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condWindItem" style="display: none;">
+                        <span class="condition-icon">💨</span>
+                        <span class="condition-label">Wind</span>
+                        <span class="condition-value" id="condWindValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condVisItem" style="display: none;">
+                        <span class="condition-icon">👁️</span>
+                        <span class="condition-label">Visibility</span>
+                        <span class="condition-value" id="condVisValue">--</span>
+                    </div>
+                </div>
+                <div class="conditions-schedule" id="conditionsSchedule">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Known Faces Panel -->
+        <section class="panel faces-panel collapsed" id="facesPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>👤 Known Faces</h2>
+                <div style="display:flex;align-items:center;gap:6px;"><span class="face-count" id="faceCount">0
+                        enrolled</span><span class="panel-toggle">▼</span></div>
+            </div>
+            <div class="panel-body">
+                <div class="enroll-form">
+                    <input type="text" id="enrollName" placeholder="Enter name..." class="enroll-input" maxlength="50">
+                    <button id="enrollBtn" class="enroll-btn" onclick="startEnrollWizard()">
+                        📸 Enroll
+                    </button>
+                </div>
+                <p class="setting-hint">Multi-angle capture — 5 angles for better recognition</p>
+                <div class="face-gallery" id="faceGallery">
+                    <div class="empty-state">No faces enrolled yet</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Unknown Faces Panel -->
+        <section class="panel unknowns-panel collapsed" id="unknownsPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>❓ Unknown Faces</h2>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span class="face-count" id="unknownCount">0 captured</span>
+                    <button class="face-delete" id="clearAllUnknowns"
+                        onclick="event.stopPropagation(); clearAllUnknowns()" title="Clear all unknowns"
+                        style="font-size: 0.7rem; padding: 0.2rem 0.5rem;">🗑️ Clear
+                        All</button>
+                    <span class="panel-toggle">▼</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <p class="setting-hint">Auto-captured faces of unknown people — click label to identify</p>
+                <div class="unknown-gallery" id="unknownGallery">
+                    <div class="empty-state">No unknown faces yet</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Browse Panel -->
+        <section class="panel browse-panel collapsed" id="browsePanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>📁 Browse</h2>
+                <div style="display:flex;align-items:center;gap:6px;"><span class="panel-toggle">▼</span></div>
+            </div>
+            <div class="panel-body">
+                <div id="browseContent">
+                    <div class="empty-state">Loading snapshots…</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Account -->
+        <section class="panel account-panel collapsed" id="accountPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>🔐 Account</h2>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="auth-username" id="authUsername">--</span>
+                    <span class="panel-toggle">▼</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <div class="setting">
+                    <label class="setting-label">New Username (optional)</label>
+                    <input type="text" id="newUsername" class="setting-input" placeholder="Leave blank to keep current">
+                </div>
+                <div class="setting">
+                    <label class="setting-label">Current Password</label>
+                    <input type="password" id="currentPassword" class="setting-input" placeholder="Required"
+                        autocomplete="current-password">
+                </div>
+                <div class="setting">
+                    <label class="setting-label">New Password</label>
+                    <input type="password" id="newPassword" class="setting-input" placeholder="Minimum 4 characters"
+                        autocomplete="new-password">
+                </div>
+                <div class="setting">
+                    <label class="setting-label">Confirm New Password</label>
+                    <input type="password" id="confirmPassword" class="setting-input"
+                        placeholder="Re-enter new password" autocomplete="new-password">
+                </div>
+                <div class="setting">
+                    <button class="btn btn-primary" onclick="changePassword()">💾 Update Credentials</button>
+                    <p class="auth-msg" id="changePwMsg"></p>
+                </div>
+                <div class="setting" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+                    <button class="btn btn-danger" onclick="logout()">🚪 Logout</button>
+                    <p class="setting-hint">Ends your session and returns to the login screen</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Notifications Panel -->
+        <section class="panel notifications-panel collapsed" id="notificationsPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>🔔 Notifications</h2>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="notification-status" id="notifStatus">--</span>
+                    <span class="panel-toggle">▼</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <div class="setting">
+                    <p class="setting-hint" id="notifConfigHint">Checking Telegram configuration...</p>
+                </div>
+                <!-- Notification Preferences -->
+                <div class="setting notification-pref">
+                    <label class="toggle-row">
+                        <span>🚨 Person alerts</span>
+                        <input type="checkbox" id="notifyPersonToggle" checked
+                            onchange="updateNotifPref('notify_person', this.checked ? '1' : '0')">
+                    </label>
+                </div>
+                <div class="setting notification-pref">
+                    <label class="toggle-row">
+                        <span>🚗 Vehicle alerts</span>
+                        <input type="checkbox" id="notifyVehicleToggle" checked
+                            onchange="updateNotifPref('notify_vehicle', this.checked ? '1' : '0')">
+                    </label>
+                </div>
+                <div class="setting notification-pref">
+                    <label class="toggle-row">
+                        <span>🤫 Suppress known people</span>
+                        <input type="checkbox" id="suppressKnownToggle"
+                            onchange="updateNotifPref('suppress_known', this.checked ? '1' : '0')">
+                    </label>
+                    <p class="setting-hint">Skip alerts for people already identified by name</p>
+                </div>
+                <!-- Cooldown Sliders -->
+                <div class="setting notification-pref">
+                    <label class="setting-label">⏱️ Person alert cooldown
+                        <span id="notifyCooldownValue" class="setting-value">60s</span>
+                    </label>
+                    <input type="range" id="notifyCooldownSlider" min="10" max="300" step="10" value="60"
+                        oninput="document.getElementById('notifyCooldownValue').textContent=this.value+'s'"
+                        onchange="updateNotifPref('notify_cooldown', this.value)">
+                    <p class="setting-hint">Minimum seconds between person alerts (10–300)</p>
+                </div>
+                <div class="setting notification-pref">
+                    <label class="setting-label">⏱️ Vehicle alert cooldown
+                        <span id="vehicleCooldownValue" class="setting-value">120s</span>
+                    </label>
+                    <input type="range" id="vehicleCooldownSlider" min="10" max="600" step="10" value="120"
+                        oninput="document.getElementById('vehicleCooldownValue').textContent=this.value+'s'"
+                        onchange="updateNotifPref('vehicle_cooldown', this.value)">
+                    <p class="setting-hint">Minimum seconds between vehicle alerts (10–600)</p>
+                </div>
+                <div class="setting">
+                    <button class="btn btn-primary" id="testNotificationBtn" onclick="testNotification()">
+                        📤 Send Test Notification
+                    </button>
+                    <p class="setting-hint">Sends a test message with camera snapshot to Telegram</p>
+                    <p class="notification-result" id="notifResult"
+                        style="display:none;margin-top:8px;font-size:0.85rem;"></p>
+                </div>
+            </div>
+        </section>
+
+
+    </aside>
+</main>
+
+<!-- Enrollment Wizard Modal -->
+<div id="enrollWizard" class="wizard-overlay" style="display: none;">
+    <div class="wizard-modal">
+        <div class="wizard-header">
+            <h3>📸 Enroll <span id="wizardName">—</span></h3>
+            <button class="wizard-close" onclick="closeWizard()">✕</button>
+        </div>
+        <div class="wizard-steps">
+            <div class="wizard-step active" data-step="0"><span class="step-dot"></span><span
+                    class="step-label">Front</span></div>
+            <div class="wizard-step" data-step="1"><span class="step-dot"></span><span class="step-label">Left</span>
+            </div>
+            <div class="wizard-step" data-step="2"><span class="step-dot"></span><span class="step-label">Right</span>
+            </div>
+            <div class="wizard-step" data-step="3"><span class="step-dot"></span><span class="step-label">Up</span>
+            </div>
+            <div class="wizard-step" data-step="4"><span class="step-dot"></span><span class="step-label">Down</span>
+            </div>
+        </div>
+        <div class="wizard-body">
+            <div class="wizard-preview" id="wizardPreview">
+                <div class="wizard-feed-container">
+                    <img id="wizardLiveFeed" class="wizard-live-feed" alt="Live camera">
+                    <!-- Face alignment guide overlay -->
+                    <svg class="wizard-face-guide" viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg">
+                        <ellipse cx="140" cy="100" rx="65" ry="85" fill="none" stroke="rgba(74,222,128,0.6)"
+                            stroke-width="2" stroke-dasharray="8,4" />
+                        <line x1="140" y1="10" x2="140" y2="30" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                        <line x1="140" y1="170" x2="140" y2="190" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                        <line x1="70" y1="100" x2="50" y2="100" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                        <line x1="210" y1="100" x2="230" y2="100" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                    </svg>
+                </div>
+                <div class="wizard-prompt" id="wizardPrompt">Look straight at the camera</div>
+                <img id="wizardPhoto" class="wizard-photo" alt="Face capture" style="display: none;">
+            </div>
+            <div class="wizard-status" id="wizardStatus"></div>
+            <div class="wizard-actions">
+                <button class="btn btn-primary wizard-capture-btn" id="wizardCaptureBtn" onclick="wizardCapture()">📸
+                    Capture</button>
+                <button class="btn wizard-skip-btn" id="wizardSkipBtn" onclick="wizardSkip()"
+                    style="display: none;">Skip →</button>
+            </div>
+        </div>
+        <div class="wizard-footer">
+            <div class="wizard-progress">
+                <div class="wizard-progress-fill" id="wizardProgressFill" style="width: 0%;"></div>
+            </div>
+            <span class="wizard-counter" id="wizardCounter">0 / 5 captured</span>
+        </div>
+    </div>
+</div>
+
+<!-- Label Unknown Modal -->
+<div id="labelModal" class="label-modal-overlay" style="display: none;">
+    <div class="label-modal">
+        <h3>🏷️ Identify This Person</h3>
+        <img id="labelModalPhoto" alt="Unknown face" class="label-modal-photo">
+        <div class="label-modal-options">
+            <label>Select existing person:</label>
+            <select id="labelModalSelect" class="label-modal-select">
+                <option value="">— Choose enrolled face —</option>
+            </select>
+            <div class="label-modal-divider">or</div>
+            <label>Enter new name:</label>
+            <input type="text" id="labelModalInput" placeholder="e.g. Delivery Driver" class="label-modal-input"
+                maxlength="50">
+        </div>
+        <div class="label-modal-actions">
+            <button class="label-modal-save" id="labelModalSave" onclick="submitLabel()">✅ Save</button>
+            <button class="label-modal-cancel" onclick="closeLabelModal()">✕ Cancel</button>
+        </div>
+    </div>
+</div>
+
+
+
+<!-- Event Detail Modal -->
+<div id="eventDetailModal" class="label-modal-overlay" style="display: none;">
+    <div class="label-modal" style="max-width: 480px;">
+        <h3 id="eventDetailTitle">📋 Event Details</h3>
+        <img id="eventDetailSnapshot" src="" alt="Event snapshot"
+            style="width:100%; max-height:280px; object-fit:contain; border-radius:8px; margin-bottom:12px; display:none; background:#111; cursor:pointer;"
+            title="Click for full size" onclick="if(this.src) _openEventPhoto(this.src, 'Event snapshot')">
+        <div id="eventDetailMeta" style="font-size:13px; color:#94a3b8; margin-bottom:12px; line-height:1.6;"></div>
+        <div id="eventDetailAI"
+            style="display:none; font-size:13px; color:#a78bfa; margin-bottom:12px; line-height:1.5; padding:8px 12px; background:rgba(139,92,246,0.08); border-radius:8px; border-left:3px solid #a78bfa;">
+        </div>
+        <div id="eventDetailActions" class="label-modal-actions" style="flex-wrap:wrap; gap:8px;">
+            <button class="label-modal-save" onclick="eventDetailVerdict('real_detection')">✅ Real Detection</button>
+            <button class="label-modal-cancel" style="background:#ef4444;" onclick="eventDetailVerdict('false_alarm')">❌
+                False Alarm</button>
+            <button class="label-modal-save" style="background:#6366f1;" onclick="eventDetailNamePrompt()">👤
+                Name</button>
+            <button class="label-modal-cancel" onclick="closeEventDetailModal()">✕ Close</button>
+        </div>
+        <div id="eventDetailNameRow" style="display:none; margin-top:10px;">
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="eventDetailNameInput" placeholder="e.g. Neighbour Dave" class="label-modal-input"
+                    maxlength="50" style="flex:1;">
+                <button class="label-modal-save" onclick="eventDetailSubmitName()">Save</button>
+            </div>
+        </div>
+        <div id="eventDetailStatus"
+            style="display:none; margin-top:8px; font-size:12px; color:#4ade80; text-align:center;"></div>
+    </div>
+</div>
+
+<!-- Module scripts (loaded before app.js which calls init) -->
+<script src="events.js?v=10"></script>
+<script src="faces.js?v=7"></script>
+<script src="unknowns.js?v=7"></script>
+<script src="zones.js?v=7"></script>
+<script src="conditions.js?v=7"></script>
+<script src="browse.js?v=1"></script>
+
+<script src="auth.js?v=6"></script>
+<script src="app.js?v=9"></script>
+</body>
+
+</html>

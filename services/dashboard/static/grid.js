@@ -179,7 +179,7 @@ function openModal(cameraId) {
     $('modalStatus').textContent = 'connecting...';
     $('modalFps').textContent = '— FPS';
     $('modalImg').src = '';
-    $('modalSingleLink').href = `/?camera=${encodeURIComponent(cameraId)}`;
+    $('modalSingleLink').href = `/single.html?camera=${encodeURIComponent(cameraId)}`;
     $('modal').classList.add('open');
 
     // Open a dedicated WS at full FPS for the modal
