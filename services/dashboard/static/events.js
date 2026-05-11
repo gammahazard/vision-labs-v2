@@ -21,6 +21,35 @@ const eventList = document.getElementById("eventList");
 const eventCount = document.getElementById("eventCount");
 
 // ---------------------------------------------------------------------------
+// Camera filter (multi-camera)
+// ---------------------------------------------------------------------------
+// Set via URL ?camera=<id> on the per-camera page, or via window.EVENT_FEED_CAMERA
+// before this script loads. Empty = aggregate across every enabled camera.
+const _cameraFilter = (() => {
+    try {
+        const fromUrl = new URLSearchParams(window.location.search).get("camera");
+        if (fromUrl) return fromUrl;
+    } catch (e) { /* SSR/edge */ }
+    return window.EVENT_FEED_CAMERA || "";
+})();
+const _isAggregateFeed = !_cameraFilter || _cameraFilter === "all";
+
+// Camera-name cache (id -> friendly name) for badge rendering on aggregate feeds
+let _cameraNameCache = {};
+async function _refreshCameraNameCache() {
+    try {
+        const res = await fetch("/api/cameras");
+        const data = await res.json();
+        const cams = data.cameras || data || [];
+        const out = {};
+        for (const c of cams) {
+            if (c && c.id) out[c.id] = c.name || c.id;
+        }
+        _cameraNameCache = out;
+    } catch (e) { /* silent */ }
+}
+
+// ---------------------------------------------------------------------------
 // Face photo cache — maps person name → face_id for inline photos
 // ---------------------------------------------------------------------------
 let _faceIdCache = {};  // { "Alice": 1, "Bob": 4, ... }
@@ -53,7 +82,11 @@ let knownEventIds = new Set();
  */
 async function pollEvents() {
     try {
-        const response = await fetch("/api/events?count=30");
+        if (_isAggregateFeed && Object.keys(_cameraNameCache).length === 0) {
+            await _refreshCameraNameCache();
+        }
+        const camParam = _cameraFilter ? `&camera=${encodeURIComponent(_cameraFilter)}` : "";
+        const response = await fetch(`/api/events?count=30${camParam}`);
         const data = await response.json();
         const events = data.events || [];
 
@@ -183,11 +216,19 @@ function renderEvent(evt) {
         aiHtml = `<div class="event-ai-desc" style="font-size:11px; color:#a78bfa; margin-top:4px; font-style:italic; line-height:1.4; opacity:0.9;">🤖 ${desc}</div>`;
     }
 
+    // Camera badge — only shown on aggregate feeds, to distinguish events
+    // from different cameras at a glance. Hidden on per-camera pages.
+    let cameraBadgeHtml = "";
+    if (_isAggregateFeed && evt.camera_id) {
+        const camName = _cameraNameCache[evt.camera_id] || evt.camera_id;
+        cameraBadgeHtml = `<span class="event-camera-badge" title="${evt.camera_id}" style="display:inline-block;font-size:10px;font-weight:600;background:rgba(96,165,250,0.18);color:#60a5fa;padding:2px 6px;border-radius:8px;margin-right:6px;letter-spacing:0.02em;">📷 ${camName}</span>`;
+    }
+
     item.innerHTML = `
         <span class="event-icon">${icon}</span>
         ${photoHtml}
         <div class="event-content">
-            <div class="event-title">${title}</div>
+            <div class="event-title">${cameraBadgeHtml}${title}</div>
             <div class="event-meta">${meta}</div>
             ${aiHtml}
         </div>

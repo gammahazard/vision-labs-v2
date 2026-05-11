@@ -323,6 +323,25 @@
             </div>
         </section>
 
+        <!-- Recent Activity: combined event feed across every enabled camera.
+             events.js polls /api/events with no camera filter (aggregate) and
+             renders a small per-camera badge on each row. -->
+        <section class="panel activity-panel" id="activityPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>📋 Recent Activity</h2>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="event-count" id="eventCount">0 events</span>
+                    <span class="panel-toggle">▼</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <p class="setting-hint">Latest detections from all cameras. Click any event for details.</p>
+                <div class="event-list" id="eventList" style="max-height:420px;overflow-y:auto;">
+                    <div class="empty-state">No events yet</div>
+                </div>
+            </div>
+        </section>
+
         <!-- Faces: shared across all cameras (one face DB, recognized by any camera) -->
         <section class="panel faces-panel" id="facesPanel">
             <div class="panel-header" onclick="togglePanel(this)">
@@ -380,11 +399,18 @@
     <!-- Conditions + Faces — both fetch global (non-camera-specific) data. -->
     <script src="conditions.js"></script>
     <script src="faces.js"></script>
-    <!-- Manual init: faces.js usually waits for app.js DOMContentLoaded hook;
-         here we trigger the gallery load directly. -->
+    <!-- Aggregate event feed across all cameras (events.js reads no ?camera
+         query param here, so it polls /api/events?camera=all). -->
+    <script src="events.js?v=11"></script>
+    <!-- Manual init: faces.js + events.js usually wait for app.js DOMContentLoaded;
+         here we trigger them directly since app.js is not loaded on the grid page. -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             if (typeof loadFaces === 'function') loadFaces();
+            if (typeof pollEvents === 'function') {
+                pollEvents();
+                setInterval(pollEvents, 2000);
+            }
         });
     </script>
 </body>

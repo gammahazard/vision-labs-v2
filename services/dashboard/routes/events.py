@@ -22,16 +22,65 @@ router = APIRouter(prefix="/api", tags=["events"])
 SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
 
 
-@router.get("/events")
-async def get_events(count: int = 50):
-    """
-    Return the most recent events from the event stream.
-    Used by the dashboard's event feed panel.
-    """
+def _enabled_camera_ids() -> list:
+    """Snapshot enabled cameras from the registry. Falls back to primary."""
     try:
-        events_raw = ctx.r.xrevrange(ctx.EVENT_STREAM, count=count)
+        raw = ctx.r.hgetall("cameras:registry") or {}
+        out = []
+        for cid, val in raw.items():
+            try:
+                entry = json.loads(val)
+                if entry.get("enabled", True):
+                    out.append(entry.get("id") or cid)
+            except Exception:
+                continue
+        return sorted(set(out)) or [ctx.CAMERA_ID]
+    except Exception:
+        return [ctx.CAMERA_ID]
+
+
+@router.get("/events")
+async def get_events(count: int = 50, camera: str = ""):
+    """
+    Return the most recent events from one or more camera streams.
+
+    - camera="" or "all"  → merge events across every enabled camera, newest-first
+    - camera="<id>"       → only that camera
+
+    Each event has a `camera_id` field. Used by:
+      - the dashboard event feed panel
+      - the home page combined Recent Activity widget
+      - per-camera detail page (with camera=<id>)
+    """
+    from contracts.streams import EVENT_STREAM as _EVT_TMPL, stream_key as _stream_key
+
+    try:
+        # Decide which streams to read
+        cam = (camera or "").strip().lower()
+        if cam in ("", "all"):
+            cam_ids = _enabled_camera_ids()
+        else:
+            cam_ids = [camera]
+
+        # Pull last N from each camera, then merge by millisecond timestamp
+        merged = []
+        for cid in cam_ids:
+            evt_stream = _stream_key(_EVT_TMPL, camera_id=cid)
+            events_raw = ctx.r.xrevrange(evt_stream, count=count)
+            for event_id, data in events_raw:
+                merged.append((event_id, dict(data), cid))
+
+        # Newest-first by stream ms-timestamp (encoded in stream id "MS-SEQ")
+        def _ms(mid):
+            try:
+                return int(str(mid).split("-")[0])
+            except Exception:
+                return 0
+        merged.sort(key=lambda x: _ms(x[0]), reverse=True)
+        merged = merged[:count]
+
         events = []
-        for event_id, data in events_raw:
+        for event_id, data, src_cam in merged:
             evt = {
                 "id": event_id,
                 "event_type": data.get("event_type", ""),
@@ -40,23 +89,23 @@ async def get_events(count: int = 50):
                 "duration": data.get("duration", "0"),
                 "direction": data.get("direction", ""),
                 "action": data.get("action", "unknown"),
-                "camera_id": data.get("camera_id", ""),
+                # Prefer data.camera_id (set by fanned-out poller) but fall back
+                # to the source stream id so old events still have a camera tag
+                "camera_id": data.get("camera_id", src_cam),
                 "zone": data.get("zone", ""),
                 "alert_level": data.get("alert_level", ""),
                 "alert_triggered": data.get("alert_triggered", "false"),
                 "prev_action": data.get("prev_action", ""),
                 "identity_name": data.get("identity_name", ""),
-                # Vehicle-specific fields (empty for non-vehicle events)
                 "vehicle_class": data.get("vehicle_class", ""),
                 "vehicle_confidence": data.get("vehicle_confidence", ""),
                 "snapshot_key": data.get("snapshot_key", ""),
             }
-            # Include AI scene analysis if available
             ai_desc = ctx.r.get(f"scene_analysis:{event_id}")
             if ai_desc:
                 evt["ai_description"] = ai_desc
             events.append(evt)
-        return {"events": events}
+        return {"events": events, "cameras": cam_ids}
     except redis.ConnectionError:
         return JSONResponse(status_code=503, content={"error": "Redis unavailable"})
 
