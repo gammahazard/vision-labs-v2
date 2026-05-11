@@ -6,6 +6,143 @@
 
 ---
 
+## ⚡ RESUME HERE — current state (as of `667f0ab`, commit 24)
+
+If you're picking this up cold, read this section first.
+
+### Live system topology
+
+**Hardware:**
+- Dashboard host: WSL2 Ubuntu 24.04 on Windows, 5070 Ti (GPU 0) + 3090 (GPU 1)
+- Camera 1: Reolink RLC-1240A (`front_door` / `Wheatley`), at `192.168.1.14`
+- Camera 2: Raspberry Pi 5 + Logitech C922 USB webcam (`cam2` / `basement`), at `192.168.5.45` (cross-VLAN — main LAN can still reach it on port 8554)
+
+**Pi 5 setup:**
+- mediamtx publishes `rtsp://192.168.5.45:8554/basement` at 1280×720 @ 10 FPS
+- Auto-starts on boot via `/etc/systemd/system/mediamtx.service`
+- Config at `/home/raj/mediamtx.yml`
+
+**Camera registry** (Redis `cameras:registry` hash) — two entries:
+```
+front_door  → Wheatley,  rtsp://admin:.../h264Preview_01_sub,  all 3 detectors on
+cam2        → basement,  rtsp://192.168.5.45:8554/basement,    pose + face only (no vehicle)
+```
+
+### File layout (post-refactor, all verified to exist)
+
+```
+services/dashboard/
+├── server.py              (353 lines — wiring only: imports, app, middleware, startup, static mount)
+├── constants.py            (Ollama + ComfyUI defaults, env-overridable)
+├── websocket.py            (522 lines — /ws/live; accepts ?camera=<id> query param)
+├── cameras.py              (211 lines — CameraRegistry: list/get/upsert/delete + slot allocation)
+├── ai_db.py                (chat history SQLite)
+├── Dockerfile
+├── helpers/
+│   └── geometry.py         (bbox_iou + in_dead_zone — used by websocket.py)
+├── pollers/
+│   ├── reminders.py         (69 — Telegram reminders every 60s)
+│   ├── ollama_warmup.py     (95 — pulls Qwen 3 14B, warms GPU)
+│   ├── comfyui_cleanup.py   (73 — clears stale ComfyUI queue + gpu:* locks at startup)
+│   ├── retention.py         (121 — daily prune of /data/snapshots and /data/events)
+│   └── events.py            (320 — event poller + Telegram broadcast + snapshot save)
+├── routes/
+│   ├── __init__.py          (shared context: r, r_bin, stream key constants)
+│   ├── auth.py              (login, logout, change-password, forced rotation)
+│   ├── ai.py, ai_tools.py, ai_prompts.py, ai_state.py (AI assistant)
+│   ├── bot_commands.py      (Telegram bot polling + 15 commands)
+│   ├── cameras.py           (NEW — REST API: GET/POST/PUT/DELETE /api/cameras, test-rtsp endpoint)
+│   ├── conditions.py, config.py, events.py, faces.py, image_gen.py
+│   ├── metrics.py, notifications.py, recordings.py, telegram_access.py
+│   ├── unknowns.py, zones.py, browse.py, clips.py
+└── static/
+    ├── index.html          (NEW — multi-cam GRID view, mobile-responsive)
+    ├── grid.js              (NEW — per-tile WebSocket + modal logic)
+    ├── single.html         (the old index.html — full per-camera dashboard at /single.html?camera=X)
+    ├── cameras.html, cameras.js (camera registry admin UI)
+    ├── app.js, faces.js, zones.js, events.js, conditions.js, ... (existing JS modules)
+    ├── ai.html, telegram.html, monitoring.html, login.html
+    └── style.css
+```
+
+### Phase status — what's done, what's next
+
+**✅ Done (24 commits, dashboard never broke during the refactor):**
+| Phase | Result |
+|-------|--------|
+| 1 — Surgical bug fixes | Real metrics.py `state.persons` bug fixed |
+| 2 — Constants module | 13 hardcoded literals consolidated |
+| 3 — Helper module | geometry.py extracted |
+| 4 — Extract 5 pollers | reminders, ollama_warmup, comfyui_cleanup, retention, events |
+| 5 — Extract WebSocket | websocket.py — sticky-identity bug fixed for free |
+| 6 — server.py shape | 1313 → 353 lines (73% smaller) |
+| 7 — Camera registry | cameras.py + /api/cameras |
+| 7b — Camera management UI | cameras.html admin form + ffprobe test |
+| 7c — Slot-based services | cam2 slot in compose; detectors respect detect_X flags |
+| 8b iter 1 — Grid view | /index.html is now the grid; /single.html is the detail view |
+| 8b iter 1.1 — Home panels | Conditions + Known Faces panels below the grid |
+| 9a iter 1 — AI multi-camera (3 tools) | get_live_scene aggregates; query_events + capture_snapshot take `camera` arg; system prompt lists cameras |
+
+**🔜 Next up (in priority order):**
+
+1. **Phase 9a iter 2 — wire the remaining 7 AI tools** (~2 hours)
+   - `query_events_by_date`, `query_zones`, `browse_vehicles` — accept `camera` arg
+   - `query_event_patterns`, `query_activity_heatmap` — accept `camera` arg
+   - `capture_clip` — accept `camera` arg
+   - `get_system_status` — enumerate per-camera health
+   - Each follows the same pattern: use `_resolve_camera()` helper in `ai_tools.py:33-105`
+
+2. **Phase 9b — Telegram bot multi-camera** (~2-3 hours)
+   - Parse trailing camera id from commands: `/snapshot basement`, `/clip 10 cam2`, `/who all`
+   - Update `_cmd_snapshot`, `_cmd_clip`, `_cmd_who`, `_cmd_events`, `_cmd_zones`, `_cmd_timelapse`, `_cmd_analyze`
+   - `/status` should enumerate both cameras' health
+
+3. **Phase 8b iter 2 — single-camera view parameterization** (~3 hours)
+   - `/single.html?camera=cam2` should drive all the side panels (events, zones, faces enrollment, browse) for cam2 specifically
+   - Most REST endpoints (events, zones) already accept `?camera=X` via the WebSocket pattern; need to wire the JS in `app.js`, `zones.js`, `events.js` to honor the URL param
+   - Currently single.html shows front_door state regardless of `?camera=` value
+
+4. **Phase 8b iter 3 — modal drill-in with full controls** (later)
+   - Click a grid tile → modal opens with full sidebar controls (not just feed)
+   - Less needed once iter 2 is done since you can navigate to /single.html?camera=X
+
+5. **Phase 7d — Auto-discovery** (later)
+   - ONVIF discovery for IP cameras
+   - mDNS for Pi-style streamers
+
+6. **Phase 8 — TV dashboard** (later)
+   - `/tv.html` with 10-foot UI
+
+7. **Phase 9 — HomeKit** (later — Homebridge container as a new compose service)
+
+### Known small loose ends (none blocking)
+
+- `single.html` still serves only front_door regardless of `?camera=X` URL param. The new WebSocket reads the query param fine; the rest of the panels need wiring (event #3 above).
+- The 7 AI tools listed in 9a iter 2 currently default to front_door even if the LLM passes `camera=cam2`. Not broken — just silently single-camera.
+- `cam3` and `cam4` slots not yet in `docker-compose.yml`. To add: copy the cam2 service block (5 services) and rename. Then append `"cam3"` / `"cam4"` to `AVAILABLE_SLOTS` in `cameras.py`.
+
+### Decision log (so we don't re-debate)
+
+- **Auto-spawn cameras via Docker socket**: deferred. Slot-based + manual `docker compose --profile camN up -d` is the current model. Auto-spawn (Phase 7e) is fine for a home setup security-wise but not built yet.
+- **Grid as the home page**: chosen. Old single-camera dashboard moved to `/single.html`.
+- **Conditions + Known Faces on home page**: chosen — these are global, not per-camera.
+- **Per-camera Settings + Events + Zones**: stay in `/single.html?camera=X` (drill-in).
+- **Auth redirect**: 303 instead of 307 (more universally followed).
+
+### How to verify state after a session restart
+
+```bash
+cd ~/projects/vision-labs
+docker compose ps                                  # 14 base + 4 cam2 services should be up
+docker compose exec -T redis redis-cli HGETALL cameras:registry   # both cameras
+git log --oneline | head -5                        # last commit should be 667f0ab or later
+curl -ks -o /dev/null -w "%{http_code}\n" http://localhost:8080/   # 303 (redirect to login)
+```
+
+---
+
+---
+
 ## Why we're doing this
 
 - `server.py` is 1200 lines — auth, middleware, retention, event poller, Ollama warmup, ComfyUI cleanup, and the entire WebSocket loop all live in one file. Hard to reason about, hard to test.
@@ -523,10 +660,15 @@ If any step breaks, we revert the last change and figure out why before continui
 | 7c — Slot-based per-camera services | ✅ done (cam2; cam3/cam4 = copy-paste later) (`ad0e1be`) | claude | cam2 slot ready; ingester reads RTSP from registry; detectors honor detect_X flags |
 | 7d — Auto-discovery (ONVIF + Pi mDNS) | ⏸️ later | claude | Nice-to-have on top of 7c |
 | 7e — Auto-spawn via Docker socket | ⏸️ deferred (intentionally) | — | Mount /var/run/docker.sock in dashboard, spawn containers automatically on Save. Cleaner UX but adds attack surface. See decision log. |
-| 8 — TV dashboard | ⬜ future | claude | tv.html — works with 1 camera too |
-| 8b — Multi-cam grid view in main dashboard | ⬜ future | claude | Resizable/draggable camera tiles on index.html, click for full-screen modal. Independent of TV dashboard. |
-| 9a — HomeKit (Homebridge) | ⬜ future | claude | Easier first iteration |
-| 9b — HomeKit (HAP-python) | ⏸️ future | — | If we outgrow Homebridge |
+| 8b iter 1 — Multi-cam grid view (home) | ✅ done (`eba1d36` + `c9f95f5` + `4f2adb7`) | claude | grid view at `/`; modal expand; mobile-responsive; conditions + faces panels below |
+| 8b iter 2 — Parameterize single-camera view by ?camera=X | ⬜ pending | claude | `app.js`, `events.js`, `zones.js`, `faces.js` read URL param + pass to backend |
+| 8b iter 3 — Full sidebar in grid modal | ⬜ future | claude | Less needed once iter 2 is done |
+| 9a iter 1 — AI multi-camera (3 tools) | ✅ done (`667f0ab`) | claude | `get_live_scene` aggregates; `query_events`/`capture_snapshot` take `camera` arg; system prompt lists cameras |
+| 9a iter 2 — Remaining 7 AI tools | ⬜ pending | claude | events_by_date, zones, browse_vehicles, event_patterns, activity_heatmap, capture_clip, get_system_status |
+| 9b — Telegram bot multi-camera | ⬜ pending | claude | `/snapshot [camera]`, `/clip [N] [camera]`, etc. |
+| 8 — TV dashboard | ⬜ future | claude | `/tv.html` — works with 1 camera too |
+| 9 — HomeKit (Homebridge) | ⬜ future | claude | Easier first iteration |
+| 9b-internal — HomeKit (HAP-python) | ⏸️ future | — | If we outgrow Homebridge |
 | 10 — Cleanup | ⬜ blocked-by-others | — | Final pass |
 
 **Phases 1-7 are the actual refactor.** Phases 7b-10 are future features that benefit from the refactor being done.

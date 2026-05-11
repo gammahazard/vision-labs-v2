@@ -140,8 +140,15 @@ docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
 
 ## Dashboard Pages
 
-### Live View (`index.html`)
-The main page — shows the live camera feed with real-time overlays:
+### Home (`index.html`) — Multi-camera grid view
+The default landing page. Shows a responsive grid of camera tiles — one tile per registered camera. Each tile streams its own live feed via a dedicated WebSocket (lower FPS to keep many-tile layouts smooth). Click any tile → full-screen modal with the live feed at full FPS. Below the grid sit two global panels:
+- **Conditions** — date, sunrise/sunset, day length, current weather
+- **Known Faces** — face enrollment wizard + gallery (faces are shared across all cameras)
+
+Mobile-responsive: 1 column on phones, 2 on tablets, up to 4 on big screens.
+
+### Detail view (`single.html?camera=<id>`)
+Per-camera detailed dashboard — what the home page was before the May 2026 refactor:
 - **Bounding boxes**: cyan for identified people, green for unknown, orange for vehicles
 - **Face labels**: recognized names displayed on bounding boxes with sticky identity (persists when face turns away)
 - **Action labels**: classified poses (standing, sitting, crouching, lying)
@@ -149,9 +156,12 @@ The main page — shows the live camera feed with real-time overlays:
 - **Settings panel**: adjustable confidence threshold, IoU, lost timeout, vehicle confidence, idle timeout, notification toggles
 - **Event feed**: real-time detection events with inline snapshot photos
 - **Zone editor**: draw/edit/delete detection zones with per-time-period alert rules
-- **Face enrollment**: capture and label known people for recognition
 - **Browse panel**: vehicle snapshots organized by day + enrolled faces gallery
-- **Conditions panel**: current time period, sunrise/sunset, live weather
+
+> **Phase 8b iter 2 (pending):** the `?camera=X` query param doesn't yet drive the side panels — they still read front_door regardless. The WebSocket part of single.html does honor `?camera=`.
+
+### Cameras (`cameras.html`) — Registry admin
+Add/edit/delete cameras. Test RTSP URLs via the **Test Connection** button (runs ffprobe in the dashboard container). Choose per-camera which detectors run (Persons / Vehicles / Faces). When you Save, the UI shows the docker compose command to start the new camera's detection services.
 
 ### AI Assistant (`ai.html`)
 Three-tab interface:

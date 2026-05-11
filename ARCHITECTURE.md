@@ -251,20 +251,21 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 
 ## Dashboard Backend
 
-### `server.py` (1178 lines)
+### `server.py` (353 lines — post May 2026 refactor)
 
-The main FastAPI application:
+The main FastAPI app is now a **thin wiring file**. The 1300-line original was split into 6 modules:
 
-| Component | Lines | Purpose |
-|-----------|-------|---------|
-| `auth_middleware` | 240-261 | Session-based auth, redirects unauthenticated to login |
-| `login_background` | 267-299 | Heavily blurred camera snapshot for login page (no auth) |
-| `startup` | 305-346 | Init auth DB, write default config, start background tasks |
-| `_reminder_poller` | 349-386 | Check due reminders every 60s, send via Telegram |
-| `_ensure_ollama_model` | 389-448 | Pull Qwen 3 14B on first startup, warm-up GPU load |
-| `_clear_comfyui_queue_on_startup` | 451-486 | Clear stale GPU locks from previous session |
-| `_event_notification_poller` | 488-766 | Poll events, save snapshots, journal, send Telegram |
-| `websocket_live` | 772-1162 | Stream frames with overlays at 10 FPS |
+| Component | Lives in | Purpose |
+|-----------|----------|---------|
+| `auth_middleware` | server.py:~200 | Session-based auth, redirects (303) unauthenticated to login |
+| `login_background` | server.py:~240 | Heavily blurred camera snapshot for login page (no auth) |
+| `startup` event | server.py:~270 | Init auth DB, write default config, seed camera registry, schedule pollers |
+| `reminder_poller` | `pollers/reminders.py` | Check due reminders every 60s, send via Telegram |
+| `warm_ollama` | `pollers/ollama_warmup.py` | Pull Qwen 3 14B on first startup, warm-up GPU load |
+| `clear_comfyui_queue` | `pollers/comfyui_cleanup.py` | Clear stale GPU locks + ComfyUI queue from previous session |
+| `retention_poller` | `pollers/retention.py` | Daily prune of `/data/snapshots` + `/data/events` |
+| `event_notification_poller` | `pollers/events.py` | Poll events, save snapshots, journal, send Telegram |
+| `websocket_live` | `websocket.py` | Stream frames with overlays; accepts `?camera=<id>` for multi-camera |
 
 ### Route Modules (20 files in `routes/`)
 
@@ -299,7 +300,9 @@ The main FastAPI application:
 
 | File | URL | Purpose |
 |------|-----|---------|
-| `index.html` | `/` | Live camera view + settings + events + zones + faces + browse |
+| `index.html` | `/` | **Multi-camera grid view** (default home page since May 2026). Mobile-responsive tiles, click to expand modal. Global panels: Conditions + Known Faces. |
+| `single.html` | `/single.html?camera=X` | Per-camera detailed dashboard with all side panels (events, zones, faces enrollment, browse, conditions, settings). The old index.html before the route swap. |
+| `cameras.html` | `/cameras.html` | Camera registry admin: list/add/edit/delete cameras + Test Connection button (ffprobe) |
 | `ai.html` | `/ai.html` | AI chat + vision + DVR + image generation |
 | `monitoring.html` | `/monitoring.html` | System health + embedded Grafana |
 | `telegram.html` | `/telegram.html` | Telegram user management + access log |
@@ -616,26 +619,53 @@ When the QNAP profile is enabled (`docker compose -f docker-compose.yml -f docke
 ### Services
 ```
 services/
-├── camera-ingester/     # RTSP → Redis frames
-├── pose-detector/       # YOLOv8s-pose → person bboxes
-├── vehicle-detector/    # YOLOv8s → vehicle bboxes
-├── tracker/             # IoU tracking → semantic events
-├── face-recognizer/     # InsightFace → face identities
-├── dashboard/           # FastAPI backend + web frontend
-│   ├── server.py        # Main app (WebSocket, event poller, startup)
+├── camera-ingester/     # RTSP → Redis frames. Reads RTSP URLs from
+│                        # cameras:registry when env vars are absent
+│                        # (so slot-based cameras work).
+├── pose-detector/       # YOLOv8s-pose → person bboxes. Checks
+│                        # `detect_persons` flag from registry; exits cleanly if false.
+├── vehicle-detector/    # YOLOv8s → vehicle bboxes. Checks `detect_vehicles`.
+├── tracker/             # IoU tracking → semantic events.
+├── face-recognizer/     # InsightFace → face identities. Checks `detect_faces`.
+│                        # Shares the face DB across all cameras (Docker volume face-data).
+├── dashboard/           # FastAPI backend + web frontend (refactored May 2026)
+│   ├── server.py        # 353 lines — wiring only: imports, app, middleware, startup, static mount
+│   ├── constants.py     # Ollama models, ComfyUI defaults — env-overridable
+│   ├── websocket.py     # /ws/live; accepts ?camera=<id> query param for multi-cam
+│   ├── cameras.py       # CameraRegistry (Redis-backed) + slot allocation
 │   ├── ai_db.py         # AI chat history SQLite
-│   ├── routes/          # 20 API route modules
-│   └── static/          # 22 frontend files (HTML, JS, CSS)
-├── recorder/            # ffmpeg RTSP → MP4 DVR
+│   ├── helpers/
+│   │   └── geometry.py  # bbox_iou + in_dead_zone
+│   ├── pollers/
+│   │   ├── reminders.py        # 60s reminder dispatch via Telegram
+│   │   ├── ollama_warmup.py    # Pulls chat model + warms GPU at startup
+│   │   ├── comfyui_cleanup.py  # Clears stale GPU locks at startup
+│   │   ├── retention.py        # Daily prune of /data/snapshots and /data/events
+│   │   └── events.py           # Event stream consumer + Telegram broadcast + snapshot save
+│   ├── routes/          # 21 API route modules (cameras.py was added; see Multi-camera section)
+│   └── static/
+│       ├── index.html   # NEW HOME: multi-camera grid view (mobile-responsive)
+│       ├── grid.js      # Tile WebSocket + modal logic
+│       ├── single.html  # Old per-camera dashboard (now at /single.html?camera=X)
+│       ├── cameras.html # Camera registry admin UI
+│       └── (existing JS/CSS modules — events.js, zones.js, faces.js, …)
+├── recorder/            # ffmpeg RTSP → MP4 DVR (profile-gated to nas)
 ├── comfyui/             # Stable Diffusion inference
 ├── prometheus/          # Metrics config
-└── grafana/             # Dashboard provisioning
+└── grafana/             # Provisioned dashboard JSON
 ```
+
+### Multi-camera state (Phase 7+)
+- **Registry**: `cameras:registry` Redis hash — `{id: <camera_id>, name, rtsp_sub, rtsp_main, gpu_id, enabled, detect_persons, detect_vehicles, detect_faces}`.
+- **Slot pattern**: each camera beyond `front_door` runs in a profile-gated set of services (`docker compose --profile cam2 up -d` starts ingester/pose/vehicle/face/tracker for cam2). The cam2 slot is in `docker-compose.yml`; cam3/cam4 are copy-paste additions.
+- **WebSocket**: `/ws/live?camera=<id>` — each grid tile opens its own connection per camera.
+- **AI tools** (Phase 9a iter 1): `get_live_scene` aggregates all cameras; `query_events` and `capture_snapshot` take a `camera` arg. System prompt enumerates registered cameras so the LLM can route. Remaining 7 tools still default to primary (iter 2 work).
+- **Telegram commands**: still single-camera (iter 2/9b work).
 
 ### Contracts
 ```
 contracts/
-├── streams.py           # Redis key templates + data schemas
+├── streams.py           # Redis key templates + data schemas (single source of truth)
 ├── actions.py           # Keypoint action classification
 └── time_rules.py        # Time periods, zone alert rules, PIP test
 ```
