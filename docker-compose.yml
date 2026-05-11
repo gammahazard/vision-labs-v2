@@ -241,8 +241,20 @@ services:
   comfyui:
     build:
       context: ./services/comfyui
+    # Bind ComfyUI's native UI to localhost only (not the LAN). Lets you open
+    # http://localhost:8188 for experiments (WAN video workflows, custom node
+    # tinkering) while keeping it inaccessible from other devices on the network.
+    # The dashboard still proxies via the internal `http://comfyui:8188` URL.
+    ports:
+      - "127.0.0.1:8188:8188"
     environment:
       - NVIDIA_VISIBLE_DEVICES=1  # 3090
+      # entrypoint.sh chowns /app/models to this UID/GID at startup so the
+      # WSL host user can drop new model files in without sudo. Default
+      # 1000:1000 matches the standard WSL user. Override via .env if your
+      # UID differs (e.g. on a multi-user dev box).
+      - HOST_UID=${HOST_UID:-1000}
+      - HOST_GID=${HOST_GID:-1000}
     volumes:
       - comfyui-data:/app/output
       - ./models/comfyui:/app/models

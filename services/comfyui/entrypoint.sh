@@ -23,6 +23,15 @@ mkdir -p "$MODEL_DIR/text_encoders"
 mkdir -p "$MODEL_DIR/vae"
 mkdir -p "$MODEL_DIR/wan_loras"
 
+# Make every model subdirectory writable by the host user. Without this, dirs
+# created by `mkdir -p` above are owned by root (the container's UID) and the
+# WSL host user can't drop new files into them without sudo. HOST_UID/HOST_GID
+# come from docker-compose env (default 1000:1000 — matches the typical WSL user).
+HOST_UID="${HOST_UID:-1000}"
+HOST_GID="${HOST_GID:-1000}"
+chown -R "${HOST_UID}:${HOST_GID}" "$MODEL_DIR" 2>/dev/null || \
+    echo "[entrypoint] WARNING: chown $MODEL_DIR failed — drops from the host may need sudo"
+
 # Symlink wan_loras into loras/ so ComfyUI's LoraLoader can find WAN LoRAs
 # via the path "wan_loras/filename.safetensors"
 ln -sfn "$MODEL_DIR/wan_loras" "$MODEL_DIR/loras/wan_loras" 2>/dev/null || true
