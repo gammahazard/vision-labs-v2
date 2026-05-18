@@ -185,16 +185,18 @@ def detect_local_cidr() -> Optional[str]:
     IP for any outbound traffic is the bridge IP (172.17.x.x or 172.18.x.x),
     not the host's actual LAN. So we try several signals in order of trust:
 
-      1. CAMERA_IP env var — the user has set this to a real LAN IP for the
-         primary camera, so it's our best signal. Derive a /24 from it.
-      2. RTSP_SUB / RTSP_MAIN env vars — same idea, extract the host portion.
-      3. UDP-socket trick (`connect 8.8.8.8`). Discard if the result lands
+      1. cameras:registry — if any camera is already registered, parse its
+         rtsp_sub URL for the host IP and derive a /24. (Phase G removed
+         the env-based primary camera, so registry is now the primary source.)
+      2. CAMERA_IP env var — set explicitly for power users / legacy installs.
+      3. RTSP_SUB / RTSP_MAIN env vars — same idea, extract the host portion.
+      4. UDP-socket trick (`connect 8.8.8.8`). Discard if the result lands
          in a Docker bridge range (172.16.0.0/12 starting with 172.17-31).
 
     Returns None if everything fails. The wizard UI accepts a manual CIDR
     in that case.
     """
-    import os, re
+    import os, re, json as _json
 
     def _to_cidr(ip: str) -> Optional[str]:
         try:
@@ -203,22 +205,61 @@ def detect_local_cidr() -> Optional[str]:
         except (ValueError, ipaddress.AddressValueError):
             return None
 
-    # 1) CAMERA_IP env var (most reliable — user explicitly set it).
+    def _extract_host(rtsp: str) -> Optional[str]:
+        # rtsp://user:pass@HOST:PORT/path → HOST. Skip private-link IPs
+        # like 172.17.x.x which would still be a Docker bridge.
+        m = re.search(r"@?([\d.]+)(?::\d+)?/", rtsp or "")
+        if not m:
+            return None
+        ip = m.group(1)
+        # Reject Docker-bridge-shaped IPs
+        try:
+            addr = ipaddress.IPv4Address(ip)
+            if addr in ipaddress.IPv4Network("172.17.0.0/16"):
+                return None
+            if (addr in ipaddress.IPv4Network("172.16.0.0/12")
+                    and addr not in ipaddress.IPv4Network("172.16.0.0/16")):
+                return None
+        except (ValueError, ipaddress.AddressValueError):
+            return None
+        return ip
+
+    # 1) cameras:registry — any registered camera tells us the LAN
+    try:
+        import redis as _redis
+        _r = _redis.Redis(host=os.getenv("REDIS_HOST", "redis"),
+                          port=int(os.getenv("REDIS_PORT", "6379")),
+                          decode_responses=True)
+        raw = _r.hgetall("cameras:registry") or {}
+        for _slot, val in raw.items():
+            try:
+                entry = _json.loads(val)
+            except (ValueError, _json.JSONDecodeError):
+                continue
+            for url_field in ("rtsp_sub", "rtsp_main"):
+                ip = _extract_host(entry.get(url_field) or "")
+                if ip:
+                    cidr = _to_cidr(ip)
+                    if cidr:
+                        return cidr
+    except Exception:
+        pass
+
+    # 2) CAMERA_IP env var (legacy / power user override)
     cam_ip = (os.getenv("CAMERA_IP") or "").strip()
     if cam_ip and re.match(r"^\d+\.\d+\.\d+\.\d+$", cam_ip):
         cidr = _to_cidr(cam_ip)
         if cidr:
             return cidr
 
-    # 2) RTSP URL env vars — pull the host:port portion, then the host.
-    for var in ("RTSP_SUB", "RTSP_MAIN"):
+    # 3) RTSP URL env vars (legacy)
+    for var in ("RTSP_SUB", "RTSP_MAIN", "CAM1_RTSP_URL"):
         rtsp = (os.getenv(var) or "").strip()
         if not rtsp:
             continue
-        # rtsp://user:pass@HOST:PORT/path
-        m = re.search(r"@?([\d.]+)(?::\d+)?/", rtsp)
-        if m:
-            cidr = _to_cidr(m.group(1))
+        ip = _extract_host(rtsp)
+        if ip:
+            cidr = _to_cidr(ip)
             if cidr:
                 return cidr
 

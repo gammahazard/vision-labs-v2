@@ -184,30 +184,27 @@
         "label-modal-overlay",
     ];
 
+    // Map specific overlay IDs to their owning page's close-cleanup function.
+    // If the user clicks the backdrop of an overlay listed here, we also
+    // invoke the cleanup fn so ongoing state (timers, playback) gets reset.
+    const _CLEANUP_BY_ID = {
+        "lightboxModal":    "_closeLightbox",
+        "galleryModal":     "_genCloseGallery",
+        "clipGalleryModal": "_closeClipGallery",
+        "labelModal":       "closeLabelModal",
+        "onvifCredsModal":  "closeOnvifModal",
+    };
+
     function _closeModal(overlay) {
         if (overlay.hasAttribute("hidden")) {
             overlay.setAttribute("hidden", "");
         } else {
             overlay.style.display = "none";
         }
-        // Some pages bind cleanup logic to a "close" function. Look for
-        // the conventional names and call them so e.g. ongoing playback
-        // state gets cleared.
-        const matchers = [
-            window._closeLightbox,
-            window._genCloseGallery,
-            window._closeClipGallery,
-            window.closeLabelModal,
-            window.closeOnvifModal,
-        ];
-        for (const fn of matchers) {
-            if (typeof fn === "function") {
-                try {
-                    // Only invoke if the modal this fn manages is the one we're closing
-                    // — heuristic: each close fn typically targets one specific overlay.
-                    fn();
-                } catch (_) { /* ignore */ }
-            }
+        // Call the SPECIFIC cleanup fn for this overlay's id, not every one.
+        const fnName = _CLEANUP_BY_ID[overlay.id];
+        if (fnName && typeof window[fnName] === "function") {
+            try { window[fnName](); } catch (_) { /* ignore */ }
         }
     }
 

@@ -220,8 +220,13 @@ async function pollEvents() {
         if (hasNew) {
             const emptyState = eventList.querySelector(".empty-state");
             if (emptyState) emptyState.remove();
-            _showLoadOlderBtnIfReady();
         }
+
+        // Always check the load-older button on every poll, not just when
+        // there are new events. The first poll on a stale browser session
+        // can otherwise leave the button hidden if the previous session's
+        // state machine got into a weird place.
+        _showLoadOlderBtnIfReady();
 
         // Re-apply the filter (also sets the visible count). Done after
         // render so newly-inserted items get hidden if they don't match.
