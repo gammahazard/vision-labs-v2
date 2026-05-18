@@ -162,10 +162,38 @@ async function handleDiscover() {
     const cidrInput = $('discoverCidr');
     const msgEl = $('discoverMsg');
     const listEl = $('discoverList');
+    // The inline onclick="handleDiscover()" doesn't give us a button reference,
+    // so locate it the way the browser sees it.
+    const btn = document.querySelector('button[onclick="handleDiscover()"]');
+    const origBtnText = btn ? btn.textContent : '';
 
-    msgEl.textContent = '⏳ Probing every IP in the subnet (~5-10s for a /24)...';
-    msgEl.className = 'cam-msg';
+    // ---- Lock the UI ----
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Scanning…';
+        btn.style.opacity = '0.6';
+        btn.style.cursor = 'wait';
+    }
+    if (cidrInput) cidrInput.disabled = true;
     listEl.innerHTML = '';
+    msgEl.textContent = '⏳ Probing every IP in the subnet (~5-10s for a /24)…';
+    msgEl.className = 'cam-msg';
+
+    // ---- Safety net: server scan can take up to ~15s; abort after 25s ----
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 25000);
+
+    // ---- Always re-enable controls when we leave this function ----
+    const unlock = () => {
+        clearTimeout(abortTimer);
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = origBtnText || '🔍 Scan network';
+            btn.style.opacity = '';
+            btn.style.cursor = '';
+        }
+        if (cidrInput) cidrInput.disabled = false;
+    };
 
     const cidr = cidrInput.value.trim();
     try {
@@ -173,6 +201,7 @@ async function handleDiscover() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(cidr ? { cidr } : {}),
+            signal: controller.signal,
         });
         const data = await resp.json();
         if (!resp.ok) {
@@ -204,8 +233,14 @@ async function handleDiscover() {
             listEl.appendChild(card);
         });
     } catch (e) {
-        msgEl.textContent = `Network error: ${e.message}`;
+        if (e.name === 'AbortError') {
+            msgEl.textContent = `Scan timed out after 25 seconds. Try a smaller subnet or check that the dashboard container can reach your LAN.`;
+        } else {
+            msgEl.textContent = `Network error: ${e.message}`;
+        }
         msgEl.className = 'cam-msg err';
+    } finally {
+        unlock();
     }
 }
 

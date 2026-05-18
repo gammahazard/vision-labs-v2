@@ -314,18 +314,35 @@ def delete_camera(camera_id: str) -> bool:
 # Orchestrator status — read the audit stream to surface live state in the UI
 # ---------------------------------------------------------------------------
 
-def latest_orchestrator_action(profile: str, max_scan: int = 50) -> Optional[dict]:
-    """Find the most recent orchestrator action for a given profile.
+def latest_orchestrator_action(profile: str, max_scan: int = 100) -> Optional[dict]:
+    """Find the *effective* most-recent orchestrator action for a profile.
 
-    The audit stream is shared across profiles, so we scan back up to
-    `max_scan` entries looking for one whose `profile` field matches.
-    Returns the parsed entry (timestamp coerced to float, success to bool)
-    or None if nothing for this profile is in the recent history.
+    The audit stream contains every up/down attempt the reconcile loop
+    makes, including transient failures like "container name already in
+    use" or "No such container" that happen when the orchestrator tries
+    to spawn a service that's already running. Those failures DON'T mean
+    the camera is broken — the services are usually up and humming.
+
+    To avoid the badge flapping to "up failed" every time a redundant
+    reconcile fires, this function walks the stream looking for the
+    last entry that actually represents the camera's current state:
+
+      - If we find a successful `up`, that's "running". Any subsequent
+        `up` failures are just redundant reconciles; we ignore them as
+        long as there hasn't been an intervening successful or failed
+        `down`.
+      - A successful `down` after a successful `up` means the camera
+        has been disabled — we return that.
+      - Only return a failed `up` if we don't find any successful up
+        in the recent history (genuine "never came up" state).
     """
     try:
         rows = ctx.r.xrevrange(AUDIT_STREAM, count=max_scan)
     except Exception:
         return None
+
+    # Collect matching entries newest-first
+    matches = []
     for _entry_id, data in rows:
         if data.get("profile") != profile:
             continue
@@ -333,14 +350,28 @@ def latest_orchestrator_action(profile: str, max_scan: int = 50) -> Optional[dic
             ts = float(data.get("timestamp", 0))
         except (ValueError, TypeError):
             ts = 0.0
-        return {
+        matches.append({
             "action": data.get("action", ""),
             "profile": profile,
             "success": data.get("success") == "1",
             "detail": data.get("detail", ""),
             "timestamp": ts,
-        }
-    return None
+        })
+    if not matches:
+        return None
+
+    # Walk newest → oldest and pick the most informative entry:
+    # 1. Successful `down` is final (camera is currently torn down)
+    # 2. Successful `up` is final (camera is currently running) — even
+    #    if a later `up` failed (transient), we trust the prior success.
+    # 3. Otherwise return whatever's newest (likely a real failure case).
+    for m in matches:
+        if m["action"] == "down" and m["success"]:
+            return m
+        if m["action"] == "up" and m["success"]:
+            return m
+    # No successful action in history → return the very newest (failure).
+    return matches[0]
 
 
 def seed_default_if_empty(default_id: str, default_name: str,
