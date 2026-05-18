@@ -46,27 +46,34 @@ services:
   # ---------------------------------------------------------------------------
   # Camera Ingester — RTSP to Redis
   # ---------------------------------------------------------------------------
-  # Reads the Reolink camera's RTSP sub-stream (640x480, low bandwidth),
-  # encodes each frame as JPEG, and publishes to Redis Stream "frames:front_door".
+  # Reads the camera's RTSP sub-stream (640x480, low bandwidth),
+  # encodes each frame as JPEG, and publishes to Redis Stream "frames:cam1".
   #
-  # Uses network_mode: host so it can reach the camera at ${CAMERA_IP}.
+  # Uses network_mode: host so it can reach the camera on the LAN.
   # This means it also reaches Redis on localhost:6379 directly.
-  camera-ingester:
+  # The primary camera slot is `cam1`. All 5 slots (cam1-cam5) are
+  # profile-gated — services only start when their slot's profile is
+  # active, which the orchestrator handles based on the cameras:registry
+  # contents. No more "always-on primary" asymmetry.
+  camera-ingester-cam1:
     build:
       context: ./services/camera-ingester
     network_mode: host
+    profiles: ["cam1"]
     volumes:
       - ./contracts:/app/contracts:ro
     environment:
-      - CAMERA_ID=front_door
-      - RTSP_URL=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_sub
-      - RTSP_MAIN=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_main
+      - CAMERA_ID=cam1
+      # RTSP URL comes from cameras:registry (set by the wizard or the
+      # cameras tab). Power users can override with CAM1_RTSP_URL in .env.
+      - RTSP_URL=${CAM1_RTSP_URL:-}
+      - RTSP_MAIN=${CAM1_RTSP_MAIN:-}
       - REDIS_HOST=127.0.0.1
       - REDIS_PORT=6379
-      - TARGET_FPS=15           # ingester throttle (Redis config overrides this dynamically)
-      - JPEG_QUALITY=75         # was 80 — small drop, big CPU win
-      - HD_TARGET_FPS=8         # was 1 (too choppy) and 15 (CPU-bound at 4K). 8 is smooth + sustainable.
-      - HD_JPEG_QUALITY=70      # 4K encode is the CPU hog; q=70 still looks great at 4512x2512
+      - TARGET_FPS=${TARGET_FPS:-15}
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
       - MAX_STREAM_LEN=1000
     depends_on:
       redis:
@@ -81,14 +88,15 @@ services:
   # for GPU access inside the container.
   #
   # First run downloads the YOLO model weights (~25 MB).
-  pose-detector:
+  pose-detector-cam1:
     build:
       context: ./services/pose-detector
+    profiles: ["cam1"]
     environment:
-      - CAMERA_ID=front_door
+      - CAMERA_ID=cam1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MODEL_NAME=/models/yolov8s-pose.pt
+      - MODEL_NAME=${POSE_MODEL:-/models/yolov8s-pose.pt}
       - CONFIDENCE_THRESH=0.5
       - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
       - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
@@ -114,11 +122,12 @@ services:
   # Lightweight CPU service. Reads detections, matches them across frames
   # using bounding box overlap (IoU), assigns persistent person IDs, and
   # publishes semantic events (person_appeared, person_left).
-  tracker:
+  tracker-cam1:
     build:
       context: ./services/tracker
+    profiles: ["cam1"]
     environment:
-      - CAMERA_ID=front_door
+      - CAMERA_ID=cam1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - IOU_THRESHOLD=0.3
@@ -141,17 +150,18 @@ services:
   # Matches detected faces against a SQLite database of known people.
   # Enrollment API on port 8081 (proxied through dashboard).
   # InsightFace runs on GPU alongside the pose detector.
-  face-recognizer:
+  face-recognizer-cam1:
     build:
       context: ./services/face-recognizer
+    profiles: ["cam1"]
     # NOTE: port 8081 deliberately NOT exposed on host — the dashboard proxies
-    # all face-recognizer requests via Docker DNS (`http://face-recognizer:8081`),
+    # all face-recognizer requests via Docker DNS (`http://face-recognizer-cam1:8081`),
     # so there's no reason for it to be reachable from outside the bridge net.
     # Exposing it would let any LAN client enroll/delete faces without auth.
     expose:
       - "8081"
     environment:
-      - CAMERA_ID=front_door
+      - CAMERA_ID=cam1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_PATH=/data/faces.db
@@ -182,14 +192,15 @@ services:
   # Detects vehicles (car, truck, bus, motorcycle) in camera frames.
   # Reads the same frame stream as pose-detector but outputs to a separate
   # vehicle detection stream for the tracker to consume.
-  vehicle-detector:
+  vehicle-detector-cam1:
     build:
       context: ./services/vehicle-detector
+    profiles: ["cam1"]
     environment:
-      - CAMERA_ID=front_door
+      - CAMERA_ID=cam1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MODEL_NAME=/models/yolov8s.pt
+      - MODEL_NAME=${VEHICLE_MODEL:-/models/yolov8s.pt}
       - CONFIDENCE_THRESH=0.35
       - FRAME_SKIP=1
       - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
@@ -286,11 +297,17 @@ services:
       # without sudo. Other volumes stay as Docker-managed for now.
       - ./data/recordings:/data/recordings:ro
     environment:
-      - CAMERA_ID=front_door
+      # The dashboard no longer has a hardcoded "primary camera". All slots
+      # (cam1-cam5) are treated equally. UI features that needed a primary
+      # default (live view "first camera") now read from the cameras:registry
+      # at request time.
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DASHBOARD_PORT=8080
-      - FACE_API_URL=http://face-recognizer:8081
+      # Dashboard proxies face-enrollment requests to cam1's face-recognizer.
+      # On a fresh install with no cam1 configured, enrollment endpoints
+      # return 503 — you can't enroll a face without a camera anyway.
+      - FACE_API_URL=http://face-recognizer-cam1:8081
       - AUTH_DB_PATH=/data/auth.db
       - OLLAMA_HOST=http://ollama:11434
       # AI model configuration (see .env / tiers/*.env). Empty CHAT_MODEL
@@ -298,10 +315,6 @@ services:
       # VISION_MODEL disables the vision LLM image-analysis features.
       - OLLAMA_CHAT_MODEL=${CHAT_MODEL-qwen3:14b}
       - OLLAMA_VISION_MODEL=${VISION_MODEL-minicpm-v}
-      # Pass through camera RTSP URLs so the dashboard can seed the camera
-      # registry with this deployment's primary camera on first startup.
-      - RTSP_SUB=${RTSP_SUB:-}
-      - RTSP_MAIN=${RTSP_MAIN:-}
 
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
@@ -329,15 +342,17 @@ services:
   # Retention is short (RETENTION_DAYS=3) because we're on local disk.
   # When the QNAP arrives, change the `qnap-recordings` volume to an NFS mount
   # and bump RETENTION_DAYS — no code changes needed.
-  recorder:
+  recorder-cam1:
     build:
       context: ./services/recorder
     network_mode: host
+    profiles: ["cam1"]
     volumes:
       - ./data/recordings:/recordings
     environment:
-      - CAMERA_ID=front_door
-      - RTSP_URL=rtsp://${CAMERA_USER}:${CAMERA_PASSWORD}@${CAMERA_IP}:554/h264Preview_01_sub
+      - CAMERA_ID=cam1
+      # RTSP URL comes from cameras:registry. Power users override via env.
+      - RTSP_URL=${CAM1_RTSP_URL:-}
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
       - RETENTION_DAYS=3
@@ -999,7 +1014,7 @@ services:
       # process environment — pass through the host's PWD here so the
       # expansion matches and the spec stays valid.
       - PWD=${PWD}
-      - ALLOWED_PROFILES=cam2,cam3,cam4,cam5
+      - ALLOWED_PROFILES=cam1,cam2,cam3,cam4,cam5
       - RECONCILE_INTERVAL=10
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

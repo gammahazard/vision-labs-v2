@@ -452,10 +452,17 @@ async function addCamera() {
         return;
     }
 
-    // Generate a simple ID from the name
-    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    // The internal camera ID must be one of the slot names (cam1...cam5) so
+    // the orchestrator can find a matching profile to spawn detector services.
+    // Fetch the next free slot — fresh installs get cam1, next add gets cam2.
+    let id;
+    try {
+        const sr = await fetch('/api/cameras/next-slot');
+        const sd = await sr.json();
+        id = sd.slot;
+    } catch (_) {}
     if (!id) {
-        alert('Name must contain alphanumeric characters.');
+        alert('No free camera slots. The wizard supports up to 5 cameras (cam1-cam5).');
         return;
     }
 

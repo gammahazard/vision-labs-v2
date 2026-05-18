@@ -15,10 +15,10 @@ RELATIONSHIPS:
     - Model: YOLOv8s (~500 MB VRAM on RTX 3090)
 
 DATA FLOW:
-    camera-ingester → [frames:front_door] → THIS SERVICE → [detections:vehicle:front_door] → tracker
+    camera-ingester → [frames:cam1] → THIS SERVICE → [detections:vehicle:cam1] → tracker
 
 CONFIG (environment variables):
-    CAMERA_ID          — Which camera's frames to process (default: "front_door")
+    CAMERA_ID          — Which camera's frames to process (default: "cam1")
     REDIS_HOST         — Redis server hostname (default: "127.0.0.1")
     REDIS_PORT         — Redis server port (default: 6379)
     MODEL_NAME         — YOLO model to use (default: "yolov8s.pt")
@@ -53,7 +53,7 @@ from streams import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CAMERA_ID = os.getenv("CAMERA_ID", "front_door")
+CAMERA_ID = os.getenv("CAMERA_ID", "cam1")
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 MODEL_NAME = os.getenv("MODEL_NAME", "yolov8s.pt")

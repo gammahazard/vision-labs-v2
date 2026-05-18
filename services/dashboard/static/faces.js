@@ -41,13 +41,13 @@ let _wizardActive = false;
 // ---------------------------------------------------------------------------
 // Start the Enrollment Wizard
 // ---------------------------------------------------------------------------
-// Face enrollment is ALWAYS pinned to the primary camera (front_door). The
+// Face enrollment is ALWAYS pinned to the primary camera (cam1). The
 // backend enrollment proxy already hits face-recognizer:8081 which reads
-// from frames:front_door, so the wizard preview opens a dedicated WebSocket
+// from frames:cam1, so the wizard preview opens a dedicated WebSocket
 // to that camera regardless of which detail page the user is on.
 // This avoids the visual disconnect where a wizard launched from
 // /single.html?camera=cam2 would have shown the basement feed.
-const ENROLLMENT_CAMERA = "front_door";  // pinned; matches face-recognizer:8081 mount
+const ENROLLMENT_CAMERA = "cam1";  // pinned; matches face-recognizer:8081 mount
 let _wizardWs = null;
 
 function _wizardOpenPreviewWS() {
@@ -106,7 +106,7 @@ function startEnrollWizard() {
     // Reset UI
     _wizardUpdateUI();
 
-    // Open the pinned-front_door preview WebSocket (independent of the page's main feed)
+    // Open the pinned-cam1 preview WebSocket (independent of the page's main feed)
     _wizardOpenPreviewWS();
 
     // Show wizard modal with animation

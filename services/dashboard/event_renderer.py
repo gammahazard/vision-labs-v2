@@ -27,7 +27,7 @@ OUTPUT SHAPE:
             "kind": "face" | "event_snapshot" | "vehicle" | null,
             "identity_name": "Alex"  | null,
             "event_id": "1746...-0"  | null,
-            "camera_id": "front_door"| null,
+            "camera_id": "cam1"| null,
             "snapshot_key": "vehicle:..." | null,
             "caption": "Alex"        | null,
         },

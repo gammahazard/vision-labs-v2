@@ -28,7 +28,7 @@ from typing import Optional
 # STREAM KEYS
 # =============================================================================
 # These are Redis Stream key templates. Replace {camera_id} with the actual
-# camera identifier (e.g., "front_door", "backyard").
+# camera identifier (e.g., "cam1", "backyard").
 
 # Raw JPEG frames from cameras — one stream per camera.
 # Published by: camera-ingester
@@ -130,11 +130,11 @@ def stream_key(template: str, **kwargs) -> str:
     """Resolve a stream key template with actual values.
 
     Example:
-        stream_key(FRAME_STREAM, camera_id="front_door")
-        # Returns: "frames:front_door"
+        stream_key(FRAME_STREAM, camera_id="cam1")
+        # Returns: "frames:cam1"
 
-        stream_key(DETECTION_STREAM, detector_type="pose", camera_id="front_door")
-        # Returns: "detections:pose:front_door"
+        stream_key(DETECTION_STREAM, detector_type="pose", camera_id="cam1")
+        # Returns: "detections:pose:cam1"
     """
     return template.format(**kwargs)
 
@@ -156,7 +156,7 @@ class FrameMessage:
     Published to FRAME_STREAM by the camera-ingester service.
     Contains the raw JPEG bytes so consumers don't need to decode RTSP themselves.
     """
-    camera_id: str                   # e.g., "front_door"
+    camera_id: str                   # e.g., "cam1"
     timestamp: float                 # Unix timestamp (time.time())
     frame_bytes: bytes               # JPEG-encoded frame data
     frame_number: int                # Monotonically increasing frame counter

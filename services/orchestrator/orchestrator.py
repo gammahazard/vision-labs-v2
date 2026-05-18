@@ -73,7 +73,7 @@ CONTAINER_COMPOSE_FILE = "/workspace/docker-compose.yml"
 # Profiles we are willing to up/down. Strict allowlist to bound blast radius.
 ALLOWED_PROFILES = {
     p.strip()
-    for p in os.getenv("ALLOWED_PROFILES", "cam2,cam3,cam4,cam5").split(",")
+    for p in os.getenv("ALLOWED_PROFILES", "cam1,cam2,cam3,cam4,cam5").split(",")
     if p.strip()
 }
 
@@ -240,8 +240,8 @@ def compose_down_profile(r: redis.Redis, profile: str) -> None:
 def desired_profiles(r: redis.Redis) -> set:
     """Return the set of profile names that SHOULD be running based on the
     registry — that is, the camera ids that are both enabled AND in
-    ALLOWED_PROFILES. (`front_door` isn't in ALLOWED_PROFILES because it
-    has no profile gate; it runs unconditionally.)"""
+    ALLOWED_PROFILES. All 5 slots (cam1-cam5) are profile-gated; each
+    runs only when the registry has its entry."""
     try:
         raw = r.hgetall(REGISTRY_KEY)
     except redis.RedisError as e:

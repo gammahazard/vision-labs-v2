@@ -19,7 +19,7 @@ WHY REDIS STREAMS (not direct RTSP per service):
     - Adding a new consumer is zero config — just subscribe to the stream
 
 CONFIG (via environment variables):
-    CAMERA_ID       — Unique camera name (e.g., "front_door")
+    CAMERA_ID       — Unique camera name (e.g., "cam1")
     RTSP_URL        — Full RTSP URL including credentials
     REDIS_HOST      — Redis server hostname (default: localhost)
     REDIS_PORT      — Redis server port (default: 6379)
@@ -58,7 +58,7 @@ from streams import (
 # ---------------------------------------------------------------------------
 # Configuration from environment variables
 # ---------------------------------------------------------------------------
-CAMERA_ID = os.getenv("CAMERA_ID", "front_door")
+CAMERA_ID = os.getenv("CAMERA_ID", "cam1")
 RTSP_URL = os.getenv("RTSP_URL", "")
 RTSP_MAIN_URL = os.getenv("RTSP_MAIN", "")  # High-res main stream for HD viewing
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")

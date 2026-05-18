@@ -88,7 +88,7 @@ TOOLS = [
                     },
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to query (e.g. 'front_door', 'cam2'), or 'all' for every camera. Default = primary camera.",
+                        "description": "Camera id to query (e.g. 'cam1', 'cam2'), or 'all' for every camera. Default = primary camera.",
                     },
                 },
                 "required": [],
@@ -169,7 +169,7 @@ TOOLS = [
                 "properties": {
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to scope status to (e.g. 'front_door', 'cam2'), or 'all'. Default = 'all' (aggregate across cameras).",
+                        "description": "Camera id to scope status to (e.g. 'cam1', 'cam2'), or 'all'. Default = 'all' (aggregate across cameras).",
                     },
                 },
                 "required": [],
@@ -219,7 +219,7 @@ TOOLS = [
                     },
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to query (e.g. 'front_door', 'cam2'), or 'all' for every camera. Default = primary camera.",
+                        "description": "Camera id to query (e.g. 'cam1', 'cam2'), or 'all' for every camera. Default = primary camera.",
                     },
                 },
                 "required": ["date"],
@@ -236,7 +236,7 @@ TOOLS = [
                 "properties": {
                     "camera": {
                         "type": "string",
-                        "description": "Camera id whose zones to list (e.g. 'front_door', 'cam2'), or 'all' for every camera grouped. Default = primary camera.",
+                        "description": "Camera id whose zones to list (e.g. 'cam1', 'cam2'), or 'all' for every camera grouped. Default = primary camera.",
                     },
                 },
                 "required": [],
@@ -261,7 +261,7 @@ TOOLS = [
                     },
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to scope to (e.g. 'front_door'), or 'all'. Default = primary camera. Only cameras with vehicle detection enabled will have snapshots.",
+                        "description": "Camera id to scope to (e.g. 'cam1'), or 'all'. Default = primary camera. Only cameras with vehicle detection enabled will have snapshots.",
                     },
                 },
                 "required": [],
@@ -299,7 +299,7 @@ TOOLS = [
                     },
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to analyze (e.g. 'front_door', 'cam2'), or 'all' for every camera. Default = primary camera.",
+                        "description": "Camera id to analyze (e.g. 'cam1', 'cam2'), or 'all' for every camera. Default = primary camera.",
                     },
                 },
                 "required": ["analysis_type"],
@@ -316,7 +316,7 @@ TOOLS = [
                 "properties": {
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to capture (e.g. 'front_door', 'cam2'). Omit for the primary camera.",
+                        "description": "Camera id to capture (e.g. 'cam1', 'cam2'). Omit for the primary camera.",
                     },
                 },
                 "required": [],
@@ -333,7 +333,7 @@ TOOLS = [
                 "properties": {
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to record from (e.g. 'front_door', 'cam2'). Omit for the primary camera.",
+                        "description": "Camera id to record from (e.g. 'cam1', 'cam2'). Omit for the primary camera.",
                     },
                 },
                 "required": [],
@@ -371,7 +371,7 @@ TOOLS = [
                     },
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to analyze (e.g. 'front_door', 'cam2'), or 'all' for every camera. Default = primary camera.",
+                        "description": "Camera id to analyze (e.g. 'cam1', 'cam2'), or 'all' for every camera. Default = primary camera.",
                     },
                 },
                 "required": [],
@@ -993,7 +993,7 @@ async def _tool_capture_snapshot(args: dict = None) -> str:
     """Capture camera frame with weather + scene context for AI to describe.
 
     Phase 9a: accepts `camera` arg to pick a specific camera. Defaults to
-    primary (front_door) for back-compat with single-camera setups.
+    primary (cam1) for back-compat with single-camera setups.
     """
     args = args or {}
     import base64

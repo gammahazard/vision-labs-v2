@@ -889,7 +889,7 @@ async def _cmd_cameras(chat_id: str = "", **kwargs):
 
         lines.append(
             "\n\nUse a camera's name in any command:\n"
-            "<code>/snapshot basement</code> · <code>/clip 10 front_door</code>"
+            "<code>/snapshot basement</code> · <code>/clip 10 cam1</code>"
         )
         await send_text("\n".join(lines), chat_id=chat_id)
     except Exception as e:

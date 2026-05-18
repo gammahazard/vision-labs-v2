@@ -168,7 +168,7 @@ function connectWebSocket() {
                 liveFrame.style.display = "block";
                 noSignal.style.display = "none";
                 // Note: the enrollment wizard now opens its own dedicated
-                // WebSocket pinned to front_door (see faces.js
+                // WebSocket pinned to cam1 (see faces.js
                 // _wizardOpenPreviewWS) so we don't mirror the main feed here.
 
                 // Update FPS counter

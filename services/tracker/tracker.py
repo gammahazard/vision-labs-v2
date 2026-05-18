@@ -19,8 +19,8 @@ RELATIONSHIPS:
     - Stream keys defined in: contracts/streams.py
 
 DATA FLOW:
-    pose-detector → [detections:pose:front_door] → THIS SERVICE → [events:front_door]
-                                                                 → [state:front_door]
+    pose-detector → [detections:pose:cam1] → THIS SERVICE → [events:cam1]
+                                                                 → [state:cam1]
 
 TRACKING METHOD:
     Simple IoU (Intersection over Union) matching:
@@ -35,7 +35,7 @@ TRACKING METHOD:
     hash and get linked to tracked persons by IoU match.
 
 CONFIG (environment variables):
-    CAMERA_ID           — Which camera to track (default: "front_door")
+    CAMERA_ID           — Which camera to track (default: "cam1")
     REDIS_HOST          — Redis server hostname (default: "127.0.0.1")
     REDIS_PORT          — Redis server port (default: 6379)
     IOU_THRESHOLD       — Min overlap to consider same person (default: 0.3)
@@ -76,7 +76,7 @@ from streams import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CAMERA_ID = os.getenv("CAMERA_ID", "front_door")
+CAMERA_ID = os.getenv("CAMERA_ID", "cam1")
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 IOU_THRESHOLD = float(os.getenv("IOU_THRESHOLD", "0.3"))

@@ -79,7 +79,7 @@ function renderCameras(cameras) {
 
 // ---------------------------------------------------------------------------
 // Status badge — polls /api/cameras/{id}/status, paints the small pill.
-// Slot cameras (cam2..cam5) show real orchestrator state; front_door
+// Slot cameras (cam2..cam5) show real orchestrator state; cam1
 // always shows "running" since it's not slot-gated.
 // ---------------------------------------------------------------------------
 async function refreshCameraStatus(camId) {
@@ -269,9 +269,16 @@ async function promptOnvifCreds(idx) {
         let main = urls.find(u => /main|01|high/i.test(u)) || urls[0];
         if (sub === main && urls.length > 1) main = urls.find(u => u !== sub);
 
-        // Prefill the manual add-camera form
-        const idGuess = (cam.name || cam.ip).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-        $('camId').value = idGuess;
+        // Prefill the manual add-camera form. The Camera ID should be the
+        // next available slot (cam1...cam5) so the orchestrator can spawn
+        // detector services for it. Display Name is whatever the user wants.
+        try {
+            const sr = await fetch('/api/cameras/next-slot');
+            const sd = await sr.json();
+            $('camId').value = sd.slot || `cam${Date.now().toString().slice(-2)}`;
+        } catch (_) {
+            $('camId').value = '';
+        }
         $('camName').value = `${cam.manufacturer || ''} ${cam.model || ''}`.trim() || cam.ip;
         $('camRtspSub').value = sub || '';
         $('camRtspMain').value = (main && main !== sub) ? main : '';

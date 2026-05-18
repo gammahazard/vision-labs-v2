@@ -8,7 +8,7 @@ PURPOSE:
 
 DATA SHAPE per entry:
     {
-        "id": "front_door",              # primary key, matches CAMERA_ID env
+        "id": "cam1",              # primary key, matches CAMERA_ID env
         "name": "Front Door",             # human-readable
         "rtsp_sub": "rtsp://.../sub",     # SD stream used for detection
         "rtsp_main": "rtsp://.../main",   # HD stream for viewing (optional)
@@ -69,13 +69,17 @@ def _publish_event(action: str, camera_id: str) -> None:
     except Exception as e:
         logger.debug(f"Failed to publish cameras:events {action} {camera_id}: {e}")
 
-# Phase 7b: pre-defined camera slots. Each slot has a profile-gated set of
-# services in docker-compose.yml. The orchestrator service watches the
-# registry and runs `docker compose --profile <slot> up -d` automatically
-# when a camera with one of these IDs is added.
-# To add more slots: duplicate the cam2 block in docker-compose.yml, update
-# this list, and update ALLOWED_PROFILES in the orchestrator service env.
-AVAILABLE_SLOTS = ["cam2", "cam3", "cam4", "cam5"]
+# Phase G: All 5 camera slots are symmetric and profile-gated. Each slot
+# has its own set of 6 services in docker-compose.yml gated by `profiles:
+# [camN]`. The orchestrator watches the registry and runs `docker compose
+# --profile <slot> up -d` automatically when a camera with one of these
+# IDs is added.
+#
+# To add more slots: duplicate the cam5 block in docker-compose.yml,
+# append to this list, and update ALLOWED_PROFILES in the orchestrator
+# service env. (cam1 is FIRST in this list so it's the default for the
+# first camera a user adds via the wizard.)
+AVAILABLE_SLOTS = ["cam1", "cam2", "cam3", "cam4", "cam5"]
 
 
 def next_available_slot() -> Optional[str]:

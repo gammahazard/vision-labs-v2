@@ -823,7 +823,7 @@ window._onRecCameraChange = function (camId) {
 async function _ensureRecCameraList() {
     // Populate the camera selector from /api/recordings/cameras (cameras that
     // actually have recordings on disk). Also load friendly names from the
-    // camera registry so we show e.g. "Front Door (front_door)".
+    // camera registry so we show e.g. "Front Door (cam1)".
     const sel = document.getElementById('recCameraPicker');
     if (!sel) return;
     try {

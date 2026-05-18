@@ -20,7 +20,7 @@ STORAGE LAYOUT:
     /recordings/{camera_id}/YYYY-MM-DD/HH-MM.ts
 
 CONFIG (via environment variables):
-    CAMERA_ID           — Camera name (default: front_door)
+    CAMERA_ID           — Camera name (default: cam1)
     RTSP_URL            — RTSP sub-stream URL
     RECORDING_DIR       — Base output directory (default: /recordings)
     SEGMENT_DURATION    — Seconds per segment (default: 3600 = 1 hour)
@@ -42,7 +42,7 @@ from zoneinfo import ZoneInfo
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CAMERA_ID = os.getenv("CAMERA_ID", "front_door")
+CAMERA_ID = os.getenv("CAMERA_ID", "cam1")
 RTSP_URL = os.getenv("RTSP_URL", "")
 REDIS_HOST_FOR_REGISTRY = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT_FOR_REGISTRY = int(os.getenv("REDIS_PORT", "6379"))
@@ -160,8 +160,8 @@ def record_segments() -> bool:
     automatically.  Each segment is named by its start time.
 
     The strftime pattern in -segment_format produces paths like:
-        /recordings/front_door/2026-02-24/00-00.ts
-        /recordings/front_door/2026-02-24/01-00.ts
+        /recordings/cam1/2026-02-24/00-00.ts
+        /recordings/cam1/2026-02-24/01-00.ts
 
     Returns True if recording ended normally (shutdown), False on error.
     """
@@ -179,7 +179,7 @@ def record_segments() -> bool:
     # but it won't create directories.  So we pre-create today + tomorrow.
     _ensure_day_dirs(camera_dir)
 
-    # Output pattern:  /recordings/front_door/%Y-%m-%d/%H-%M.ts
+    # Output pattern:  /recordings/cam1/%Y-%m-%d/%H-%M.ts
     segment_pattern = os.path.join(camera_dir, "%Y-%m-%d", "%H-%M.ts")
 
     safe_url = RTSP_URL.split("@")[-1] if "@" in RTSP_URL else RTSP_URL

@@ -19,7 +19,7 @@ logger = logging.getLogger("vision-labs.recordings")
 router = APIRouter()
 
 RECORDINGS_DIR = Path("/data/recordings")
-DEFAULT_CAMERA = os.getenv("CAMERA_ID", "front_door")
+DEFAULT_CAMERA = os.getenv("CAMERA_ID", "cam1")
 
 
 def _resolve_camera(camera: str) -> str:

@@ -19,7 +19,7 @@ DATA FLOW:
     Dashboard → POST /enroll → THIS SERVICE → stores in SQLite
 
 ENVIRONMENT VARIABLES:
-    CAMERA_ID       — Which camera stream to process (default: front_door)
+    CAMERA_ID       — Which camera stream to process (default: cam1)
     REDIS_HOST      — Redis server host
     REDIS_PORT      — Redis server port
     DB_PATH         — Path to SQLite database file (default: /data/faces.db)
@@ -60,7 +60,7 @@ from streams import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CAMERA_ID = os.getenv("CAMERA_ID", "front_door")
+CAMERA_ID = os.getenv("CAMERA_ID", "cam1")
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 DB_PATH = os.getenv("DB_PATH", "/data/faces.db")
@@ -609,7 +609,7 @@ def cache_refresh_loop():
     """Periodically reload face_db caches from SQLite.
 
     Required for multi-container deployments where one face-recognizer
-    handles enrollments (front_door, the one wired to the dashboard) and
+    handles enrollments (cam1, the one wired to the dashboard) and
     other instances (e.g. cam2) need to pick up new known faces or
     unknown captures without a restart.
 
@@ -713,7 +713,7 @@ def run():
     logger.info(f"Enrollment API running on port {API_PORT}")
 
     # Periodic cache refresh — keeps multi-container deployments in sync.
-    # The dashboard only proxies enrollments to ONE recognizer (front_door),
+    # The dashboard only proxies enrollments to ONE recognizer (cam1),
     # so without this, every other recognizer instance would have a stale
     # cache until restart.
     cache_thread = threading.Thread(target=cache_refresh_loop, daemon=True)

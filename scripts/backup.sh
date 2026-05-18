@@ -111,15 +111,31 @@ if docker compose ps -q redis 2>/dev/null | grep -q .; then
     sleep 2
 fi
 
-# Run tar inside a throwaway alpine container. Mount the output directory
-# so the result lands on the host. --ignore-failed-read makes tar tolerate
-# the rare case where a file vanishes mid-archive (Redis or sqlite WAL).
+# Run tar inside a throwaway debian-slim container so we have GNU tar
+# (Alpine's BusyBox tar doesn't support --ignore-failed-read). Mount the
+# output directory so the result lands on the host. --ignore-failed-read
+# makes tar tolerate the rare case where a file vanishes mid-archive
+# (Redis AOF rotation or SQLite WAL races).
 echo "==> Creating tarball (this is fast — volumes total a few hundred MB)..."
+# `tar` can exit 1 with "file changed as we read it" on live AOF/SQLite WAL
+# rotation. The archive is still valid; the warning just says one file's
+# size was different than expected. We suppress that specific warning and
+# also accept exit code 1 as long as the output file exists + has size.
+set +e
 docker run --rm \
     "${MOUNT_FLAGS[@]}" \
     -v "$OUTPUT_DIR:/backup" \
-    alpine:3.20 \
-    sh -c "cd /volumes && tar --ignore-failed-read -czf /backup/${OUTPUT_FILE} ."
+    debian:bookworm-slim \
+    sh -c "cd /volumes && tar --ignore-failed-read --warning=no-file-changed -czf /backup/${OUTPUT_FILE} ."
+TAR_RC=$?
+set -e
+
+# Only fatal if the file is missing or zero-sized. Exit code 1 with a valid
+# tarball means tar tolerated a transient warning.
+if [ ! -s "$ABS_OUTPUT" ]; then
+    echo "ERROR: tar exited $TAR_RC and produced no usable output." >&2
+    exit 1
+fi
 
 # Sanity-check the resulting file
 if [ ! -s "$ABS_OUTPUT" ]; then

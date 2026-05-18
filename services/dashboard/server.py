@@ -60,7 +60,10 @@ from streams import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CAMERA_ID = os.getenv("CAMERA_ID", "front_door")
+# Dashboard's "default" camera for legacy single-camera views (e.g. the old
+# /single.html?camera=... has cam1 as its default). Multi-camera-aware code
+# paths read the cameras:registry at request time and ignore this default.
+CAMERA_ID = os.getenv("CAMERA_ID", "cam1")
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8080"))
@@ -307,20 +310,14 @@ async def startup():
     else:
         logger.info(f"Config already exists in {CONFIG_KEY}: {existing}")
 
-    # Seed the camera registry with this deployment's single env-configured
-    # camera so the API has at least one entry. On subsequent boots the
-    # registry is non-empty and this is a no-op.
+    # Phase G: No more env-based camera seeding. Fresh installs start with
+    # an EMPTY cameras:registry — the user adds their first camera via the
+    # setup wizard (which auto-suggests cam1 as the slot ID). This is what
+    # makes the user's first camera correctly go into the cam1 slot and
+    # actually have services spawned for it. The old `seed_default_if_empty`
+    # call here would auto-create a `front_door` entry from RTSP_SUB env,
+    # which created a misleading "always-on primary" asymmetry.
     import cameras as camera_registry
-    rtsp_sub = os.getenv("RTSP_SUB", "")
-    rtsp_main = os.getenv("RTSP_MAIN", "")
-    camera_registry.seed_default_if_empty(
-        default_id=CAMERA_ID,
-        default_name=os.getenv("LOCATION_NAME", CAMERA_ID.replace("_", " ").title()),
-        rtsp_sub=rtsp_sub,
-        rtsp_main=rtsp_main,
-        location_lat=float(os.getenv("LOCATION_LAT", "0") or "0"),
-        location_lon=float(os.getenv("LOCATION_LON", "0") or "0"),
-    )
 
     # First-run wizard gate: if we DIDN'T just create the camera registry
     # (i.e. this is a pre-existing install with cameras already in Redis),

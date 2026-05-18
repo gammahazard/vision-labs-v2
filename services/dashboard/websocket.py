@@ -78,7 +78,7 @@ def register(app: FastAPI):
         REDIS_PORT = r.connection_pool.connection_kwargs.get("port", 6379)
 
         # Phase 8b: WebSocket can target any camera via ?camera=<id> query param.
-        # Without it, falls back to the dashboard's primary CAMERA_ID env (front_door).
+        # Without it, falls back to the dashboard's primary CAMERA_ID env (cam1).
         # All Redis keys are rebuilt for the requested camera so multi-camera grid
         # tiles can each open their own WebSocket connection.
         from contracts.streams import (
