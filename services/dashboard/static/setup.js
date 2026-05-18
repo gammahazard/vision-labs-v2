@@ -47,18 +47,36 @@ async function detectHardware() {
     statusEl.innerHTML = '<span class="probing">⏳ Asking the orchestrator to spawn an nvidia-smi probe — this can take up to ~30s on first run...</span>';
 
     try {
-        const resp = await fetch('/api/setup/detect-hardware', { method: 'POST' });
+        const resp = await fetch('/api/setup/detect-hardware', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        if (!resp.ok) {
+            // Surface HTTP-level errors (auth, 422, 500, etc.) before
+            // touching the body so a non-JSON response can't crash us.
+            let detail = `HTTP ${resp.status}`;
+            try {
+                const errBody = await resp.json();
+                detail = errBody.error || errBody.detail || detail;
+                if (typeof detail !== 'string') detail = JSON.stringify(detail);
+            } catch (_) { /* response wasn't JSON; keep HTTP code */ }
+            throw new Error(detail);
+        }
         const data = await resp.json();
+        // Defensive default — server should always send {gpus: []} on no-GPU.
+        if (!data || typeof data !== 'object') {
+            throw new Error('Malformed server response');
+        }
+        if (!Array.isArray(data.gpus)) data.gpus = [];
         renderHardwareResult(data);
         state.detected = data;
-        // Allow Continue regardless — wizard works without a detected GPU
-        // (small tier with no AI chat still gives detection + DVR + faces)
         nextBtn.disabled = false;
         statusEl.style.display = 'none';
         resultEl.hidden = false;
     } catch (e) {
-        statusEl.innerHTML = `<span class="probing" style="color:#ef4444">Probe failed: ${e}. You can still continue — set DETECTOR_GPU / CHAT_GPU manually in .env later.</span>`;
-        nextBtn.disabled = false;  // let the user proceed
+        statusEl.innerHTML = `<span class="probing" style="color:#ef4444">Probe failed: ${escapeHtml(e.message || String(e))}. You can still continue — set DETECTOR_GPU / CHAT_GPU manually in .env later.</span>`;
+        nextBtn.disabled = false;  // let the user proceed regardless
     }
 }
 

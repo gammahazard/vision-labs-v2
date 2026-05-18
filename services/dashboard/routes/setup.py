@@ -46,11 +46,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import redis
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import constants as ctx
-from routes.auth import validate_session
 
 logger = logging.getLogger("dashboard.setup")
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -165,7 +164,7 @@ async def get_status():
 
 
 @router.post("/detect-hardware")
-async def detect_hardware(request: Request, _=Depends(validate_session)):
+async def detect_hardware(request: Request):
     """
     Asks the orchestrator to run an nvidia-smi probe via a one-shot CUDA
     container. The dashboard does not have the Docker socket by design;
@@ -219,7 +218,7 @@ async def detect_hardware(request: Request, _=Depends(validate_session)):
 
 
 @router.post("/discover-cameras")
-async def discover_cameras_in_setup(request: Request, _=Depends(validate_session)):
+async def discover_cameras_in_setup(request: Request):
     """Setup-wizard wrapper that reuses the same scanner the cameras tab uses.
 
     The wizard calls this from /setup.html step 3 to populate the "Scan my
@@ -231,7 +230,7 @@ async def discover_cameras_in_setup(request: Request, _=Depends(validate_session
 
 
 @router.post("/complete")
-async def complete_setup(request: Request, _=Depends(validate_session)):
+async def complete_setup(request: Request):
     """
     Writes /data/setup-state/setup.json with a summary of what was done.
     After this, the setup-gate middleware stops redirecting.
