@@ -68,15 +68,40 @@ Portainer ◀──▶ https://localhost:9443 (Docker management UI)
 
 ---
 
+## Quick install
+
+### Linux (Ubuntu 22.04 / 24.04, Debian 12)
+
+```bash
+git clone <repo-url> vision-labs && cd vision-labs
+bash scripts/install-linux.sh
+```
+
+The script installs Docker + nvidia-container-toolkit, builds all images, starts the stack, and tells you when the dashboard is up. Idempotent — safe to re-run. Takes ~15-20 min on first install (build + image pulls).
+
+### Windows 11 (with NVIDIA GPU)
+
+```powershell
+# In an ELEVATED PowerShell (right-click -> Run as administrator):
+.\scripts\install-windows.ps1
+```
+
+The script installs WSL2, writes a `.wslconfig` with mirrored networking, adds Hyper-V firewall rules for ONVIF auto-discovery, then prompts a reboot. After reboot, open the new Ubuntu terminal and run `bash scripts/install-linux.sh` from your cloned repo to finish.
+
+### macOS
+
+Not supported. The whole inference pipeline is CUDA-bound. Run Vision Labs on a Linux box or Windows + NVIDIA, then access the dashboard from your Mac via LAN.
+
 ## Requirements
 
-- **NVIDIA GPU(s)** with driver supporting CUDA 12.8 (R555+). Tested on RTX 5070 Ti (Blackwell sm_120) + RTX 3090 (Ampere sm_86)
-- **Docker Engine inside WSL2** (Ubuntu 24.04 recommended) — NOT Docker Desktop. See [MANUAL_SETUP.md](MANUAL_SETUP.md) for the install steps
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) configured for Docker
-- **RTSP-capable IP camera** (tested with Reolink RLC-1240A over PoE)
+- **NVIDIA GPU** with driver supporting CUDA 12.8 (R555+). 6 GB VRAM minimum (small tier); 12+ GB recommended for AI chat. Apple Silicon / Intel iGPU / AMD GPU are not supported in v1.
+- **Docker Engine** (NOT Docker Desktop). On Windows, runs inside WSL2 Ubuntu — the installer sets this up for you.
+- **RTSP-capable IP camera** (tested with Reolink RLC-1240A). The wizard auto-discovers ONVIF cameras on your subnet — works with Reolink, Hikvision, Dahua, Amcrest, Unifi G-series. DIY setups (Pi+mediamtx etc.) work too via manual URL entry.
 - **QNAP NAS** (optional — only needed for DVR + persistent NAS storage)
 
-### Setup (short version — see MANUAL_SETUP.md for the full walkthrough)
+### Manual setup (if you'd rather not run the installer)
+
+For users who want full visibility into every step, or to integrate Vision Labs into an existing stack with custom Docker / firewall / volume layout. See [MANUAL_SETUP.md](MANUAL_SETUP.md) for the full walkthrough.
 
 ```bash
 # 1. Move into WSL2 ext4 (not /mnt/c — bind mounts on 9p are dramatically slower)
