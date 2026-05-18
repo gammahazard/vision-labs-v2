@@ -14,6 +14,7 @@
 4. [Phase A — Remove the Generate tab (foundational)](#4-phase-a--remove-the-generate-tab-foundational)
 5. [Phase B — Hardware profiles + single-GPU support](#5-phase-b--hardware-profiles--single-gpu-support)
 6. [Phase C — Pre-built images on a registry](#6-phase-c--pre-built-images-on-a-registry)
+6a. [Phase C.2 — ONNX migration for detectors (optional)](#6a-phase-c2--onnx-migration-for-detectors-optional-post-c)
 7. [Phase D — First-run setup wizard](#7-phase-d--first-run-setup-wizard)
 7a. [Phase D.5 — Network camera discovery (ONVIF)](#7a-phase-d5--network-camera-discovery-onvif)
 8. [Phase E — Native installer](#8-phase-e--native-installer)
@@ -386,6 +387,43 @@ So Phase C as originally scoped just trades "build time" for "download time" wit
 
 ---
 
+## 6a. Phase C.2 — ONNX migration for detectors (optional, post-C)
+
+After Phase C lands the shared-base-image win, ONNX takes another bite at both image size **and** VRAM. **Safe-ish, opt-in, do not block v1 on it.**
+
+### What ONNX is
+
+ONNX (Open Neural Network Exchange) is a portable model file format. ONNX Runtime is the inference engine that runs those files — smaller, faster, inference-only (no training code), and already used by `face-recognizer` today (InsightFace ships ONNX models internally).
+
+### What it buys us
+
+| Metric | PyTorch (today) | ONNX Runtime | Win |
+|---|---|---|---|
+| Detector image size | ~3-5 GB | ~500 MB-1 GB | **~3 GB lighter per image** |
+| VRAM per detector process | ~900 MB | ~700 MB | ~200 MB |
+| Inference speed | baseline | typically 1.5-2× | Yes |
+
+On a 6 GB single-GPU user running 3 cameras, the ~600 MB VRAM savings (3 detectors × 200 MB) is the difference between "tight" and "comfortable."
+
+### What it costs
+
+- Two services to migrate: `pose-detector` and `vehicle-detector`. `face-recognizer` is already ONNX.
+- Conversion: `model.export(format='onnx')` via ultralytics — one-liner per model.
+- Code change: ~200 LOC across both detectors — swap the PyTorch inference call for `onnxruntime.InferenceSession.run()`.
+- **Numerical drift validation:** PyTorch and ONNX outputs can differ by ~1% in float operations. Need a side-by-side comparison run on a fixed test video to confirm detection quality holds. ~half-day of validation.
+
+### Risks
+
+- Detection-quality regression if drift is bigger than expected. Mitigated by side-by-side test before merge.
+- Two inference code paths during migration if we don't commit fully. Plan: convert in one PR, no toggle.
+- Some ultralytics post-processing (NMS, keypoint decoding) has to be reimplemented in NumPy or moved to onnxruntime's `onnxruntime-extensions`. Adds modest complexity.
+
+### Effort estimate
+
+**2-3 days** including validation. Skip if Phase C alone delivers a tolerable image-size story (~8 GB total pull).
+
+---
+
 ## 7. Phase D — First-run setup wizard
 
 Goal: zero-edit-of-files install. User runs `docker compose up -d`, hits `localhost:8080`, walks through a wizard, and the system is configured.
@@ -617,9 +655,10 @@ For shipping a v1 that someone else can actually install:
 1. **Phase A** (4-6h) — remove Generate tab + ComfyUI. Strict cleanup, low risk. Foundation for everything else.
 2. **Phase B** (1-2 days) — single-GPU default + tier env files + dashboard "chat disabled" message + dual-GPU overlay for the author's machine.
 3. **Phase C** (1-2 days) — registry images + shared base image dedup + dependency strip. Target ~8 GB total pull, not 25-40 GB.
-4. **Phase D** (2-3 days) — setup wizard with manual camera entry. Zero file editing.
-5. **Phase D.5** (~1 day, *gated on a multicast test*) — ONVIF network discovery, in both wizard and cameras tab.
-6. **Phase E** (only if there's demand) — Linux install script (3-5 days), Windows MSI (2-3 weeks). macOS not supported.
+4. **Phase C.2** (2-3 days, *optional*) — ONNX migration for pose + vehicle detectors. Smaller images, ~200 MB less VRAM per detector. Skip if Phase C alone is enough.
+5. **Phase D** (2-3 days) — setup wizard with manual camera entry. Zero file editing.
+6. **Phase D.5** (~1 day, *gated on a multicast test*) — ONVIF network discovery, in both wizard and cameras tab.
+7. **Phase E** (only if there's demand) — Linux install script (3-5 days), Windows MSI (2-3 weeks). macOS not supported.
 
 **Phases A + B + C + D = sharable v1.0** that any technical user can stand up in ~15 minutes. D.5 reduces the "I have to find my camera's RTSP URL" friction. Phase E makes it a true product for non-technical users.
 
@@ -637,3 +676,5 @@ For shipping a v1 that someone else can actually install:
 - **Network discovery is a Phase D.5 nice-to-have, not Phase D blocker** — wizard ships with manual entry working. Discovery is also wanted in the cameras tab post-setup, so reuse the component.
 - **Single-GPU contention is empirically untested** — when ollama is loaded on the same card as detectors, detection latency may spike. Test on a borrowed 12 GB single-GPU box before Phase B is "done."
 - **macOS will not be supported in v1** — communicate this honestly. Mac users access the dashboard from a Linux/Windows host via the LAN.
+- **Hardware requirements need to be honest in the README** — "Linux or Windows with an NVIDIA GPU, 6 GB VRAM minimum. Intel iGPU / AMD APU / Apple Silicon / no-GPU systems are not currently supported. Coral / OpenVINO support is not on the v1 roadmap."
+- **The "typical home" sweet spot is 1-3 cameras on 6-12 GB.** That's the demographic the wizard's recommendations should optimize for, not the author's 4-camera dual-GPU rig.
