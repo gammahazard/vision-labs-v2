@@ -409,9 +409,33 @@ What landed:
 
 ---
 
-## 6a. Phase C.2 — ONNX migration for detectors (optional, post-C)
+## 6a. Phase C.2 — ONNX migration for detectors (INVESTIGATED, NOT WORTH DOING)
 
-After Phase C lands the shared-base-image win, ONNX takes another bite at both image size **and** VRAM. **Safe-ish, opt-in, do not block v1 on it.**
+**Status:** Empirically benchmarked May 2026 — the claimed VRAM savings don't materialize on modern PyTorch + onnxruntime-gpu. **Not pursuing.**
+
+### What we tested
+
+Loaded YOLOv8s-pose into a fresh container on an idle GPU twice — once via PyTorch 2.11 (current setup), once via onnxruntime-gpu 1.22 (proposed setup). Measured GPU memory after warm-up via `nvidia-smi`:
+
+| Setup | Detector overhead on GPU |
+|---|---|
+| PyTorch + YOLOv8s-pose | 284 MiB |
+| ONNX Runtime + YOLOv8s-pose | 299 MiB |
+| **Delta** | **-15 MiB (ONNX slightly bigger)** |
+
+Why the original "~200 MiB savings" claim was wrong: the overhead breakdown for either framework is ~250-300 MiB CUDA context + ~50 MiB cuDNN cache + ~50 MiB model weights + small runtime. Both frameworks pay the same CUDA + cuDNN tax; the framework-specific bits are too small to matter on a Blackwell/Ampere setup.
+
+The image-size win is also smaller than originally pitched: Phase C's shared base image already dedupes the PyTorch layer across 3 detector services + slot copies, so the marginal save from ripping torch out would be ~1-2 GB total, not ~3 GB per image.
+
+### What it would cost
+
+- **~150-200 LOC** of manual YOLO output decoding (NMS, bbox, keypoint extraction) to replace ultralytics' `.boxes / .keypoints` API
+- **Numerical regression risk** — small confidence drift between PyTorch/ONNX exports, easy to miss without a careful side-by-side validation
+- **Ongoing maintenance cost** — every new ultralytics/YOLO version needs re-export + revalidation
+
+Net: zero VRAM benefit, ~1-2 GB image-size benefit, real regression risk. Skipping.
+
+### Earlier version of this section (kept for historical context)
 
 ### What ONNX is
 
