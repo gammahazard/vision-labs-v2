@@ -139,6 +139,10 @@ function _applyFilterToDom() {
         if (match) visible++;
     }
     if (eventCount) eventCount.textContent = `${visible} events`;
+    // Re-check the load-older button visibility — the button reveal is
+    // independent of the current filter, but bugs in past versions could
+    // leave it stuck hidden if _hasMore changed during filter navigation.
+    _showLoadOlderBtnIfReady();
 }
 
 function _wireEventSearch() {
@@ -358,8 +362,17 @@ function _bottomEventId() {
 function _showLoadOlderBtnIfReady() {
     if (!_loadMoreEnabled) return;
     const btn = document.getElementById("loadOlderBtn");
-    if (btn && _domEventCount() > 0 && _hasMore) {
-        btn.style.display = "";
+    if (!btn) return;
+    // Match against the COUNT of event-items in the DOM (regardless of
+    // filter-hidden state). The button reveal is independent of the
+    // current filter — older pages still pull all event types.
+    const haveEvents = _domEventCount() > 0;
+    if (haveEvents && _hasMore) {
+        // Use explicit "block" rather than "" so we don't inherit an
+        // unintended display value from the surrounding flex container.
+        btn.style.display = "block";
+    } else {
+        btn.style.display = "none";
     }
 }
 

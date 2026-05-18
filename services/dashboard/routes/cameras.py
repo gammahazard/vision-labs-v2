@@ -325,6 +325,15 @@ async def list_all():
     return {"cameras": registry.list_cameras()}
 
 
+# IMPORTANT: /next-slot must be registered BEFORE /{camera_id}. FastAPI's
+# route matcher walks declarations in order — a path parameter like
+# /{camera_id} happily matches "next-slot" as a camera id, returning 404.
+@router.get("/next-slot")
+async def next_slot():
+    """Return the next available pre-defined camera slot id, or null if full."""
+    return {"slot": registry.next_available_slot()}
+
+
 @router.get("/{camera_id}")
 async def get_one(camera_id: str):
     """Fetch a single camera by id."""
@@ -332,12 +341,6 @@ async def get_one(camera_id: str):
     if not entry:
         return JSONResponse({"error": "Not found"}, status_code=404)
     return entry
-
-
-@router.get("/next-slot")
-async def next_slot():
-    """Return the next available pre-defined camera slot id, or null if full."""
-    return {"slot": registry.next_available_slot()}
 
 
 @router.post("")
