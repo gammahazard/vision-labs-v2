@@ -102,14 +102,24 @@ for v in "${VOLUMES[@]}"; do
     MOUNT_FLAGS+=("-v" "${PROJECT_NAME}_${v}:/volumes/${v}:ro")
 done
 
+# Quiet Redis briefly: tell it to flush its AOF/RDB to a stable snapshot
+# before we start tarring. Without this, the backup races against Redis's
+# AOF-rotation cycle and tar can fail mid-stream on "file disappeared".
+# BGSAVE returns immediately; sleep gives the fork a moment to finish.
+if docker compose ps -q redis 2>/dev/null | grep -q .; then
+    docker exec "$(docker compose ps -q redis)" redis-cli BGSAVE >/dev/null 2>&1 || true
+    sleep 2
+fi
+
 # Run tar inside a throwaway alpine container. Mount the output directory
-# so the result lands on the host.
+# so the result lands on the host. --ignore-failed-read makes tar tolerate
+# the rare case where a file vanishes mid-archive (Redis or sqlite WAL).
 echo "==> Creating tarball (this is fast — volumes total a few hundred MB)..."
 docker run --rm \
     "${MOUNT_FLAGS[@]}" \
     -v "$OUTPUT_DIR:/backup" \
     alpine:3.20 \
-    sh -c "cd /volumes && tar czf /backup/${OUTPUT_FILE} ."
+    sh -c "cd /volumes && tar --ignore-failed-read -czf /backup/${OUTPUT_FILE} ."
 
 # Sanity-check the resulting file
 if [ ! -s "$ABS_OUTPUT" ]; then
