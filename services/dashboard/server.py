@@ -167,6 +167,7 @@ from routes.telegram_access import router as telegram_access_router
 from routes.metrics import router as metrics_router, start_metrics_collector
 from routes.recordings import router as recordings_router
 from routes.cameras import router as cameras_router
+from routes.setup import router as setup_router, is_setup_complete, auto_mark_complete_if_preexisting
 
 app.include_router(events_router)
 app.include_router(config_router)
@@ -182,6 +183,7 @@ app.include_router(telegram_access_router)
 app.include_router(metrics_router)
 app.include_router(recordings_router)
 app.include_router(cameras_router)
+app.include_router(setup_router)
 
 
 # ---------------------------------------------------------------------------
@@ -209,17 +211,45 @@ async def auth_middleware(request: Request, call_next):
     token = request.cookies.get("vl_session")
     username = validate_session(token)
 
-    if username:
-        return await call_next(request)
+    if not username:
+        # Not authenticated — redirect browser requests, 401 for API
+        if path.startswith("/api/") or path == "/ws":
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"error": "Not authenticated"}, status_code=401)
+        # 303 (See Other) forces browsers to GET the redirect target — safer
+        # than the default 307 which can confuse browsers if the original was POST/etc.
+        return RedirectResponse("/login.html", status_code=303)
 
-    # Not authenticated — redirect browser requests, 401 for API
-    if path.startswith("/api/") or path == "/ws":
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    # First-run wizard gate: authenticated but setup hasn't completed.
+    # The wizard endpoints + its static page must remain reachable; everything
+    # else (other dashboard pages) redirects to /setup.html so the user can't
+    # skip past it.
+    if not _setup_exempt(path) and not is_setup_complete():
+        # API calls from elsewhere get a 409 telling them setup is pending;
+        # browser requests redirect to the wizard.
+        if path.startswith("/api/") or path == "/ws":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                {"error": "Setup pending — complete /setup.html first"},
+                status_code=409,
+            )
+        return RedirectResponse("/setup.html", status_code=303)
 
-    # 303 (See Other) forces browsers to GET the redirect target — safer than
-    # the default 307 which can confuse browsers if the original was POST/etc.
-    return RedirectResponse("/login.html", status_code=303)
+    return await call_next(request)
+
+
+# Paths that bypass the setup-gate (so the wizard itself + its assets work).
+_SETUP_GATE_EXEMPT_EXACT = {"/setup.html", "/setup.js", "/setup.css"}
+_SETUP_GATE_EXEMPT_PREFIXES = ("/api/setup/", "/api/auth/", "/static/", "/api/cameras",
+                               "/api/cameras/test-rtsp")
+
+
+def _setup_exempt(path: str) -> bool:
+    """The wizard needs cameras + auth endpoints to work, so allow those even
+    while the setup-gate is active. Everything else is gated."""
+    if path in _SETUP_GATE_EXEMPT_EXACT:
+        return True
+    return any(path.startswith(p) for p in _SETUP_GATE_EXEMPT_PREFIXES)
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +321,13 @@ async def startup():
         location_lat=float(os.getenv("LOCATION_LAT", "0") or "0"),
         location_lon=float(os.getenv("LOCATION_LON", "0") or "0"),
     )
+
+    # First-run wizard gate: if we DIDN'T just create the camera registry
+    # (i.e. this is a pre-existing install with cameras already in Redis),
+    # mark setup as complete so existing users don't get force-marched
+    # through the wizard after upgrading. Fresh installs leave setup.json
+    # missing → the setup-gate middleware will redirect to /setup.html.
+    auto_mark_complete_if_preexisting()
 
     # Initialize AI assistant database
     from ai_db import AIDB

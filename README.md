@@ -109,11 +109,29 @@ docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
 
 # 6. Browse
-# Dashboard:   http://localhost:8080   (admin/admin on first run — you'll be forced to set a new password)
+# Dashboard:   http://localhost:8080   (admin/admin on first run — forced password change,
+#                                       then a setup wizard runs through GPU detect + first camera)
 # Portainer:   https://localhost:9443  (first visit creates admin user)
 # Grafana:     http://localhost:3000
 # Prometheus:  http://localhost:9090
 ```
+
+### First-run wizard
+
+The first time you open the dashboard on a fresh install, after the forced admin
+password rotation, you'll be redirected to `/setup.html`. The wizard walks through:
+
+1. **Hardware detection** — orchestrator spawns a one-shot `nvidia-smi` probe, shows your GPUs + recommends a hardware tier (small / mid / full) + estimates how many cameras your VRAM can support
+2. **Add first camera** — manual RTSP URL entry with a built-in `ffprobe` test button. Skip with one click to add cameras later from the Cameras tab.
+3. **Done** — drops you into the dashboard. State file at `/data/setup-state/setup.json` inside the dashboard's `auth-data` volume marks setup complete.
+
+**Pre-existing installs are not force-marched through this wizard** — on startup, if `cameras:registry` already has entries, the dashboard auto-writes the setup-state file with `steps=["preexisting-install"]` and the gate stays open. To re-run the wizard intentionally, delete the state file:
+```bash
+docker exec vision-labs-dashboard-1 rm /data/setup-state/setup.json
+docker compose restart dashboard
+```
+
+Network camera discovery (ONVIF) and Telegram-bot setup are not in the v1 wizard — set those in the Cameras tab and `.env` respectively. (Discovery is gated on Phase D.5 of the packaging plan; see `PACKAGING_PLAN.md`.)
 
 ### Build vs pre-built images
 

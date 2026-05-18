@@ -85,6 +85,14 @@ EVENTS_CHANNEL = "cameras:events"
 AUDIT_STREAM = "orchestrator:audit"
 AUDIT_MAXLEN = 500
 
+# Setup-wizard hardware probe (Phase D). Dashboard publishes a request,
+# we spawn a one-shot nvidia-smi container and stream the result back.
+PROBE_REQUEST_CHANNEL = "setup:probe-request"
+PROBE_RESULT_STREAM = "setup:probe-result"
+PROBE_RESULT_MAXLEN = 50  # tiny — probe payloads are small + only consumed once
+PROBE_IMAGE = os.getenv("HW_PROBE_IMAGE", "nvidia/cuda:12.4.0-base-ubuntu22.04")
+PROBE_TIMEOUT = int(os.getenv("HW_PROBE_TIMEOUT", "120"))  # incl. first-time image pull
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -302,6 +310,99 @@ def reconcile(r: redis.Redis) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Hardware probe — Phase D setup wizard support
+# ---------------------------------------------------------------------------
+def _run_hardware_probe() -> dict:
+    """Spawn a one-shot nvidia/cuda container and parse nvidia-smi output.
+
+    Returns a dict shaped like:
+        {"gpus": [{"index": 0, "name": "RTX 3060", "vram_mb": 12288}, ...]}
+    or
+        {"gpus": [], "error": "<message>"}
+
+    We use `docker run --rm --gpus all` so this works regardless of which
+    GPUs the orchestrator itself has access to. The probe image is small
+    (~200 MB) and pulled lazily on first wizard run.
+    """
+    cmd = [
+        "docker", "run", "--rm", "--gpus", "all",
+        PROBE_IMAGE,
+        "nvidia-smi",
+        "--query-gpu=index,name,memory.total",
+        "--format=csv,noheader,nounits",
+    ]
+    logger.info(f"Hardware probe: $ {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"gpus": [], "error": f"probe timed out after {PROBE_TIMEOUT}s"}
+    except FileNotFoundError:
+        return {"gpus": [], "error": "docker CLI not found in orchestrator container"}
+    except Exception as e:
+        return {"gpus": [], "error": f"probe spawn failed: {e}"}
+
+    if result.returncode != 0:
+        err = (result.stderr or "").strip().splitlines()
+        tail = err[-1] if err else f"non-zero exit ({result.returncode})"
+        return {"gpus": [], "error": tail[:300]}
+
+    gpus = []
+    for line in (result.stdout or "").strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            gpus.append({
+                "index": int(parts[0]),
+                "name": parts[1],
+                "vram_mb": int(parts[2]),
+            })
+        except (ValueError, IndexError):
+            continue
+
+    if not gpus:
+        return {"gpus": [], "error": "nvidia-smi returned no GPUs"}
+    return {"gpus": gpus}
+
+
+def probe_listen_loop(r: redis.Redis) -> None:
+    """Subscribe to setup:probe-request and run nvidia-smi on each message.
+
+    Result lands on the setup:probe-result stream so the dashboard's
+    waiting /api/setup/detect-hardware call can pick it up.
+    """
+    while True:
+        try:
+            pubsub = r.pubsub(ignore_subscribe_messages=True)
+            pubsub.subscribe(PROBE_REQUEST_CHANNEL)
+            logger.info(f"Subscribed to {PROBE_REQUEST_CHANNEL}")
+            for msg in pubsub.listen():
+                if msg.get("type") != "message":
+                    continue
+                try:
+                    req = json.loads(msg.get("data") or "{}")
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                request_id = req.get("request_id", "")
+                logger.info(f"Hardware probe request received (id={request_id})")
+                payload = _run_hardware_probe()
+                try:
+                    r.xadd(
+                        PROBE_RESULT_STREAM,
+                        {"request_id": request_id, "payload": json.dumps(payload)},
+                        maxlen=PROBE_RESULT_MAXLEN,
+                    )
+                    logger.info(f"Probe result published (id={request_id}, gpus={len(payload.get('gpus', []))})")
+                    _audit(r, "probe", "host", "error" not in payload,
+                           f"{len(payload.get('gpus', []))} GPU(s)" if "error" not in payload else payload["error"])
+                except redis.RedisError as e:
+                    logger.warning(f"Couldn't publish probe result: {e}")
+        except redis.RedisError as e:
+            logger.warning(f"Probe pubsub disconnected ({e}); reconnecting in 5s")
+            time.sleep(5)
+
+
+# ---------------------------------------------------------------------------
 # Event listener (pub/sub) — kicks reconcile immediately on dashboard CRUD
 # ---------------------------------------------------------------------------
 def listen_loop(r: redis.Redis) -> None:
@@ -355,6 +456,12 @@ def main() -> None:
     listener_r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     t = threading.Thread(target=listen_loop, args=(listener_r,), daemon=True)
     t.start()
+
+    # Hardware probe listener — separate thread + connection so the (slow)
+    # nvidia-smi spawn doesn't block camera-event handling.
+    probe_r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    probe_t = threading.Thread(target=probe_listen_loop, args=(probe_r,), daemon=True)
+    probe_t.start()
 
     # Safety-net reconcile loop
     while True:
