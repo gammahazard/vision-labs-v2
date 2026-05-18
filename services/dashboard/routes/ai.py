@@ -74,6 +74,8 @@ class ChatRequest(BaseModel):
 @router.get("/status")
 async def get_status():
     """Check if Ollama model is downloaded AND loaded into GPU memory."""
+    if not OLLAMA_MODEL:
+        return {"model_ready": False, "model": "", "status": "disabled"}
     try:
         client = ollama_lib.Client(host=OLLAMA_HOST)
         models = client.list()
@@ -141,6 +143,9 @@ async def chat(req: ChatRequest):
     Send a message to the AI and get a streamed response.
     Handles tool calls transparently — the user sees only the final answer.
     """
+    if not OLLAMA_MODEL:
+        return JSONResponse(status_code=503, content={"error": "AI chat is disabled on this hardware tier (CHAT_MODEL is empty). Set CHAT_MODEL in .env to enable."})
+
     if not ai_state._ai_db:
         return JSONResponse(status_code=503, content={"error": "AI DB not initialized"})
 

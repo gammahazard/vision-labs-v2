@@ -40,6 +40,13 @@ async def warm_ollama():
     host = OLLAMA_HOST
     model = CHAT_MODEL
 
+    if not model:
+        logger.info("CHAT_MODEL is empty — AI chat disabled on this hardware tier; skipping ollama warmup")
+        # Signal "ready" so /api/ai/status reports a stable state rather than
+        # an infinite "warming up" the UI would display.
+        set_gpu_ready_flag(True)
+        return
+
     await asyncio.sleep(10)  # Wait for other GPU services to finish CUDA init
 
     try:

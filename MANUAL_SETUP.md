@@ -153,6 +153,41 @@ This is the chunkiest manual piece. Plan ~30 minutes. Already complete on this m
 
 ---
 
+## 8a. Choose a hardware tier (optional)
+
+The defaults in `.env.example` are tuned for a **single 8-12 GB GPU** running 1-3 cameras with a 14B chat model. If your GPU is bigger, smaller, or you have two cards, append the matching preset to `.env`:
+
+| Preset | Target hardware | What changes |
+|---|---|---|
+| `tiers/small.env` | 6 GB single GPU (1660 Ti, 3050) | Nano YOLO models, AI chat disabled (saves 5-9 GB VRAM), vision LLM off, target_fps=5 |
+| `tiers/mid.env`   | 8-12 GB single GPU (3060, 4060) | 's' YOLO models, Qwen 3 **7B** chat (~5 GB), vision LLM off |
+| `tiers/full.env`  | 16+ GB single or dual-GPU | 's' YOLO, Qwen 3 **14B** chat, vision LLM on |
+
+```bash
+cat tiers/full.env >> .env
+# Then edit .env to fix any duplicate keys — last value wins per line, so
+# the appended block overrides earlier defaults.
+```
+
+### Per-GPU control (manual override)
+
+Two env vars decide which card each workload lands on. Both default to `0` (single-GPU). On this dual-GPU workstation, the .env sets `CHAT_GPU=1`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `DETECTOR_GPU` | `0` | Pose, vehicle, and face-recognizer all use this GPU |
+| `CHAT_GPU` | `0` | Ollama (chat + vision LLM) uses this GPU. Set to `1` to dedicate a second card |
+
+Indexes match `nvidia-smi -L` output thanks to `CUDA_DEVICE_ORDER=PCI_BUS_ID` (set automatically inside every GPU container). On WSL2, both `NVIDIA_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` are required to isolate a card — the compose file sets both for you.
+
+To swap a 2-GPU rig from "ollama on card 1" to "everything on card 0":
+```bash
+sed -i 's/^CHAT_GPU=1/CHAT_GPU=0/' .env
+docker compose up -d   # only ollama gets recreated, ~10s downtime
+```
+
+---
+
 ## 9. Diagnostics to paste back when each section is done
 
 Once you've finished sections 1–8, paste the output of each block to me and I'll move us into the code-side phases.

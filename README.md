@@ -87,22 +87,50 @@ git clone <repo> vision-labs && cd vision-labs
 cp .env.example .env
 # Edit .env with your camera IP, credentials, Telegram bot token, etc.
 
-# 3. Verify GPU passthrough into a container
+# 3. (Optional) Pick a hardware tier matching your GPU
+#    Defaults assume a single 8-12 GB GPU. If yours is smaller or bigger:
+cat tiers/small.env >> .env   # 6 GB GPU, no AI chat
+# OR
+cat tiers/full.env  >> .env   # 16+ GB GPU or dual-GPU rig
+# (tiers/mid.env is what the defaults in .env.example already give you)
+
+# 4. Verify GPU passthrough into a container
 docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
 # Should list all your GPUs
 
-# 4. Build and run
+# 5. Build and run
 docker compose build               # ~10-20 min on first build
 docker compose up                  # without NAS
 # OR
 docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
                                    # with NAS (enables the recorder service)
 
-# 5. Browse
+# 6. Browse
 # Dashboard:   http://localhost:8080   (admin/admin on first run — you'll be forced to set a new password)
 # Portainer:   https://localhost:9443  (first visit creates admin user)
 # Grafana:     http://localhost:3000
 # Prometheus:  http://localhost:9090
+```
+
+### Hardware tiers + GPU configuration
+
+Single-GPU is the default. Open `.env` and adjust **`DETECTOR_GPU`** and **`CHAT_GPU`** if you want to split workloads across two cards:
+
+| Variable | Default | What it controls |
+|---|---|---|
+| `DETECTOR_GPU` | `0` | Which GPU runs pose, vehicle, and face detection |
+| `CHAT_GPU` | `0` | Which GPU runs the chat LLM (ollama). Set to `1` for dual-GPU split |
+| `POSE_MODEL`, `VEHICLE_MODEL` | `yolov8s-*` | YOLO weight files; swap to `yolov8n-*` for small tier |
+| `CHAT_MODEL` | `qwen3:14b` | Ollama model name. Empty string disables AI chat entirely |
+| `VISION_MODEL` | `minicpm-v` | Vision LLM. Empty string disables the Vision tab |
+| `TARGET_FPS` | `10` | End-to-end frame rate. Drop to 5 on slow GPUs |
+
+GPU indexes match `nvidia-smi -L` order (we set `CUDA_DEVICE_ORDER=PCI_BUS_ID` inside every GPU service so what you see in `nvidia-smi` is what the containers see). On WSL2, both `NVIDIA_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` are required to isolate a card — the compose file sets both for you.
+
+Switching cards later is two edits + one command:
+```bash
+# Change CHAT_GPU=0 → CHAT_GPU=1 in .env (or vice versa)
+docker compose up -d   # only ollama gets recreated, detectors stay running
 ```
 
 ### Environment Variables

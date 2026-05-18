@@ -90,7 +90,9 @@ services:
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
-      - NVIDIA_VISIBLE_DEVICES=0  # 5070 Ti
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -99,7 +101,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']  # GPU 0 = 5070 Ti (16GB) — always-on detectors
+              device_ids: ['${DETECTOR_GPU:-0}']  # See .env (DETECTOR_GPU). Default 0 = first GPU
               capabilities: [ gpu ]
     depends_on:
       redis:
@@ -155,7 +157,9 @@ services:
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
       - API_PORT=8081
-      - NVIDIA_VISIBLE_DEVICES=0  # 5070 Ti
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - face-data:/data
@@ -165,7 +169,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']  # GPU 0 = 5070 Ti (16GB) — always-on detectors
+              device_ids: ['${DETECTOR_GPU:-0}']  # See .env (DETECTOR_GPU). Default 0 = first GPU
               capabilities: [ gpu ]
     depends_on:
       redis:
@@ -188,7 +192,9 @@ services:
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
       - FRAME_SKIP=1
-      - NVIDIA_VISIBLE_DEVICES=0  # 5070 Ti
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -197,7 +203,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']  # GPU 0 = 5070 Ti (16GB) — always-on detectors
+              device_ids: ['${DETECTOR_GPU:-0}']  # See .env (DETECTOR_GPU). Default 0 = first GPU
               capabilities: [ gpu ]
     depends_on:
       redis:
@@ -214,7 +220,9 @@ services:
     image: ollama/ollama:latest
     environment:
       - OLLAMA_KEEP_ALIVE=5m
-      - NVIDIA_VISIBLE_DEVICES=1  # 3090
+      - NVIDIA_VISIBLE_DEVICES=${CHAT_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${CHAT_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ollama-models:/root/.ollama
     deploy:
@@ -222,7 +230,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['1']  # GPU 1 = 3090 (24GB) — heavy on-demand workloads
+              device_ids: ['${CHAT_GPU:-0}']  # See .env (CHAT_GPU). Default 0 = same as detectors (single-GPU)
               capabilities: [ gpu ]
     restart: unless-stopped
     healthcheck:
@@ -280,6 +288,11 @@ services:
       - FACE_API_URL=http://face-recognizer:8081
       - AUTH_DB_PATH=/data/auth.db
       - OLLAMA_HOST=http://ollama:11434
+      # AI model configuration (see .env / tiers/*.env). Empty CHAT_MODEL
+      # disables the AI chat tab and skips the ollama warmup poller. Empty
+      # VISION_MODEL disables the vision LLM image-analysis features.
+      - OLLAMA_CHAT_MODEL=${CHAT_MODEL-qwen3:14b}
+      - OLLAMA_VISION_MODEL=${VISION_MODEL-minicpm-v}
       # Pass through camera RTSP URLs so the dashboard can seed the camera
       # registry with this deployment's primary camera on first startup.
       - RTSP_SUB=${RTSP_SUB:-}
@@ -458,7 +471,9 @@ services:
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -467,7 +482,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on:
       redis:
@@ -487,7 +502,9 @@ services:
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
       - FRAME_SKIP=1
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -496,7 +513,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on:
       redis:
@@ -516,7 +533,9 @@ services:
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
       - API_PORT=8081
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - face-data:/data
@@ -526,7 +545,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on:
       redis:
@@ -600,7 +619,9 @@ services:
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -609,7 +630,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -624,7 +645,9 @@ services:
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
       - FRAME_SKIP=1
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -633,7 +656,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -649,7 +672,9 @@ services:
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
       - API_PORT=8081
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - face-data:/data
@@ -659,7 +684,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -725,7 +750,9 @@ services:
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -734,7 +761,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -749,7 +776,9 @@ services:
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
       - FRAME_SKIP=1
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -758,7 +787,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -774,7 +803,9 @@ services:
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
       - API_PORT=8081
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - face-data:/data
@@ -784,7 +815,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -850,7 +881,9 @@ services:
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -859,7 +892,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -874,7 +907,9 @@ services:
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
       - FRAME_SKIP=1
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - yolo-models:/models
@@ -883,7 +918,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
@@ -899,7 +934,9 @@ services:
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
       - API_PORT=8081
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - face-data:/data
@@ -909,7 +946,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0']
+              device_ids: ['${DETECTOR_GPU:-0}']
               capabilities: [ gpu ]
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure

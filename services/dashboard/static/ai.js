@@ -134,6 +134,7 @@ async function checkOllamaStatus() {
         not_found: 'Model not found — downloading may be in progress...',
         loading: 'Loading Qwen 3 14B into GPU memory...',
         ready: 'Ready!',
+        disabled: 'AI chat is disabled on this hardware tier.',
     };
 
     const startTime = Date.now();
@@ -152,6 +153,17 @@ async function checkOllamaStatus() {
         loadHistory();
     };
 
+    const showDisabled = () => {
+        // Tier sets CHAT_MODEL="" — chat is intentionally off. Keep the overlay
+        // visible with a clear message, leave the input disabled.
+        if (statusEl) {
+            statusEl.textContent = 'AI chat is disabled on this hardware tier. Set CHAT_MODEL in your .env to enable it.';
+        }
+        if (input) input.placeholder = 'AI chat disabled';
+        if (sendBtn) sendBtn.disabled = true;
+        // Don't dismiss the overlay — leaving it visible is the signal.
+    };
+
     const poll = async () => {
         // Hard fallback — dismiss after 2 minutes regardless
         if (Date.now() - startTime > MAX_WAIT_MS) {
@@ -165,6 +177,10 @@ async function checkOllamaStatus() {
             const resp = await fetch('/api/ai/status');
             if (resp.ok) {
                 const data = await resp.json();
+                if (data.status === 'disabled') {
+                    showDisabled();
+                    return;  // no polling, no overlay dismissal
+                }
                 if (statusEl) statusEl.textContent = statusMessages[data.status] || data.status;
                 if (data.model_ready) {
                     if (statusEl) statusEl.textContent = 'Ready!';
