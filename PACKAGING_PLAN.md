@@ -15,7 +15,8 @@
 5. [Phase B — Hardware profiles + single-GPU support](#5-phase-b--hardware-profiles--single-gpu-support)
 6. [Phase C — Pre-built images on a registry](#6-phase-c--pre-built-images-on-a-registry)
 7. [Phase D — First-run setup wizard](#7-phase-d--first-run-setup-wizard)
-8. [Phase E — Native installer (deferred)](#8-phase-e--native-installer-deferred)
+7a. [Phase D.5 — Network camera discovery (ONVIF)](#7a-phase-d5--network-camera-discovery-onvif)
+8. [Phase E — Native installer](#8-phase-e--native-installer)
 9. [Open decisions](#9-open-decisions)
 
 ---
@@ -156,32 +157,56 @@ The Generate tab in `/ai.html` is the heaviest, least-relevant feature for a sec
 - 2 volumes (`comfyui-data`, `qnap-generations`)
 - ~127 MB of comfyui-data at rest
 
-### Removal steps (concrete file changes)
+### Removal steps (audit-corrected — every file that references ComfyUI / generation)
+
+This list was rebuilt by grepping `comfyui|COMFYUI|generation_active|generation_lock|schedule_image_generation|image_gen|GPU_PAUSE_KEY` across the repo. Misses from earlier drafts are flagged ⚠.
 
 1. **`docker-compose.yml`**
    - Delete the `comfyui:` service block entirely (~40 lines)
    - Delete `comfyui-data` and `qnap-generations` volumes
    - Remove `COMFYUI_HOST` env from dashboard
 
-2. **`services/dashboard/`**
+2. **`contracts/streams.py`** ⚠ *(was missed)*
+   - Delete `GPU_PAUSE_KEY` constant
+   - Delete `GPU_LOCK_KEY` if defined here too
+
+3. **`services/dashboard/`**
    - Delete `routes/image_gen.py`
    - Delete `static/generate.js`, `static/generate.css`
-   - From `static/ai.html`: remove the Generate tab button, the `#tabGenerate` panel, and references to `generate.js`/`generate.css`
-   - From `server.py`: stop including `image_gen.router`
+   - From `static/ai.html`: remove the `<link rel="stylesheet" href="generate.css">` (line 12), the `<button class="model-tab" data-tab="generate">` (line 109), the entire `<div class="generate-panel">` block (~lines 231-330+), and any `<script src="generate.js">` tag
+   - From `server.py`: stop including `image_gen.router`; remove `comfyui_cleanup` poller registration
    - From `routes/ai_tools.py`: remove `schedule_image_generation` and `cancel_image_generation` tool defs + executors
-   - From `pollers/comfyui_cleanup.py`: delete the file; remove its registration in `server.py`
-   - From `routes/ai.py`: drop any Generate-tab status endpoints
+   - From `pollers/comfyui_cleanup.py`: delete the file
+   - From `pollers/__init__.py`: remove the import line
+   - From `routes/ai.py`: drop any Generate-tab status endpoints (grep for `image_gen`, `generation_active`)
+   - From `routes/metrics.py:194,385` ⚠ *(was missed)*: remove the two `r.exists("gpu:generation_active")` calls — they expose the flag as a Prometheus metric
+   - From `constants.py` ⚠ *(was missed)*: remove `COMFYUI_HOST` and any image-gen settings
 
-3. **`services/comfyui/`** — delete the directory entirely
+4. **`services/comfyui/`** — delete the directory entirely
 
-4. **`models/comfyui/`** — delete (or leave on disk; not referenced after compose change)
+5. **`models/comfyui/`** — delete (or leave on disk; not referenced after compose change)
 
-5. **Detectors** — remove `gpu:generation_active` pause logic in `pose-detector/detector.py`, `vehicle-detector/detector.py`, `face-recognizer/recognizer.py`. Simplifies the loops.
+6. **Detectors** — remove `GPU_PAUSE_KEY` import and pause-loop block:
+   - `services/pose-detector/detector.py:50` (import), `306-314` (pause loop)
+   - `services/vehicle-detector/detector.py:50` (import), `221-229` (pause loop)
+   - `services/face-recognizer/recognizer.py:57` (import), `740` (pause check)
 
-6. **Docs**
-   - README: remove Image Generation section + the AI tools list cleanup
-   - ARCHITECTURE.md: remove ComfyUI service entry, image gen section, gpu lock flags from Redis schema
-   - PHASES.md: note Phase 7d "Generate tab removal" complete
+7. **Docs**
+   - `README.md`: remove Image Generation section + the AI tools list cleanup
+   - `ARCHITECTURE.md`: remove ComfyUI service entry, image gen section, gpu lock flags from Redis schema
+   - `MANUAL_SETUP.md` ⚠ *(was missed)*: remove ComfyUI setup steps
+   - `PHASES.md`: note Phase 7d "Generate tab removal" complete
+   - `REFACTOR_PLAN.md` ⚠ *(was missed)*: archive any ComfyUI-related decisions to a historical-context section
+
+### Safe removal order (so imports never break mid-edit)
+
+The order matters because `GPU_PAUSE_KEY` is imported from `contracts/streams.py` by three services. Wrong order → the dashboard or detectors fail to start in the middle of the refactor.
+
+1. First: remove `GPU_PAUSE_KEY` *usages* in detectors + dashboard (steps 3, 6 above), leave the constant defined.
+2. Verify: `docker compose up -d --build` — everything starts.
+3. Then: delete the constant from `contracts/streams.py` and the ComfyUI service block.
+4. Verify again.
+5. Last: docs + delete the comfyui/ directory + models/comfyui/.
 
 ### Test plan
 
@@ -234,19 +259,58 @@ Or: use compose `extends` with `docker-compose.tier-small.yml` overlays. Cleanes
 | `NVIDIA_VISIBLE_DEVICES` (ollama) | `0` (shared) | `0` (shared) | `1` |
 | `TARGET_FPS` | `5` | `10` | `15` |
 
-### Single-GPU support
+### Single-GPU support — actual capacity math
 
-Two paths:
+Earlier drafts hand-waved "as long as VRAM headroom exists." Doing the math reveals a more honest picture:
 
-1. **Reuse same GPU 0 for everything** — works as long as VRAM headroom exists. Detection inference is bursty; ollama eats steady VRAM when loaded. With 3 GB detectors + 5 GB ollama, you need 8+ GB and **no concurrent inference burst** (which we don't have today).
+**Per-camera detector cost (one camera spawned):**
 
-2. **Drop ollama entirely for small tier** — even simpler. AI chat just becomes unavailable. The dashboard already gracefully handles "ollama down" via the warmup poller's status messages.
+| Process | CUDA context | Model | Total per process |
+|---|---|---|---|
+| pose-detector | ~400 MB | YOLOv8s ~500 MB | **~900 MB** |
+| vehicle-detector | ~400 MB | YOLOv8s ~500 MB | **~900 MB** |
+| face-recognizer | ~400 MB | buffalo_l ~600 MB | **~1.0 GB** |
+| **Total per camera** | | | **~2.8 GB** |
 
-Recommendation: small tier = no ollama, no vision, no gen. Just detection + tracking + faces + DVR + notifications. That's still a complete security system.
+Small tier with nano models drops this to ~2.0 GB/camera.
+
+**Concurrent-load slot estimates (mid tier, Qwen 3 7B chat loaded ≈ 5 GB):**
+
+| GPU | Total VRAM | Headroom after chat | Realistic slots |
+|---|---|---|---|
+| 6 GB single (small tier, no chat) | 6 | 6 | **2 cameras** (nano models) |
+| 8 GB single | 8 | 3 | **1 camera** |
+| RTX 3060 / 4060 (12 GB) | 12 | 7 | **2 cameras** |
+| RTX 4060 Ti (16 GB) | 16 | 11 | **3 cameras** |
+| RTX 3090 / 4090 (24 GB) | 24 | 19 | **6-7 cameras** |
+| Dual-GPU (12+12) | 24 effective | chat on GPU 1 isolated | **4 cameras on detector GPU** |
+
+**Honest take:** mid tier on an 8 GB single GPU = **1 camera max if chat is loaded**. Earlier draft language ("8-12 GB single") undersold this. The wizard must surface estimated camera capacity, not just a tier label.
+
+### GPU contention on a single card
+
+When ollama generates a chat response on the same GPU as the detectors, ollama steals SMs and detection latency spikes. The author's dual-GPU rig has never seen this. **Untested risk on single-GPU systems — needs an empirical test before claiming "works on a 3060."** Mitigations if it turns out to be bad:
+
+- Tighten ollama keep-alive from 5 min → 30 s (faster eviction when idle)
+- Make detection `TARGET_FPS` tier-dependent (small tier = 3 fps to leave headroom)
+- Worst case: small tier drops ollama entirely, AI chat unavailable. Dashboard's warmup poller already handles "ollama down" gracefully.
+
+### Author's machine doesn't lose its dual-GPU setup
+
+After Phase B reshuffles the base file to GPU 0 everywhere, the author's local checkout needs to opt back into the dual-GPU layout. Two options:
+
+- Add to author's `.env`: `COMPOSE_FILE=docker-compose.yml:docker-compose.dual-gpu.yml`
+- Document this in `MANUAL_SETUP.md` (not just README) since that's the doc actively used on this machine
+
+Without this, the next `docker compose up -d` after Phase B will dump everything on the 5070 Ti and OOM ollama.
+
+### What changes per tier (confirmed)
+
+Recommendation locked: **small tier drops ollama entirely** (open decision #3, recommended option). Reduces small-tier VRAM floor from ~6 GB to ~4 GB. The dashboard already handles "AI chat unavailable" via the warmup poller — needs a one-line addition to show "Disabled on this hardware tier" instead of "Warming up forever."
 
 ### Effort estimate
 
-**1-2 days.** Mostly compose-overlay scaffolding + env-var threading + docs.
+**1-2 days.** Compose-overlay scaffolding + env-var threading + dashboard tier-aware "chat disabled" message + docs.
 
 ---
 
@@ -298,11 +362,27 @@ docker compose up -d  # pulls instead of builds → 2-3 min instead of 30
 ### Tradeoffs
 
 - Pros: dramatic UX improvement on first install; updates become `pull`
-- Cons: need GitHub Actions or other CI to publish; need to commit to a versioning scheme; image sizes (pose/vehicle/face are each ~3-5 GB due to CUDA + onnxruntime)
+- Cons: need GitHub Actions or other CI to publish; need to commit to a versioning scheme; image sizes are bigger than they should be
+
+### Image-size honesty check
+
+Earlier draft promised "30 min → 3 min." That's wrong without further work:
+
+- pose-detector + vehicle-detector + face-recognizer each ship CUDA + PyTorch + ultralytics ≈ **3-5 GB each**
+- 7-8 services total → **25-40 GB of pulls on a fresh install**
+- At typical home bandwidth (100 Mbps) that's **35-55 minutes**, not 3
+
+So Phase C as originally scoped just trades "build time" for "download time" with little net win. To actually deliver fast first-install, Phase C must include:
+
+1. **Shared base image** (`vision-labs-base:cuda12.4-pytorch2.4`) used by all detector services. Docker dedups shared layers, so pulling 4 services that share a 3 GB base = 1 download of the base + 4 small deltas instead of 4 × 3 GB.
+2. **Strip dev dependencies**: kill ultralytics' training/export extras, remove CPU-only torch wheels, drop pip caches in final layer.
+3. **Consider onnxruntime-gpu instead of torch** for the two YOLO detectors. Inference-only, ~10× smaller image. Bigger lift — needs model conversion to ONNX. Defer to a Phase C.2 if Phase C alone doesn't hit a tolerable size.
+
+**Realistic target after image work: ~8 GB total pull, ~10-15 min on 100 Mbps.** Still not 3 min, but no longer "go make dinner."
 
 ### Effort estimate
 
-**1 day** to set up the workflow + push the first images. Then auto-publishes on every tag.
+**1 day** to set up the workflow + push the first images. **+1 day** for base-image dedup + dependency strip. ONNX migration (Phase C.2) is another 2-3 days if we go there.
 
 ---
 
@@ -314,7 +394,16 @@ Goal: zero-edit-of-files install. User runs `docker compose up -d`, hits `localh
 
 1. **Welcome** — explains what's about to happen.
 
-2. **Hardware auto-detection** — run `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader` inside a container we already trust (the orchestrator has it). Output drives the **recommended AI model** since that's the single biggest VRAM variable. Everything else (detection, faces, DVR, tracking) is designed to run on ≤2 GB VRAM regardless, so the AI model is the only "tier" decision a user really needs to think about.
+2. **Hardware auto-detection** — earlier draft said "run nvidia-smi inside the orchestrator." That doesn't work: the orchestrator image is `docker:24-cli` (Alpine) with no `nvidia-smi` and no NVIDIA runtime.
+
+   **Corrected approach:** the wizard backend asks the orchestrator (which has the Docker socket) to spawn a one-shot probe container:
+   ```
+   docker run --rm --gpus all nvidia/cuda:12.4-base-ubuntu22.04 \
+     nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
+   ```
+   Output is parsed into a list of GPUs. Adds a one-time ~200 MB pull on first wizard run. If the command fails (no NVIDIA, no GPU, driver issue), the wizard falls back to "We couldn't detect a GPU — pick a config manually" with a clear explanation.
+
+   Output drives the **recommended AI model** since that's the single biggest VRAM variable. Everything else (detection, faces, DVR, tracking) runs on ≤2 GB VRAM regardless.
 
    | Detected VRAM | Recommended chat LLM | Vision LLM | Notes shown to user |
    |---|---|---|---|
@@ -325,6 +414,8 @@ Goal: zero-edit-of-files install. User runs `docker compose up -d`, hits `localh
    | 16+ GB or dual-GPU | **Qwen 3 14B** | MiniCPM-V | "Recommended config" |
 
    User can override (dropdown) but the default should be the safe pick for their card.
+
+   **Also show estimated camera capacity** based on the formula `floor((VRAM_GB - chat_VRAM - 1_GB_buffer) / 2.8)`. So a 12 GB / 7B-chat user sees "Estimated camera capacity: 2-3 cameras (more if you skip vehicle detection on indoor cams)." This is more honest than a tier label and helps users plan.
 
 3. **Add your first camera** (optional — "I'll do this later" skips to step 5)
    - **RTSP URL** input, with **Test Connection** button (uses existing `/api/cameras/test-rtsp`)
@@ -350,25 +441,125 @@ Goal: zero-edit-of-files install. User runs `docker compose up -d`, hits `localh
 
 ### How the dashboard knows it's first-run
 
-Check at startup: if `auth.db` has no admin user with a non-default password AND `cameras:registry` is empty AND `.env` is missing key values → redirect all routes to `/setup.html` until done.
+Earlier draft proposed a three-signal check (auth.db + registry + .env). That's fragile — wiping data to debug retriggers the wizard. **Corrected approach:** one explicit signal.
+
+- A small JSON file at `/data/setup.json` (in a dedicated `setup-state` named volume) with `{"completed_at": "<iso8601>", "version": 1}`.
+- Wizard writes this on its final step.
+- Dashboard startup checks for this file's existence. If missing → redirect all routes to `/setup.html` (except the wizard's own routes).
+- To re-run the wizard intentionally, the user deletes the file (`docker volume rm vision-labs_setup-state`). Documented.
+
+### Camera-tab parity (post-Phase-D)
+
+Once the wizard's network-scan flow exists (see Phase D.5), the same scan-and-add UI should also be available on the **Cameras tab** for adding cameras after initial setup. Same backend endpoint, same UI component reused. Plan accordingly when building Phase D.5 — don't hard-code it as a wizard-only flow.
 
 ### Effort estimate
 
-**2-3 days.** New `setup.html` + `setup.js`, 4-5 new routes, a "setup gate" middleware, .env writer.
+**2-3 days.** New `setup.html` + `setup.js`, 4-5 new routes, a "setup gate" middleware, .env writer, orchestrator hook for GPU probe.
 
 ---
 
-## 8. Phase E — Native installer (deferred)
+## 7a. Phase D.5 — Network camera discovery (ONVIF)
 
-Not blocking any earlier phase. Worth doing only if the project gets traction outside the author.
+**Goal:** in the wizard *and* the cameras tab, let the user click "Scan my network" instead of pasting an RTSP URL. We find ONVIF-compatible cameras on the LAN, the user picks one, enters credentials, we resolve the working RTSP URL and add it.
 
-Approaches:
+### Why it's its own phase, not part of Phase D
 
-- **Windows MSI** that bundles WSL2 install, Docker Engine, NVIDIA Container Toolkit, our compose file. Probably 2-3 weeks of installer work.
-- **Mac**: just Docker Desktop instructions in the README (Mac users have no NVIDIA so it's CPU-only anyway, which our small tier doesn't currently support)
-- **Linux**: shell script wrapping `apt install docker.io nvidia-container-toolkit && docker compose up -d`
+Two reasons:
 
-Realistic deferral: do this only if more than a handful of non-author users want it.
+1. **WSL2 multicast is untested.** ONVIF WS-Discovery uses UDP multicast (`239.255.255.250:3702`). Default Docker bridge networking drops it. `network_mode: host` works on bare Linux, and *theoretically* works on WSL2 mirrored mode (which we already require for phone access on the LAN). Theory isn't enough — we need an empirical test before promising this works.
+2. **Manual entry must ship first.** The wizard cannot block on discovery. If we tie them together and discovery proves flaky, the wizard ships late.
+
+### How discovery works
+
+UDP multicast probe to `239.255.255.250:3702`. ONVIF-compliant cameras reply with their device-service URL. We then make authenticated SOAP calls (`GetDeviceInformation`, `GetStreamUri`) to retrieve manufacturer/model and the actual RTSP URL for each stream profile.
+
+### Architecture
+
+- **New service `services/discovery/`** — tiny Python service, ~150 LOC, using `wsdiscovery` + `onvif-zeep`. Not a long-running daemon — spawned on demand.
+- **Endpoint `POST /api/discovery/scan`** in dashboard. Calls into orchestrator (which has Docker socket) to run a one-shot:
+  ```
+  docker run --rm --network host visionlabs/discovery scan --timeout 8
+  ```
+  Returns JSON: `[{ip, manufacturer, model, device_url}]`.
+- **Endpoint `POST /api/discovery/get-stream-uri`** — given `{device_url, username, password}`, runs the ONVIF SOAP call and returns `{rtsp_uri, profile_name, resolution}`.
+- **Wizard flow:**
+  1. User clicks "Scan my network."
+  2. ~8s scan; show found cameras as cards.
+  3. User clicks a card; prompted for username/password (with brand-specific hints).
+  4. `GetStreamUri` runs; if it succeeds, RTSP URL prefills the existing camera form; user clicks Add.
+  5. If anything fails, fall through to manual entry. **Discovery is a shortcut, never a gate.**
+- **Cameras tab reuse:** the same Scan button appears at the top of the cameras list, opening the same flow inline.
+
+### What this won't find
+
+- Reolink cameras with ONVIF disabled in firmware (user has to enable it in the Reolink app first)
+- Hikvision OEMs that strip ONVIF for licensing
+- Cameras behind a router/mesh that blocks LAN multicast
+- Pi + mediamtx setups (custom RTSP, no ONVIF) — these stay manual-entry
+
+### Empirical test gate
+
+Before committing development time:
+
+1. From a Linux container with `network_mode: host` on this WSL2 host, run `wsdiscovery` against the LAN.
+2. If we see the basement-Pi or any of the ringed phones/Reolinks: green light, build it.
+3. If we see nothing: drop the feature, document "auto-discovery not supported on WSL2 today; use manual entry."
+
+### Effort estimate
+
+**~1 day** if the multicast test passes. ~0 days if it fails (cut the feature).
+
+---
+
+## 8. Phase E — Native installer
+
+The earlier draft was vague ("deferred, do if traction"). Concrete reality, per-OS:
+
+### Linux — viable, smallish
+
+A shell script (or `.deb` / `.rpm`) that:
+
+1. Installs `docker.io`, `docker-compose-plugin`, `nvidia-container-toolkit` (the toolkit is the main NVIDIA-driver gotcha).
+2. Drops a `systemd` unit that runs `docker compose up -d` on boot.
+3. Pre-pulls the Phase C base images.
+4. Opens `http://localhost:8080` in the user's browser at the end.
+
+**Effort:** 3-5 days of polish + testing on Ubuntu 22.04 / 24.04, Debian 12, Fedora 40.
+
+### Windows — viable but multi-prompt
+
+There is **no truly one-click path on Windows** because:
+
+- WSL2 install needs admin elevation + Microsoft Store
+- A reboot is required after WSL install
+- Docker Engine + NVIDIA Container Toolkit install inside WSL2 needs `sudo` inside the WSL VM
+- NVIDIA drivers on Windows must be the WSL-CUDA-enabled version (most modern Game Ready drivers are, but it's a check)
+
+A realistic MSI/exe (Inno Setup or WiX):
+
+1. Checks for an NVIDIA GPU + recent driver. Warns and exits if missing.
+2. Installs WSL2 (`wsl --install` does this). One reboot.
+3. After reboot: installs Ubuntu 22.04 WSL distro, drops a setup script in `/opt/vision-labs/`, runs it to install Docker + NVIDIA toolkit + pull images.
+4. Adds a Start Menu shortcut: "Vision Labs" → opens browser to `http://localhost:8080`.
+5. Auto-start: a Windows service that runs `wsl -d Ubuntu -- docker compose -f /opt/vision-labs/docker-compose.yml up -d` at boot.
+
+**Effort:** 2-3 weeks of installer engineering, including testing on Win10 + Win11. Updates also non-trivial (replacing running containers, preserving data volumes).
+
+### macOS — explicitly not supported
+
+The whole inference pipeline is CUDA-bound. Apple Silicon has no CUDA. MPS-backed YOLO + InsightFace exists but inference is 5-20× slower — unusable for live multi-camera. CPU-only is 10-50× slower.
+
+Reasonable v1 stance: "macOS is not a supported platform. Run Vision Labs on a Linux box or a Windows machine with an NVIDIA GPU and access the dashboard from your Mac via the LAN."
+
+If we ever want to *change* this, the path is rewriting the detector pipeline on `coreml` / `onnxruntime` with Metal — that's a multi-month project, not part of v1 packaging.
+
+### Suggested order if/when we do this
+
+1. **Linux script first** (3-5 days). Easiest payoff, covers most likely production users.
+2. **Windows MSI** (2-3 weeks) — only if there's clear demand outside the author.
+3. **macOS** — never, until/unless we rework inference for Metal.
+
+Don't block v1 ship on any of this. Pre-built images (Phase C) + setup wizard (Phase D) get the install down to "clone the repo + `docker compose up -d` + open browser" which is already a fine v1 story for technical users.
 
 ---
 
@@ -419,17 +610,20 @@ These don't block starting work, but writing them down so we can decide later:
 
 ---
 
-## Suggested execution order
+## Suggested execution order (audit-corrected)
 
 For shipping a v1 that someone else can actually install:
 
-1. **Phase A first** (4-6h) — removes a service, removes a tab, removes ~2000 LOC. Strict cleanup, low risk. Foundation for everything else.
-2. **Phase B** (1-2 days) — hardware profiles. Now anyone with a 6-12 GB GPU can run it.
-3. **Phase C** (1 day) — registry images. First-install drops from 30 min to 3 min.
-4. **Phase D** (2-3 days) — setup wizard. Zero file editing.
-5. **Phase E** (only if needed) — native installer.
+1. **Phase A** (4-6h) — remove Generate tab + ComfyUI. Strict cleanup, low risk. Foundation for everything else.
+2. **Phase B** (1-2 days) — single-GPU default + tier env files + dashboard "chat disabled" message + dual-GPU overlay for the author's machine.
+3. **Phase C** (1-2 days) — registry images + shared base image dedup + dependency strip. Target ~8 GB total pull, not 25-40 GB.
+4. **Phase D** (2-3 days) — setup wizard with manual camera entry. Zero file editing.
+5. **Phase D.5** (~1 day, *gated on a multicast test*) — ONVIF network discovery, in both wizard and cameras tab.
+6. **Phase E** (only if there's demand) — Linux install script (3-5 days), Windows MSI (2-3 weeks). macOS not supported.
 
-**Phases A + B + C = a sharable v1.0** that any technical user can stand up in ~10 minutes. Phase D makes it accessible to less technical users. Total effort to v1.0: roughly one focused week.
+**Phases A + B + C + D = sharable v1.0** that any technical user can stand up in ~15 minutes. D.5 reduces the "I have to find my camera's RTSP URL" friction. Phase E makes it a true product for non-technical users.
+
+**Total effort to v1.0:** roughly **1.5 focused weeks** of development (was undersold as "one week" in earlier draft — Phase C image-size work and the dashboard-chat-disabled message add ~1-2 days each).
 
 ---
 
@@ -438,5 +632,8 @@ For shipping a v1 that someone else can actually install:
 - **Telegram bot is optional in every tier** — already gates on `TELEGRAM_BOT_TOKEN` being set
 - **QNAP is already optional** via the overlay file pattern — keep that working
 - **Multi-camera Phase 7b is done** — the auto-spawning orchestrator is the foundation of the user-friendly "Add camera" UX
-- **Don't break the dual-GPU power-user path** — full tier should keep working exactly as today
-- **Don't promise CPU-only support yet** — InsightFace + YOLO on CPU is 10-100× slower; would need a separate "CPU tier" only useful for stuck-without-GPU testing
+- **Don't break the dual-GPU power-user path** — full tier should keep working exactly as today. After Phase B, this machine needs `COMPOSE_FILE=docker-compose.yml:docker-compose.dual-gpu.yml` in its `.env`.
+- **Don't promise CPU-only support yet** — InsightFace + YOLO on CPU is 10-100× slower; would need a separate "CPU tier" only useful for stuck-without-GPU testing.
+- **Network discovery is a Phase D.5 nice-to-have, not Phase D blocker** — wizard ships with manual entry working. Discovery is also wanted in the cameras tab post-setup, so reuse the component.
+- **Single-GPU contention is empirically untested** — when ollama is loaded on the same card as detectors, detection latency may spike. Test on a borrowed 12 GB single-GPU box before Phase B is "done."
+- **macOS will not be supported in v1** — communicate this honestly. Mac users access the dashboard from a Linux/Windows host via the LAN.
