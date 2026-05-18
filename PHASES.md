@@ -93,11 +93,10 @@ If RTSP works on host but not in container:
   - [ ] `services/pose-detector/Dockerfile`
   - [ ] `services/vehicle-detector/Dockerfile`
   - [ ] `services/face-recognizer/Dockerfile`
-  - [ ] `services/comfyui/Dockerfile`
 - [ ] Update Python wheel sources where pinned to a specific CUDA build (PyTorch cu121 → cu128, onnxruntime-gpu 1.18.1 → latest cu128-compatible).
 - [ ] Keep `numpy<2` in `face-recognizer/requirements.txt` — InsightFace/onnxruntime is compiled against NumPy 1.x ABI.
 - [ ] Pin GPUs explicitly in `docker-compose.yml` using `device_ids` instead of `count: 1`. Suggested split:
-  - **GPU 0 (3090, 24 GB)** → `ollama`, `comfyui` (heavy on-demand workloads benefit from headroom)
+  - **GPU 0 (3090, 24 GB)** → `ollama` (chat + vision; benefits from headroom)
   - **GPU 1 (5070 Ti, ~16 GB)** → `pose-detector`, `vehicle-detector`, `face-recognizer` (always-on, total <4 GB)
 - [ ] Verify `device_ids` order matches `nvidia-smi -L` output (Docker uses PCI bus order; NVML can reorder).
 - [ ] **Exit criterion:** each GPU service's logs show "CUDA available" and the expected GPU model (3090 vs 5070 Ti per the split); `nvidia-smi` shows the right processes on the right cards.
@@ -140,8 +139,8 @@ These four were applied during the WSL/Windows migration since they prevent disk
 - [x] **Telegram polling offset not persisted** — Fixed in `routes/bot_commands.py`. Now reads `telegram:last_offset` from Redis at poller startup and `SET`s after every processed update. Verified by setting key, restarting, observing `Telegram offset restored from Redis: <value>` log.
 - [ ] **Schema drift in pose detector** (`services/pose-detector/detector.py:~315`). Reads `data[b"frame"]` only — will KeyError if a frame ever lands without that field. Vehicle and tracker already do `data.get(b"frame") or data.get(b"frame_bytes")`. Match the defensive pattern for symmetry. (low priority — has not manifested in practice)
 - [ ] **Vehicle stationarity reference center never resets** (`tracker.py:215-228`). `is_stationary` measures displacement from `center_history[0]` which is set on first detection and never updated. A parked car briefly nudged 31 px is "non-stationary forever." Either rolling-window the reference, or reset after `vehicle_idle` fires once.
-- [ ] **GPU pause race condition** (`routes/image_gen.py:855` vs detectors). Dashboard unloads Ollama models *before* setting the GPU pause flag — detectors can have inference mid-flight when ComfyUI loads weights, causing OOM or 11+ min cold loads. Add a heartbeat: detectors set `detector:{name}:paused` Redis key when they yield; image_gen waits for those before unlocking GPU.
-- [x] **face-recognizer doesn't honor `gpu:generation_active`** — Fixed in `recognizer.py`. Added the same pause check pattern pose-detector + vehicle-detector use, logging `GPU generation active — pausing face recognition...` and `resuming` once per transition. Verified: `SET gpu:generation_active 1 EX 5` triggered pause+resume logs cleanly.
+- [x] ~~**GPU pause race condition**~~ — moot after Phase 8.A (ComfyUI removed). No more generation-vs-detector GPU contention.
+- [x] **face-recognizer doesn't honor `gpu:generation_active`** — Was fixed in `recognizer.py`. Hook itself removed in Phase 8.A.
 - [ ] **Dead-zone normalized-coords mismatch** when HD frame is shown (`server.py:~95`). Decide once whether dead-zone test runs against sub-stream coords, then enforce that both code paths agree.
 
 ### Tier 3 — Hardcoded values that should be config
@@ -189,15 +188,17 @@ These four were applied during the WSL/Windows migration since they prevent disk
 
 ---
 
-## Phase 8 — Packaging for distribution (in planning)
+## Phase 8 — Packaging for distribution (in progress)
 
 See [PACKAGING_PLAN.md](PACKAGING_PLAN.md) for the full plan. Summary:
 
-- **Phase A**: Remove the Generate tab + ComfyUI service (foundational cleanup, ~4-6h)
-- **Phase B**: Hardware profiles (`small` / `mid` / `full`) + single-GPU support
-- **Phase C**: Pre-built images pushed to GHCR — drops first-install from 30min → 3min
+- [x] **Phase A**: Remove the Generate tab + ComfyUI service. Service block dropped from compose, `routes/image_gen.py` + `static/generate.{js,css}` + `pollers/comfyui_cleanup.py` + the GPU-pause hooks in all three detectors + the `gpu:generation_active` metric all removed. `models/comfyui/` left on disk (80 GB of user-downloaded checkpoints) — user can delete it manually if/when desired.
+- **Phase B**: Hardware profiles (`small` / `mid` / `full`) + single-GPU default
+- **Phase C**: Pre-built images pushed to GHCR + shared base image + dependency strip — drops first-install pull from ~25-40 GB → ~8 GB
+- **Phase C.2** *(optional)*: ONNX migration for pose + vehicle detectors — ~3 GB lighter per image, ~200 MB less VRAM per detector
 - **Phase D**: First-run setup wizard — GPU auto-detect, per-camera detector flags from a "is this indoor or outdoor?" question
-- **Phase E**: Native installer (deferred until we have multiple non-author users)
+- **Phase D.5** *(gated on a WSL2 multicast test)*: ONVIF network camera discovery, in both wizard and cameras tab
+- **Phase E**: Native installer — Linux script (3-5d), Windows MSI (2-3wk). macOS not supported.
 
 Detection / faces / DVR / tracking are designed to run on ≤2 GB VRAM. The only component that materially varies with hardware is the AI chat LLM (Qwen 3B / 7B / 14B).
 

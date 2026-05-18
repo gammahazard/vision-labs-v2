@@ -44,7 +44,6 @@ import routes.ai_state as ai_state
 from routes.ai_state import set_ai_db, set_gpu_ready_flag
 from routes.ai_tools import TOOLS, execute_tool
 from routes.ai_prompts import build_system_context, build_system_prompt
-from routes.image_gen import set_vram_mode
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 logger = logging.getLogger("dashboard.ai")
@@ -253,9 +252,6 @@ async def chat(req: ChatRequest):
 
         # Save assistant response server-side
         ai_state._ai_db.save_message("assistant", reply)
-
-        # Model is now loaded in VRAM — sync state so UI reflects reality
-        set_vram_mode("chat")
 
         return {"reply": reply}
 

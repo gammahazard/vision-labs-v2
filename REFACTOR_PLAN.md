@@ -3,6 +3,8 @@
 > **Goal:** Make the codebase modular enough to debug easily and add cameras (and eventually a HomeKit/TV dashboard) without rewriting everything. Zero behavior change — pure structural moves.
 >
 > **Rule:** Every step is a pure mechanical move that doesn't change runtime behavior. After every step we rebuild + restart + confirm dashboard still serves frames. If a step is hard to make behavior-preserving, we stop and ask before continuing.
+>
+> **Historical note (post Phase 8.A):** This doc references ComfyUI / `image_gen.py` / `gpu:generation_active` / `comfyui_cleanup.py` throughout because it documents the dashboard split as it existed when that service was alive. ComfyUI and the entire image-generation surface were removed in Phase 8.A of the packaging work (see PACKAGING_PLAN.md and PHASES.md Phase 8). The structural reasoning here is still valid; just mentally elide the ComfyUI line items.
 
 ---
 

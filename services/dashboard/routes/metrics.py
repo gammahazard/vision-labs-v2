@@ -97,12 +97,6 @@ vl_stream_length = Gauge(
     ["camera", "stream"],
 )
 
-# GPU — global flag, no camera label
-vl_gpu_pause_active = Gauge(
-    "vl_gpu_pause_active",
-    "Whether GPU generation is active (1=paused, 0=running)",
-)
-
 # Notifications (per camera) — labeled by camera AND event type so a Grafana
 # panel can chart "vehicle alerts per minute per camera".
 vl_notifications_total = Counter(
@@ -190,9 +184,6 @@ async def monitoring_health():
         except Exception:
             pass
 
-        # GPU pause status
-        gpu_paused = bool(r.exists("gpu:generation_active"))
-
         # Redis memory
         redis_mem_mb = 0
         try:
@@ -211,7 +202,6 @@ async def monitoring_health():
         return {
             "active_persons": active,
             "inference_ms": round(inference, 1),
-            "gpu_paused": gpu_paused,
             "redis_memory_mb": redis_mem_mb,
             "total_events": events_len,
         }
@@ -379,13 +369,6 @@ async def start_metrics_collector():
                         _last_event_id_by_cam[cam_id] = eid
                 except Exception:
                     pass
-
-            # ------ GPU pause (global, no camera label) ------
-            try:
-                paused = r.exists("gpu:generation_active")
-                vl_gpu_pause_active.set(1 if paused else 0)
-            except Exception:
-                pass
 
         except Exception as e:
             logger.error(f"Metrics collector error: {e}")

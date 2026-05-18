@@ -54,7 +54,6 @@ from streams import (
     EVENT_STREAM as _EVT_TMPL,
     IDENTITY_STREAM as _ID_TMPL,
     IDENTITY_KEY as _IDKEY_TMPL,
-    GPU_PAUSE_KEY,
     stream_key,
 )
 
@@ -728,27 +727,7 @@ def run():
     faces_matched = 0
     last_log_time = time.time()
 
-    # Pause-state log latch (so we only log once per pause/resume transition)
-    _pause_log_state = {"paused": False}
-
     while not _shutdown:
-        # --- GPU pause: skip inference while image/video generation is active ---
-        # Mirrors the pattern in pose-detector + vehicle-detector so InsightFace
-        # releases VRAM to ComfyUI/Ollama during generation rather than fighting
-        # for it. Without this, generation can OOM or take 10x as long.
-        try:
-            if r.exists(GPU_PAUSE_KEY):
-                if not _pause_log_state["paused"]:
-                    logger.info("GPU generation active — pausing face recognition...")
-                    _pause_log_state["paused"] = True
-                time.sleep(2)
-                continue
-            elif _pause_log_state["paused"]:
-                logger.info("GPU generation finished — resuming face recognition")
-                _pause_log_state["paused"] = False
-        except redis.ConnectionError:
-            pass
-
         try:
             messages = r.xreadgroup(
                 CONSUMER_GROUP,

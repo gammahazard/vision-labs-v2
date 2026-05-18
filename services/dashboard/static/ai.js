@@ -487,64 +487,22 @@ async function resetAssistant() {
 // Model Tab Switching
 // ---------------------------------------------------------------------------
 function switchModelTab(tabName) {
-    // Block Chat/Vision tabs if VRAM is in generate mode
-    if ((tabName === 'chat' || tabName === 'vision') && window._vramMode === 'generate') {
-        // Show a brief warning
-        const existing = document.querySelector('.vram-tab-toast');
-        if (existing) existing.remove();
-        const toast = document.createElement('div');
-        toast.className = 'vram-tab-toast';
-        toast.textContent = '⚡ VRAM freed for image generation — restore AI Chat first';
-        toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(245,158,11,0.9);color:#000;padding:10px 20px;border-radius:8px;font-size:0.85em;z-index:9999;animation:fadeOut 3s forwards;';
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
-        return;
-    }
-
-    // Update tab buttons
     document.querySelectorAll('.model-tab').forEach(btn => {
         btn.classList.toggle('model-tab--active', btn.dataset.tab === tabName);
     });
-    // Update tab panels
     document.getElementById('tabChat').style.display = tabName === 'chat' ? 'flex' : 'none';
     document.getElementById('tabVision').style.display = tabName === 'vision' ? 'flex' : 'none';
-    const genTab = document.getElementById('tabGenerate');
-    if (genTab) genTab.style.display = tabName === 'generate' ? 'flex' : 'none';
     const recTab = document.getElementById('tabRecordings');
     if (recTab) recTab.style.display = tabName === 'recordings' ? 'flex' : 'none';
 
-    // Focus relevant input
     if (tabName === 'chat') {
         document.getElementById('chatInput')?.focus();
     } else if (tabName === 'vision') {
         checkVisionStatus();
-    } else if (tabName === 'generate') {
-        if (typeof window.initGenerateTab === 'function') {
-            window.initGenerateTab();
-        }
     } else if (tabName === 'recordings') {
         window._initRecordingsTab();
     }
 }
-
-// Update Chat/Vision tab buttons greyed state based on VRAM mode
-function updateTabStatesForVram(mode) {
-    window._vramMode = mode;
-    document.querySelectorAll('.model-tab').forEach(btn => {
-        if (btn.dataset.tab === 'chat' || btn.dataset.tab === 'vision') {
-            if (mode === 'generate') {
-                btn.style.opacity = '0.4';
-                btn.style.cursor = 'not-allowed';
-                btn.title = 'VRAM freed for generation — restore AI Chat first';
-            } else {
-                btn.style.opacity = '1';
-                btn.style.cursor = 'pointer';
-                btn.title = '';
-            }
-        }
-    });
-}
-window.updateTabStatesForVram = updateTabStatesForVram;
 
 // ---------------------------------------------------------------------------
 // Vision Tab — State

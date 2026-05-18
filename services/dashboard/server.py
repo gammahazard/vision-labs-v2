@@ -164,7 +164,6 @@ from routes.auth import router as auth_router, init_auth_db, validate_session
 from routes.browse import router as browse_router
 from routes.ai import router as ai_router, set_ai_db, set_gpu_ready_flag
 from routes.telegram_access import router as telegram_access_router
-from routes.image_gen import router as image_gen_router
 from routes.metrics import router as metrics_router, start_metrics_collector
 from routes.recordings import router as recordings_router
 from routes.cameras import router as cameras_router
@@ -180,7 +179,6 @@ app.include_router(auth_router)
 app.include_router(browse_router)
 app.include_router(ai_router)
 app.include_router(telegram_access_router)
-app.include_router(image_gen_router)
 app.include_router(metrics_router)
 app.include_router(recordings_router)
 app.include_router(cameras_router)
@@ -317,10 +315,6 @@ async def startup():
     # Pass a callback so the warm-up can signal when the model is in GPU memory
     from pollers.ollama_warmup import warm_ollama
     asyncio.create_task(warm_ollama())
-
-    # Clear stale ComfyUI queue and GPU pause flag from previous session
-    from pollers.comfyui_cleanup import clear_comfyui_queue
-    asyncio.create_task(clear_comfyui_queue())
 
     # Daily prune of /data/snapshots and /data/events (configurable retention)
     from pollers.retention import retention_poller

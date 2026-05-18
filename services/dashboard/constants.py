@@ -38,16 +38,4 @@ CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:14b")
 VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "minicpm-v")
 
 # How long Ollama keeps the model loaded in VRAM after the last request.
-# Passed to every Ollama call. Image generation explicitly sets this to 0
-# to force-unload before grabbing the GPU.
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "5m")
-
-# ---------------------------------------------------------------------------
-# ComfyUI (image generation)
-# ---------------------------------------------------------------------------
-COMFYUI_HOST = os.getenv("COMFYUI_HOST", "http://comfyui:8188")
-
-# Default checkpoint when the caller doesn't specify. Empty string means
-# "fall back to the first available .safetensors in models/comfyui/checkpoints".
-# Set this env var to lock to a specific file (e.g. "sd_xl_base_1.0.safetensors").
-DEFAULT_CHECKPOINT = os.getenv("DEFAULT_COMFYUI_CHECKPOINT", "")

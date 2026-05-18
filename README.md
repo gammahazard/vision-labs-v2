@@ -18,7 +18,6 @@ Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubun
 | **Telegram notifications** | Real-time photo alerts with AI scene descriptions, broadcast to all approved users |
 | **AI assistant** | Qwen 3 14B local LLM with 18 tool functions — query events, send alerts, capture snapshots, set reminders |
 | **Vision analysis** | MiniCPM-V multimodal model analyzes camera snapshots and user-uploaded images |
-| **Image generation** | ComfyUI + SDXL on-device txt2img/img2img with **stacked LoRAs** (up to 5 with per-LoRA strength), **multi-pass ADetailer** face/hand fix (Impact Pack), live sampler/scheduler dropdowns, batch generation, gallery |
 | **DVR recording** | ffmpeg-copy 1-hour `.ts` segments with 3-day rolling retention. Runs by default to `./data/recordings/{camera_id}/` (bind-mounted on the WSL host so it's browseable from Windows Explorer). Optional QNAP overlay flips the destination to NFS/CIFS |
 | **Zone management** | Draw detection/alert/dead zones on the camera view — configurable per time-of-day |
 | **Local retention** | Daily prune of `/data/snapshots` and `/data/events` (default 4 days, configurable). Disabled by setting `SNAPSHOT_RETENTION_DAYS=0` |
@@ -41,7 +40,6 @@ Events ──▶ Notification Poller ──▶ Telegram Bot API
        ──▶ Event Journal (JSONL — local /data/events, or QNAP if enabled)
 
 Ollama (Qwen 3 14B + MiniCPM-V) ◀──▶ Dashboard AI Chat
-ComfyUI (SDXL) ◀──▶ Dashboard Image Generation
 Recorder (profile-gated) ──▶ DVR segments on QNAP NAS ──▶ Dashboard Playback
 Portainer ◀──▶ https://localhost:9443 (Docker management UI)
 ```
@@ -52,13 +50,12 @@ Portainer ◀──▶ https://localhost:9443 (Docker management UI)
 |---------|:---:|---------|
 | **redis** | — | Central message bus — all inter-service communication via Redis Streams |
 | **camera-ingester** | — | Reads RTSP sub-stream + main stream, publishes JPEG frames to Redis. Hot-reloads `target_fps` from Redis config |
-| **pose-detector** | ✅ GPU 0 (5070 Ti) | YOLOv8s-pose inference (~44ms), publishes person bounding boxes + keypoints. Pauses on `gpu:generation_active` |
+| **pose-detector** | ✅ GPU 0 (5070 Ti) | YOLOv8s-pose inference (~44ms), publishes person bounding boxes + keypoints |
 | **vehicle-detector** | ✅ GPU 0 (5070 Ti) | YOLOv8s inference, publishes vehicle bounding boxes (car/truck/bus/motorcycle) |
 | **tracker** | — | IoU matching across frames, assigns persistent IDs, publishes semantic events |
 | **face-recognizer** | ✅ GPU 0 (5070 Ti) | InsightFace embedding + SQLite enrollment DB, publishes identity matches. **Port not exposed on host** — access via dashboard proxy at `/api/faces` |
 | **dashboard** | — | FastAPI backend + static frontend — WebSocket live view (authenticated), REST APIs, background pollers, retention prune |
 | **ollama** | ✅ GPU 1 (3090) | Local LLM server — Qwen 3 14B (chat + tools) and MiniCPM-V (vision) |
-| **comfyui** | ✅ GPU 1 (3090) | Stable Diffusion inference — SDXL txt2img/img2img with LoRA support |
 | **recorder** | — | ffmpeg RTSP→`.ts` copy (no transcode), 1-hour segments, 3-day retention. Runs by default to `./data/recordings/`; cam2-cam5 recorders are profile-gated and managed by the orchestrator |
 | **orchestrator** | — | Watches `cameras:registry` and reconciles compose profiles. When you add a camera via the dashboard, this service auto-runs `docker compose --profile <slot> up -d` (the dashboard itself stays Docker-socket-free for security). Slots: `cam2`–`cam5`. Audits every action to `orchestrator:audit` Redis stream |
 | **prometheus** | — | Metrics collection (GPU, Redis, inference timing) |
@@ -67,7 +64,7 @@ Portainer ◀──▶ https://localhost:9443 (Docker management UI)
 | **dcgm-exporter** | ✅ both | Exports NVIDIA GPU metrics to Prometheus |
 | **portainer** | — | Web UI for managing the Docker stack at `https://localhost:9443` |
 
-**GPU split** (configurable in `docker-compose.yml`): the always-on detector trio runs on GPU 0; the heavy on-demand workloads (Ollama, ComfyUI) get GPU 1's headroom. Verify the device_ids match `nvidia-smi -L` output if you have a different physical layout.
+**GPU split** (configurable in `docker-compose.yml`): the always-on detector trio runs on GPU 0; the heavy on-demand workload (Ollama) gets GPU 1's headroom. Verify the device_ids match `nvidia-smi -L` output if you have a different physical layout.
 
 ---
 
@@ -95,7 +92,7 @@ docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
 # Should list all your GPUs
 
 # 4. Build and run
-docker compose build               # ~15-30 min on first build (ComfyUI is the slow one)
+docker compose build               # ~10-20 min on first build
 docker compose up                  # without NAS
 # OR
 docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
@@ -182,19 +179,6 @@ Three-tab interface:
 - **Chat tab**: conversational AI assistant (Qwen 3 14B) with 18 tool functions, all multi-camera-aware (LLM can call any tool with a specific `camera` arg or `"all"` for system-wide queries)
 - **Vision tab**: upload images or capture live frames for MiniCPM-V analysis
 - **DVR tab**: browse and play back recorded camera footage with a per-camera **Camera** dropdown (lists every camera that actually has recordings on disk) plus a date picker; click a segment to play. Runs locally on disk by default (no QNAP required).
-
-### Image Generation (`ai.html` — Generate tab)
-ComfyUI-powered. Drop model files into:
-
-| Folder | Purpose |
-|---|---|
-| `models/comfyui/checkpoints/` | SDXL / SD1.5 / Flux checkpoints (`.safetensors`) — none are auto-downloaded |
-| `models/comfyui/loras/` | LoRAs — stack up to 5 per generation, each with its own strength slider |
-| `models/comfyui/vae/` | VAE overrides |
-| `models/comfyui/ultralytics/bbox/` | ADetailer face/hand/eye detectors (`.pt`) |
-| `models/comfyui/ultralytics/segm/` | ADetailer segmentation detectors (`-seg.pt`) |
-
-UI exposes the live ComfyUI sampler + scheduler lists, plus a multi-pass ADetailer stack (chain face → hand fixes in one generation). YOLO `.pt` files auto-whitelist on ComfyUI restart via Impact Subpack. Image generation pauses always-on detectors via a Redis flag so the 3090 isn't fighting itself.
 
 ### System Monitor (`monitoring.html`)
 People count, inference time, GPU status, Redis memory cards, plus embedded Grafana dashboard with adjustable time range.
@@ -291,8 +275,6 @@ zones:front_door                ← Dashboard: zone definitions
 frame_hd:front_door             ← Ingester: latest HD frame, 5s TTL
 detection_frame:pose:front_door ← Pose detector: the exact frame current bboxes were computed from
 detection_frame:vehicle:*       ← Vehicle detector: same pattern
-gpu:generation_active           ← Dashboard: lock flag during image generation. Pose/vehicle/face-recognizer all pause when set
-gpu:generation_lock             ← Dashboard: mutex preventing concurrent generations. Cleared on dashboard startup
 telegram:users                  ← Dashboard: approved Telegram users
 telegram:last_offset            ← Dashboard: persisted Telegram update offset (so restart doesn't replay updates)
 person_snapshot:*               ← Tracker: detection-time frame captures (2h TTL)
@@ -317,7 +299,6 @@ vehicle_snapshot:*              ← Tracker: vehicle detection snapshots (24h TT
                                                 ← every entry tagged with "camera"
 
 /data/telegram/{user}/                          ← Docker volume qnap-telegram
-/data/generations/                              ← Docker volume qnap-generations
 /data/auth.db, /data/ai.db, /data/faces.db      ← Docker volumes (separate)
 ```
 

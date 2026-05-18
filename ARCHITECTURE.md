@@ -15,7 +15,6 @@
 7. [Tracker Service](#tracker-service)
 8. [Face Recognition](#face-recognition)
 9. [AI Assistant](#ai-assistant)
-10. [Image Generation](#image-generation)
 11. [Notification System](#notification-system)
 12. [Telegram Bot](#telegram-bot)
 13. [DVR Recording](#dvr-recording)
@@ -59,17 +58,16 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 │           │  Static frontend              │──▶ Telegram Bot API      │
 │           │  Event poller + retention     │                          │
 │           └───────────────────────────────┘                          │
-│                    │              │                                   │
-│            Ollama (GPU 1)    ComfyUI (GPU 1)                        │
-│            Qwen 3 14B        SDXL                                    │
-│            MiniCPM-V                                                 │
+│                    │                                                  │
+│            Ollama (GPU 1)                                            │
+│            Qwen 3 14B + MiniCPM-V                                    │
 │                                                                      │
 │  Recorder ──▶ ./data/recordings/{cam}/YYYY-MM-DD/HH-MM.ts (bind)     │
 │  Prometheus + Grafana + Portainer ──▶ Ops UIs                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**GPU split rationale:** the three always-on detectors total <4 GB VRAM and fit comfortably on the 5070 Ti. Ollama + ComfyUI are heavy on-demand workloads that benefit from the 3090's 24 GB headroom — and ComfyUI's `gpu:generation_active` flag pauses all three detectors *and* face-recognizer when generation starts.
+**GPU split rationale:** the three always-on detectors total <4 GB VRAM and fit comfortably on the 5070 Ti. Ollama is the heavy on-demand workload that benefits from the 3090's 24 GB headroom.
 
 ---
 
@@ -79,13 +77,12 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 |---------|-----------|-----------|:---:|-------------|
 | **redis** | redis:7-alpine | 6379 | — | Central message bus, AOF persistence, 2GB maxmemory |
 | **camera-ingester** | custom | host net | — | RTSP→JPEG frames, publishes sub-stream + HD to Redis. Hot-reloads `target_fps` from Redis config |
-| **pose-detector** | custom | — | GPU 0 | YOLOv8s-pose, publishes person bboxes + keypoints. Honors `gpu:generation_active` |
-| **vehicle-detector** | custom | — | GPU 0 | YOLOv8s, publishes vehicle bboxes. Honors `gpu:generation_active` |
+| **pose-detector** | custom | — | GPU 0 | YOLOv8s-pose, publishes person bboxes + keypoints |
+| **vehicle-detector** | custom | — | GPU 0 | YOLOv8s, publishes vehicle bboxes |
 | **tracker** | custom | — | — | IoU-based person/vehicle tracking, event publishing |
-| **face-recognizer** | custom | *internal only (8081 not exposed)* | GPU 0 | InsightFace embedding, SQLite DB, REST API proxied through dashboard. Honors `gpu:generation_active` |
+| **face-recognizer** | custom | *internal only (8081 not exposed)* | GPU 0 | InsightFace embedding, SQLite DB, REST API proxied through dashboard |
 | **dashboard** | custom | 8080 | — | FastAPI + WebSocket + static files + background tasks. WebSocket `/ws/live` requires session cookie |
 | **ollama** | ollama/ollama | 11434 | GPU 1 | LLM inference (Qwen 3 14B, MiniCPM-V) |
-| **comfyui** | custom | 8188 | GPU 1 | Stable Diffusion image generation |
 | **recorder** | custom | host net | — | RTSP→`.ts` ffmpeg copy, 1-hour segments, 3-day retention. Runs by default to `./data/recordings/` (bind mount). `recorder-cam2`–`recorder-cam5` are profile-gated to their slot; `recorder.py` reads RTSP URL from `cameras:registry` if `RTSP_URL` env is empty (same fallback as the ingester) |
 | **orchestrator** | custom | — | — | Reconciles compose profiles against `cameras:registry`. Subscribes to `cameras:events` pub/sub channel + runs a periodic safety-net reconcile. Has the Docker socket; the dashboard does NOT. Writes every action to `orchestrator:audit` Redis stream. See Phase 7b decision in REFACTOR_PLAN.md |
 | **prometheus** | prom/prometheus | 9090 (host net) | — | Metrics collection, 30d retention |
@@ -110,7 +107,6 @@ Vision Labs is an **event-driven microservice system** running on a single host 
      SETEX frame_hd:front_door with 5s TTL
 
 2. pose-detector (consumer group "pose_detectors"):
-   - Check gpu:generation_active — if set, sleep 2s and continue
    - XREADGROUP from frames stream
    - YOLOv8s-pose inference (~44ms on RTX 5070 Ti)
    - Filter: person class only, confidence > threshold
@@ -138,7 +134,6 @@ Vision Labs is an **event-driven microservice system** running on a single host 
    - SETEX vehicle_snapshot:{camera}:{ts} = frame JPEG (24h TTL)
 
 5. face-recognizer (consumer group "face_recognizers"):
-   - Check gpu:generation_active — if set, sleep 2s and continue
    - XREADGROUP from detections:pose stream (only runs face matching on frames where pose detected a person)
    - XREVRANGE frames stream to grab the matching frame
    - InsightFace detection + embedding extraction (CUDA via onnxruntime-gpu)
@@ -228,8 +223,6 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 | `detection_frame:{type}:{camera_id}` | pose/vehicle detector | dashboard WebSocket | Raw JPEG bytes (the frame bboxes were computed from) |
 | `person_snapshot:{camera_id}:{ts}` | tracker | dashboard event feed | Raw JPEG bytes (2-hour TTL) |
 | `vehicle_snapshot:{camera_id}:{ts}` | tracker | dashboard browse/events | Raw JPEG bytes (24-hour TTL) |
-| `gpu:generation_active` | image_gen | pose-detector, vehicle-detector, face-recognizer | Lock flag — detectors pause GPU when present |
-| `gpu:generation_lock` | image_gen | image_gen | Mutex preventing concurrent generations. Cleared on dashboard startup |
 | `telegram:users` | dashboard (Telegram Access Manager) | bot_commands | `{user_id: JSON{chat_id, name, role, approved_at}}` |
 | `telegram:last_offset` | bot_commands | bot_commands | Persisted Telegram update offset — restored at startup so restarts don't replay old commands |
 | `cameras:registry` | dashboard (cameras page) | every service (per-camera config + detector flags) | Hash keyed by camera_id; JSON value with `id`, `name`, `rtsp_sub`, `rtsp_main`, `enabled`, `detect_persons`, `detect_vehicles`, `detect_faces`, `gpu_id`, location, timestamps |
@@ -267,7 +260,6 @@ The main FastAPI app is now a **thin wiring file**. The 1300-line original was s
 | `startup` event | server.py:~270 | Init auth DB, write default config, seed camera registry, schedule pollers |
 | `reminder_poller` | `pollers/reminders.py` | Check due reminders every 60s, send via Telegram |
 | `warm_ollama` | `pollers/ollama_warmup.py` | Pull Qwen 3 14B on first startup, warm-up GPU load |
-| `clear_comfyui_queue` | `pollers/comfyui_cleanup.py` | Clear stale GPU locks + ComfyUI queue from previous session |
 | `retention_poller` | `pollers/retention.py` | Daily prune of `/data/snapshots` + `/data/events` |
 | `event_notification_poller` | `pollers/events.py` | Poll events, save snapshots, journal, send Telegram |
 | `websocket_live` | `websocket.py` | Stream frames with overlays; accepts `?camera=<id>` for multi-camera |
@@ -287,7 +279,6 @@ camera (where it makes semantic sense — events, system status).
 | `ai_state.py` | — | Shared AI state (DB refs, GPU flag, pending media) | n/a |
 | `notifications.py` | `/api` | Telegram API helpers, scene analysis, snapshot drawing, `build_clip(camera_id=…)` | ✅ |
 | `bot_commands.py` | — | Telegram polling loop, 15+ command handlers w/ `[camera]` token parsing, inline-keyboard camera picker, `/cameras` helper command | ✅ |
-| `image_gen.py` | `/api/generate` | ComfyUI proxy, txt2img, img2img, gallery, prompt history | n/a (generation is global) |
 | `recordings.py` | `/api/recordings` | DVR playback: `/dates`, `/segments`, `/stream/{date}/{segment}` all accept `?camera`. New `/cameras` endpoint lists every camera that has recordings on disk | ✅ |
 | `events.py` | `/api/events` | Event feed; `?camera=` filters or `all`/empty merges streams newest-first; per-event `camera_id` field; `resolve_event_snapshot_path()` helper walks per-camera dirs w/ legacy-flat fallback | ✅ |
 | `config.py` | `/api/config` | Per-camera config hash (`config:{camera_id}`); detection thresholds, notification toggles | ✅ |
@@ -405,7 +396,7 @@ Unrecognized faces are auto-captured and can be labeled later via the dashboard 
 | **Qwen 3 14B** | Chat + tool calling | ~9.3 GB |
 | **MiniCPM-V** | Vision analysis (image description) | ~5 GB |
 
-Both run via Ollama with 5-minute keep-alive. VRAM is shared with ComfyUI via a GPU lock flag.
+Both run via Ollama with 5-minute keep-alive.
 
 ### Chat Flow
 ```
@@ -444,30 +435,6 @@ schedule, notification history, show_faces, analyze_image) don't take
 
 Tools stash media (snapshots, clips, images) via `ai_state` for embedding in
 the reply.
-
----
-
-## Image Generation
-
-### Service: ComfyUI
-- Mounts `./models/comfyui/` for checkpoints, LoRAs, VAE, ADetailer YOLO models
-- Dashboard proxies all requests to `http://comfyui:8188`
-- Custom nodes baked into the image: AnimateDiff-Evolved, VideoHelperSuite, IPAdapter Plus, GGUF (for FP8 quantized WAN), **ComfyUI-Impact-Pack + Impact-Subpack** (FaceDetailer / UltralyticsDetectorProvider — A1111-style ADetailer)
-- ComfyUI native UI exposed at `http://localhost:8188` for advanced workflows
-
-### Features
-- **txt2img / img2img**: prompt + optional source image → ComfyUI workflow → poll for result
-- **Stacked LoRAs**: up to 5 LoRAs chained as `LoraLoader → LoraLoader → ...` before KSampler, each with independent strength. Backend uses node IDs 100+ for the chain.
-- **Multi-pass ADetailer**: up to 4 FaceDetailer passes chained image→image (e.g. face fix → hand fix → eye fix in one generation). Backend uses node IDs 200+ for the chain. Per-pass seed is bumped so passes don't collapse onto identical noise.
-- **YOLO detector dropdown**: live list pulled from `/object_info/UltralyticsDetectorProvider` — files in `models/comfyui/ultralytics/{bbox,segm}/` auto-whitelist on ComfyUI restart via entrypoint script (Impact Subpack's safety check).
-- **Sampler + scheduler dropdowns**: live list pulled from `/object_info/KSampler` — every sampler ComfyUI knows about is available; default `euler` / `normal`.
-- **Batch generation**: queue multiple seeds.
-- **Parameter sweep**: steps × CFG × LoRA strength grid. Sweep panel ignores the stacked-LoRA list and uses its own single-LoRA selector for clean variable isolation.
-- **Gallery + prompt history**: server-side storage with revision tracking.
-- **VRAM management**: `gpu:generation_active` flag pauses detectors during generation, auto-unloads Ollama models.
-
-### WAN 2.2 video generation
-WAN diffusion model + UMT5 text encoder + VAE + CLIP-Vision auto-downloaded by `services/comfyui/entrypoint.sh` on first boot. Used directly through ComfyUI's native UI (the Generate tab is image-only).
 
 ---
 
@@ -618,15 +585,12 @@ browsable from Windows Explorer without sudo.
     ├── commands.log
     └── media/
 
-/data/generations/                                ← Docker volume qnap-generations
-                                                  ← ComfyUI output images
-
 /data/auth.db                                     ← Docker volume auth-data
                                                   ← SQLite: sessions, users, password rotation
 ```
 
 **Future QNAP migration:** when a QNAP shows up, swap individual volumes
-(snapshots, events, telegram, generations) from Docker-managed → NFS/CIFS
+(snapshots, events, telegram) from Docker-managed → NFS/CIFS
 mounts pointing at the QNAP — no code changes needed. The recorder bind mount
 becomes either a QNAP NFS mount or stays local with shorter retention.
 
@@ -641,7 +605,7 @@ becomes either a QNAP NFS mount or stays local with shorter retention.
 
 ### Networking
 - **camera-ingester** and **recorder**: `network_mode: host` (direct RTSP access to camera on LAN)
-- **All other services**: Docker bridge network, communicate via DNS names (e.g., `redis`, `ollama`, `comfyui`)
+- **All other services**: Docker bridge network, communicate via DNS names (e.g., `redis`, `ollama`)
 - **Monitoring stack** (prometheus, grafana, redis-exporter, dcgm-exporter): `network_mode: host` for metric scraping
 
 ### Volumes
@@ -653,11 +617,10 @@ becomes either a QNAP NFS mount or stays local with shorter retention.
 | `insightface-models` | Docker | InsightFace model weights cache |
 | `auth-data` | Docker | Auth SQLite DB |
 | `ollama-models` | Docker | LLM model weights (~15 GB) |
-| `comfyui-data` | Docker | ComfyUI output images |
 | `prometheus-data` | Docker | Prometheus TSDB |
 | `grafana-data` | Docker | Grafana state |
 | `portainer-data` | Docker | Portainer state |
-| `qnap-snapshots`, `qnap-events`, `qnap-telegram`, `qnap-generations`, `qnap-videos`, `qnap-clips` | Local Docker by default; CIFS when `docker-compose.qnap.yml` overlay is used | 6 storage volumes that can flip between local and NAS-backed at runtime |
+| `qnap-snapshots`, `qnap-events`, `qnap-telegram`, `qnap-videos`, `qnap-clips` | Local Docker by default; CIFS when `docker-compose.qnap.yml` overlay is used | 5 storage volumes that can flip between local and NAS-backed at runtime |
 | `./data/recordings` (bind mount) | Bind mount to WSL host path (since `ed2c3c2`) | DVR recordings — browseable from Windows Explorer without sudo; will be swapped to NFS mount when QNAP arrives, code paths unchanged |
 | `./services/dashboard/static` + `./services/dashboard/{routes,pollers,helpers,*.py}` | Read-only bind mounts on the dashboard container | Dashboard source live-reload. HTML/CSS/JS changes are live on browser refresh; Python changes only need `docker compose restart dashboard` (no rebuild). The image still `COPY`s them for builds-from-scratch — the mounts just shadow that at runtime |
 | `/var/run/docker.sock` → `/var/run/docker.sock` (on orchestrator only) | Bind mount | Required for the orchestrator to manage compose profiles. **Deliberately NOT mounted on the dashboard** — see Phase 7b decision in REFACTOR_PLAN.md |
@@ -674,11 +637,10 @@ becomes either a QNAP NFS mount or stays local with shorter retention.
 **GPU 0 (5070 Ti — always-on detectors):**
 1. **pose-detector** — always running (~44ms/frame on Blackwell)
 2. **vehicle-detector** — always running
-3. **face-recognizer** — always running (honors `gpu:generation_active`)
+3. **face-recognizer** — always running
 
-**GPU 1 (3090 — on-demand heavy workloads):**
-4. **ollama** — on-demand (5-min keep-alive), auto-unloaded during image generation
-5. **comfyui** — on-demand, sets `gpu:generation_active` flag to pause the three detectors above
+**GPU 1 (3090 — on-demand):**
+4. **ollama** — on-demand (5-min keep-alive)
 
 `dcgm-exporter` sees both GPUs (`count: all` reservation) for metrics.
 
@@ -700,7 +662,7 @@ services/
 │                        # Shares the face DB across all cameras (Docker volume face-data).
 ├── dashboard/           # FastAPI backend + web frontend (refactored May 2026)
 │   ├── server.py        # 353 lines — wiring only: imports, app, middleware, startup, static mount
-│   ├── constants.py     # Ollama models, ComfyUI defaults — env-overridable
+│   ├── constants.py     # Ollama models — env-overridable
 │   ├── websocket.py     # /ws/live; accepts ?camera=<id> query param for multi-cam
 │   ├── cameras.py       # CameraRegistry (Redis-backed) + slot allocation
 │   ├── ai_db.py         # AI chat history SQLite
@@ -709,7 +671,6 @@ services/
 │   ├── pollers/
 │   │   ├── reminders.py        # 60s reminder dispatch via Telegram
 │   │   ├── ollama_warmup.py    # Pulls chat model + warms GPU at startup
-│   │   ├── comfyui_cleanup.py  # Clears stale GPU locks at startup
 │   │   ├── retention.py        # Daily prune of /data/snapshots and /data/events
 │   │   └── events.py           # Event stream consumer + Telegram broadcast + snapshot save
 │   ├── routes/          # 21 API route modules (cameras.py was added; see Multi-camera section)
@@ -726,7 +687,6 @@ services/
 │                        # Watches cameras:events + cameras:registry; runs
 │                        # `docker compose --profile <cam> up/down` automatically.
 │                        # Writes audit history to orchestrator:audit Redis stream.
-├── comfyui/             # Stable Diffusion inference
 ├── prometheus/          # Metrics config
 └── grafana/             # Provisioned dashboard JSON
 ```

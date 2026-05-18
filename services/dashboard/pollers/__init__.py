@@ -14,7 +14,6 @@ WHY HERE AND NOT IN server.py:
 CURRENT POLLERS:
     - reminders.py        — check due reminders every 60s, send via Telegram
     - ollama_warmup.py    — pull + warm the chat model at startup
-    - comfyui_cleanup.py  — clear stale GPU locks at startup
     - retention.py        — daily prune of /data/snapshots + /data/events
     - events.py           — poll events stream, save snapshots, broadcast to Telegram
 """

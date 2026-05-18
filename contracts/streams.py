@@ -118,12 +118,6 @@ TELEGRAM_USERS_KEY = "telegram:users"
 # Read by: dashboard (Telegram Access Manager tab)
 TELEGRAM_ACCESS_LOG = "telegram:access_log"
 
-# GPU pause flag — set during image/video generation to signal detectors
-# to pause GPU inference and avoid VRAM contention.
-# Written by: dashboard (image_gen, video_pipeline) — SET with TTL on start, DEL on finish
-# Read by: pose-detector, vehicle-detector (check each loop iteration)
-GPU_PAUSE_KEY = "gpu:generation_active"
-
 # Detection-synced frame — the exact JPEG frame each detector last processed.
 # This ensures the dashboard draws bboxes on the same frame they were computed from,
 # instead of the latest ingester frame which may have advanced during inference.

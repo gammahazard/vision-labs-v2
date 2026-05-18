@@ -233,48 +233,6 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # ComfyUI — Local image generation (Stable Diffusion, Flux, etc.)
-  # ---------------------------------------------------------------------------
-  # Runs ComfyUI with GPU access for on-demand image/video generation.
-  # Drop .safetensors files into ./models/comfyui/checkpoints/ to add models.
-  # Dashboard proxies requests to http://comfyui:8188.
-  comfyui:
-    build:
-      context: ./services/comfyui
-    # Bind ComfyUI's native UI to localhost only (not the LAN). Lets you open
-    # http://localhost:8188 for experiments (WAN video workflows, custom node
-    # tinkering) while keeping it inaccessible from other devices on the network.
-    # The dashboard still proxies via the internal `http://comfyui:8188` URL.
-    ports:
-      - "127.0.0.1:8188:8188"
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=1  # 3090
-      # entrypoint.sh chowns /app/models to this UID/GID at startup so the
-      # WSL host user can drop new model files in without sudo. Default
-      # 1000:1000 matches the standard WSL user. Override via .env if your
-      # UID differs (e.g. on a multi-user dev box).
-      - HOST_UID=${HOST_UID:-1000}
-      - HOST_GID=${HOST_GID:-1000}
-    volumes:
-      - comfyui-data:/app/output
-      - ./models/comfyui:/app/models
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['1']  # GPU 1 = 3090 (24GB) — heavy on-demand workloads
-              capabilities: [ gpu ]
-    shm_size: '8gb'
-    restart: unless-stopped
-    healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8188/system_stats')" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # ---------------------------------------------------------------------------
   # Dashboard — Live monitoring UI
   # ---------------------------------------------------------------------------
   # Web dashboard accessible at http://localhost:8080. Shows live camera feed
@@ -287,7 +245,6 @@ services:
       - "8080:8080"
     volumes:
       - ./contracts:/app/contracts:ro
-      - ./models/comfyui:/app/models:ro # WAN LoRA listing + model access
       # Bind-mount the frontend so UI edits (HTML/CSS/JS) go live on browser
       # refresh — without this, every static change needs a `docker compose
       # build dashboard` round trip. The image still COPYs static/ in for
@@ -309,8 +266,6 @@ services:
       - qnap-snapshots:/data/snapshots
       - qnap-events:/data/events
       - qnap-telegram:/data/telegram
-      - qnap-generations:/data/generations
-      - comfyui-data:/data/comfyui-output:ro
       - qnap-videos:/data/videos
       - qnap-clips:/data/clips
       # Bind mount: recordings live on the WSL host so you can browse them
@@ -325,7 +280,6 @@ services:
       - FACE_API_URL=http://face-recognizer:8081
       - AUTH_DB_PATH=/data/auth.db
       - OLLAMA_HOST=http://ollama:11434
-      - COMFYUI_HOST=http://comfyui:8188
       # Pass through camera RTSP URLs so the dashboard can seed the camera
       # registry with this deployment's primary camera on first startup.
       - RTSP_SUB=${RTSP_SUB:-}
@@ -1030,7 +984,6 @@ volumes:
   insightface-models:
   auth-data:
   ollama-models:
-  comfyui-data:
 
   prometheus-data:
   grafana-data:
@@ -1043,6 +996,5 @@ volumes:
   qnap-snapshots:
   qnap-events:
   qnap-telegram:
-  qnap-generations:
   qnap-videos:
   qnap-clips:

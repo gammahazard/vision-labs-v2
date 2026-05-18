@@ -47,7 +47,6 @@ from streams import (
     DETECTION_STREAM as _DET_TMPL,
     CONFIG_KEY as _CFG_TMPL,
     DETECTION_FRAME_KEY as _DET_FRAME_TMPL,
-    GPU_PAUSE_KEY,
     stream_key,
 )
 
@@ -301,20 +300,6 @@ def run():
                 f"kp_confidence>={current_kp_confidence}")
 
     while not _shutdown:
-        # --- GPU pause: skip inference while image/video generation is active ---
-        try:
-            if r.exists(GPU_PAUSE_KEY):
-                if not getattr(run, '_paused_logged', False):
-                    logger.info("GPU generation active — pausing inference...")
-                    run._paused_logged = True
-                time.sleep(2)
-                continue
-            elif getattr(run, '_paused_logged', False):
-                logger.info("GPU generation finished — resuming inference")
-                run._paused_logged = False
-        except redis.ConnectionError:
-            pass
-
         # Read next frame from the consumer group
         # Block for up to 1 second waiting for new frames
         try:
