@@ -162,6 +162,21 @@ Discovery finds: Reolink, Hikvision, Dahua, Amcrest, Axis, Unifi G-series, anyth
 
 Telegram-bot setup is not in the v1 wizard — configure it via `.env`.
 
+### Backup + restore
+
+The face DB, admin DB, Redis state, snapshots, event journal, and Telegram media all live in Docker volumes. They survive `docker compose down`, `docker compose build`, image rebuilds, and reboots. They do NOT survive `docker compose down -v` or `docker volume rm`.
+
+```bash
+# Snapshot everything important to a single tarball
+bash scripts/backup.sh                            # writes vl-backup-YYYYMMDD-HHMMSS.tar.gz
+bash scripts/backup.sh /mnt/external/vl-backup.tar.gz   # custom path
+
+# Restore from a tarball (destructive — overwrites current state)
+bash scripts/restore.sh vl-backup-20260518-153000.tar.gz
+```
+
+What's backed up: face-data (faces.db + enrolled photos — including all your unknowns), auth-data, redis-data, qnap-snapshots, qnap-events, qnap-telegram. ~300 MB typical, depending on snapshot retention. What's NOT backed up: DVR recordings (those are a host bind mount at `./data/recordings/` already), YOLO/InsightFace/Ollama model caches (re-downloadable), Prometheus/Grafana metrics history.
+
 ### Build vs pre-built images
 
 Two paths from cloned repo to running stack:
