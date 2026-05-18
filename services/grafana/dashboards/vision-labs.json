@@ -507,12 +507,12 @@
       "targets": [
         {
           "expr": "DCGM_FI_DEV_FB_USED",
-          "legendFormat": "VRAM Used (MB)",
+          "legendFormat": "GPU{{gpu}} used ({{modelName}})",
           "refId": "A"
         },
         {
           "expr": "DCGM_FI_DEV_FB_FREE + DCGM_FI_DEV_FB_USED",
-          "legendFormat": "VRAM Total (MB)",
+          "legendFormat": "GPU{{gpu}} total ({{modelName}})",
           "refId": "B"
         }
       ]
