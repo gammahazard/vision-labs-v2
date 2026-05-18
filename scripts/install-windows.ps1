@@ -28,12 +28,19 @@
     manually by RTSP URL).
 
 .EXAMPLE
-    # In an elevated PowerShell:
+    # In an elevated PowerShell. If you get "running scripts is disabled
+    # on this system", use the explicit bypass form:
+    powershell.exe -ExecutionPolicy Bypass -File .\install-windows.ps1
+
+    # Or to allow any local script in this session (reverts on close):
+    Set-ExecutionPolicy -Scope Process Bypass -Force
     .\install-windows.ps1
 
 .NOTES
     Requires:  Admin privileges, Windows 10 22H2 or Windows 11, NVIDIA GPU
                with a recent driver (R535+ for WSL-CUDA), internet.
+               If running scripts is blocked by ExecutionPolicy (default
+               on stock Windows), use the bypass forms shown above.
 #>
 
 param(

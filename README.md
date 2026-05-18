@@ -83,7 +83,9 @@ The script installs Docker + nvidia-container-toolkit, builds all images, starts
 
 ```powershell
 # In an ELEVATED PowerShell (right-click -> Run as administrator):
-.\scripts\install-windows.ps1
+# If the default ExecutionPolicy blocks scripts (it usually does), use the
+# bypass form:
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
 
 The script installs WSL2, writes a `.wslconfig` with mirrored networking, adds Hyper-V firewall rules for ONVIF auto-discovery, then prompts a reboot. After reboot, open the new Ubuntu terminal and run `bash scripts/install-linux.sh` from your cloned repo to finish.
