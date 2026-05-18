@@ -609,12 +609,12 @@
       "targets": [
         {
           "expr": "DCGM_FI_DEV_GPU_UTIL",
-          "legendFormat": "GPU Util %",
+          "legendFormat": "GPU{{gpu}} util ({{modelName}})",
           "refId": "A"
         },
         {
           "expr": "DCGM_FI_DEV_GPU_TEMP",
-          "legendFormat": "Temp \u00b0C",
+          "legendFormat": "GPU{{gpu}} temp \u00b0C ({{modelName}})",
           "refId": "B"
         }
       ]
@@ -692,7 +692,7 @@
       "targets": [
         {
           "expr": "DCGM_FI_DEV_POWER_USAGE",
-          "legendFormat": "Power (W) GPU{{gpu}}",
+          "legendFormat": "GPU{{gpu}} ({{modelName}}) W",
           "refId": "A"
         }
       ]
