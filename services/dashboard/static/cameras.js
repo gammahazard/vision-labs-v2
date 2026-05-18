@@ -399,17 +399,39 @@ async function handleDelete(id, name) {
 }
 
 async function loadNextSlot() {
-    // Pre-fill the Camera ID field with the next available pre-defined slot
-    // (cam2/cam3/...). User can override if they want a custom slot name and
-    // manually add their own services to compose.
+    // Pre-fill the Camera ID with the next available slot. The field is
+    // read-only so users can't type a custom name that wouldn't match a
+    // service profile in docker-compose.yml. If all slots are used, show
+    // a clear banner and disable the form entirely.
     try {
         const res = await fetch('/api/cameras/next-slot');
         const data = await res.json();
+        const banner = $('slotsFullBanner');
+        const form = $('addCameraForm');
+        const card = $('addCameraCard');
+
         if (data.slot) {
             $('camId').value = data.slot;
-            $('camId').placeholder = data.slot;
+            // Form usable
+            if (banner) banner.style.display = 'none';
+            if (form) {
+                form.style.opacity = '1';
+                form.style.pointerEvents = '';
+                form.querySelectorAll('input, button, textarea').forEach(el => {
+                    if (el.id !== 'camId') el.disabled = false;
+                });
+            }
         } else {
-            $('camId').placeholder = 'all slots used';
+            // All 5 slots used — lock the form
+            $('camId').value = '';
+            $('camId').placeholder = 'no slot available';
+            if (banner) banner.style.display = 'block';
+            if (form) {
+                form.style.opacity = '0.5';
+                form.querySelectorAll('input, button, textarea').forEach(el => {
+                    el.disabled = true;
+                });
+            }
         }
     } catch (e) { /* best-effort */ }
 }

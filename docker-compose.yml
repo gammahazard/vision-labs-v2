@@ -390,6 +390,10 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
       - "--web.listen-address=:9090"
+      # Admin API enables the tombstone/delete endpoints used by
+      # scripts/prometheus-clean-stale-cameras.sh. Listens on localhost only;
+      # not exposed beyond the host.
+      - "--web.enable-admin-api"
     restart: unless-stopped
 
   grafana:

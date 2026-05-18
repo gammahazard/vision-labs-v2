@@ -107,15 +107,19 @@
         </div>
 
         <!-- Add camera form -->
-        <div class="cam-card">
+        <div class="cam-card" id="addCameraCard">
             <div class="cam-card-header">
                 <div class="cam-card-title">Add a camera</div>
+            </div>
+            <div id="slotsFullBanner" class="cam-msg err" style="margin-bottom:0.75rem;display:none;">
+                All 5 camera slots are in use. Delete a camera above to free up a slot before adding a new one.
             </div>
             <form id="addCameraForm" onsubmit="handleAddCamera(event)">
                 <div class="cam-form-grid">
                     <div>
-                        <label for="camId">Camera ID</label>
-                        <input type="text" id="camId" placeholder="basement" pattern="[a-zA-Z0-9_-]+" required>
+                        <label for="camId">Camera slot <span style="color:#64748b;font-size:0.7rem;">(auto-assigned — internal handle, you'll never see this in the UI)</span></label>
+                        <input type="text" id="camId" readonly tabindex="-1"
+                               style="background:#0f172a;color:#94a3b8;cursor:not-allowed;border-color:#1e293b;">
                     </div>
                     <div>
                         <label for="camName">Display name</label>
@@ -173,7 +177,7 @@
     </div>
 
     <script src="cameras.js?v=4"></script>
-    <script src="nav.js?v=1"></script>
+    <script src="nav.js?v=2"></script>
 </body>
 
 </html>

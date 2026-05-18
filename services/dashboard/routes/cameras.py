@@ -348,6 +348,16 @@ async def create_or_update(request: Request):
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
+    # Server-side slot validation. The orchestrator's ALLOWED_PROFILES
+    # allowlist would refuse to spawn services for any id outside cam1-cam5
+    # anyway, but rejecting the upsert here makes the failure visible and
+    # immediate instead of "registry shows the camera but no live feed."
+    cam_id = (body.get("id") or "").strip()
+    if cam_id and cam_id not in registry.AVAILABLE_SLOTS:
+        return JSONResponse({
+            "error": f"Camera id must be one of {registry.AVAILABLE_SLOTS} — the slot name maps to a profile in docker-compose.yml that defines the camera's services. Got: {cam_id!r}"
+        }, status_code=400)
+
     ok, err = registry.upsert_camera(body)
     if not ok:
         return JSONResponse({"error": err}, status_code=400)

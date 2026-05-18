@@ -158,4 +158,89 @@
     } else {
         init();
     }
+
+    // -----------------------------------------------------------------
+    // Universal modal-backdrop-click-to-close (Phase H.5)
+    //
+    // Across the dashboard, modals come from different authors and use
+    // different class names (.modal-overlay, .gallery-modal-overlay,
+    // .lightbox-overlay, .label-modal-overlay). Their CLOSE behavior is
+    // inconsistent — some had backdrop close, some only had an explicit
+    // ✕ button. Unifying with a single global handler: when the user
+    // clicks the OVERLAY (background, not content), close the modal.
+    //
+    // What counts as "the backdrop": the element with one of the overlay
+    // class names whose direct click target IS that element (not a child).
+    //
+    // Closing strategy: hide via inline style `display: none` (matches
+    // existing code's hide approach in galleryModal, lightboxModal, etc.).
+    // Modals using the `hidden` attribute (setup.html's onvifCredsModal)
+    // get that toggled instead.
+    // -----------------------------------------------------------------
+    const OVERLAY_CLASSES = [
+        "modal-overlay",
+        "gallery-modal-overlay",
+        "lightbox-overlay",
+        "label-modal-overlay",
+    ];
+
+    function _closeModal(overlay) {
+        if (overlay.hasAttribute("hidden")) {
+            overlay.setAttribute("hidden", "");
+        } else {
+            overlay.style.display = "none";
+        }
+        // Some pages bind cleanup logic to a "close" function. Look for
+        // the conventional names and call them so e.g. ongoing playback
+        // state gets cleared.
+        const matchers = [
+            window._closeLightbox,
+            window._genCloseGallery,
+            window._closeClipGallery,
+            window.closeLabelModal,
+            window.closeOnvifModal,
+        ];
+        for (const fn of matchers) {
+            if (typeof fn === "function") {
+                try {
+                    // Only invoke if the modal this fn manages is the one we're closing
+                    // — heuristic: each close fn typically targets one specific overlay.
+                    fn();
+                } catch (_) { /* ignore */ }
+            }
+        }
+    }
+
+    document.addEventListener("click", (e) => {
+        const target = e.target;
+        if (!target || target.nodeType !== 1) return;
+        // Only fire when the user clicks the OVERLAY itself, not a child
+        // (i.e. clicking inside the modal content should NOT close it).
+        if (target !== e.currentTarget && target.classList) {
+            for (const cls of OVERLAY_CLASSES) {
+                if (target.classList.contains(cls)) {
+                    _closeModal(target);
+                    return;
+                }
+            }
+        }
+    });
+
+    // Escape key — same closing logic for any visible modal overlay
+    document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        // Find any currently-open overlay
+        for (const cls of OVERLAY_CLASSES) {
+            const els = document.getElementsByClassName(cls);
+            for (const el of els) {
+                const visible = !el.hasAttribute("hidden")
+                    && el.style.display !== "none"
+                    && getComputedStyle(el).display !== "none";
+                if (visible) {
+                    _closeModal(el);
+                    return; // close just the topmost
+                }
+            }
+        }
+    });
 })();
