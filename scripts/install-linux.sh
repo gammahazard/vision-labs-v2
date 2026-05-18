@@ -90,8 +90,13 @@ fi
 if ! nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | grep -q .; then
     fail "nvidia-smi is installed but returns no GPUs. Driver may be broken — try rebooting."
 fi
-GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
-ok "GPU detected: ${GPU_NAME}"
+# Read the first line into a variable without piping to `head`. Piping to
+# `head -1` would close the pipe after one line and SIGPIPE nvidia-smi
+# (especially on multi-GPU hosts), which under `set -o pipefail` makes
+# the whole pipeline non-zero and `set -e` exits silently. Using
+# process-substitution + `read` avoids the broken pipe.
+read -r GPU_NAME < <(nvidia-smi --query-gpu=name --format=csv,noheader) || true
+ok "GPU detected: ${GPU_NAME:-unknown}"
 
 need_sudo
 
