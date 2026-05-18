@@ -64,7 +64,7 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 │            Qwen 3 14B        SDXL                                    │
 │            MiniCPM-V                                                 │
 │                                                                      │
-│  Recorder (profile-gated, off by default) ──▶ QNAP NAS               │
+│  Recorder ──▶ ./data/recordings/{cam}/YYYY-MM-DD/HH-MM.ts (bind)     │
 │  Prometheus + Grafana + Portainer ──▶ Ops UIs                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -86,7 +86,8 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 | **dashboard** | custom | 8080 | — | FastAPI + WebSocket + static files + background tasks. WebSocket `/ws/live` requires session cookie |
 | **ollama** | ollama/ollama | 11434 | GPU 1 | LLM inference (Qwen 3 14B, MiniCPM-V) |
 | **comfyui** | custom | 8188 | GPU 1 | Stable Diffusion image generation |
-| **recorder** | custom | host net | — | RTSP→`.ts` ffmpeg copy, 1-hour segments. **Profile-gated `nas` — off by default** |
+| **recorder** | custom | host net | — | RTSP→`.ts` ffmpeg copy, 1-hour segments, 3-day retention. Runs by default to `./data/recordings/` (bind mount). `recorder-cam2`–`recorder-cam5` are profile-gated to their slot; `recorder.py` reads RTSP URL from `cameras:registry` if `RTSP_URL` env is empty (same fallback as the ingester) |
+| **orchestrator** | custom | — | — | Reconciles compose profiles against `cameras:registry`. Subscribes to `cameras:events` pub/sub channel + runs a periodic safety-net reconcile. Has the Docker socket; the dashboard does NOT. Writes every action to `orchestrator:audit` Redis stream. See Phase 7b decision in REFACTOR_PLAN.md |
 | **prometheus** | prom/prometheus | 9090 (host net) | — | Metrics collection, 30d retention |
 | **grafana** | grafana/grafana-oss | 3000 (host net) | — | Monitoring dashboards, provisioned from `services/grafana/dashboards/vision-labs.json` |
 | **redis-exporter** | redis_exporter | host net | — | Redis metrics → Prometheus |
@@ -213,6 +214,7 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 | `events:{camera_id}` | tracker | dashboard poller | `{event_type, person_id, bbox, zone, alert_level, ...}` |
 | `identities:{camera_id}` | face-recognizer | dashboard | `{identities: JSON}` |
 | `telegram:access_log` | bot_commands | dashboard (Telegram page) | `{user_id, username, action, authorized, timestamp}` |
+| `orchestrator:audit` | orchestrator | dashboard (camera status badges) | `{action, profile, success, detail, timestamp}` — last 500 actions taken by the orchestrator (up / down / no-op) |
 
 ### Keys (state)
 
@@ -230,6 +232,9 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 | `gpu:generation_lock` | image_gen | image_gen | Mutex preventing concurrent generations. Cleared on dashboard startup |
 | `telegram:users` | dashboard (Telegram Access Manager) | bot_commands | `{user_id: JSON{chat_id, name, role, approved_at}}` |
 | `telegram:last_offset` | bot_commands | bot_commands | Persisted Telegram update offset — restored at startup so restarts don't replay old commands |
+| `cameras:registry` | dashboard (cameras page) | every service (per-camera config + detector flags) | Hash keyed by camera_id; JSON value with `id`, `name`, `rtsp_sub`, `rtsp_main`, `enabled`, `detect_persons`, `detect_vehicles`, `detect_faces`, `gpu_id`, location, timestamps |
+| `cameras:events` *(pub/sub channel)* | dashboard cameras CRUD | orchestrator | Tiny JSON payload `{action, camera_id, ts}` that nudges the orchestrator the registry changed; orchestrator always reconciles against `cameras:registry` regardless of payload contents |
+| `notify:last` | notifications | notifications | Hash of `{event_type: unix_ts}` — last-sent timestamps for cooldown gating; persisted so a dashboard restart doesn't bypass active cooldowns |
 
 ### Config Keys (in `config:{camera_id}`)
 
@@ -287,7 +292,7 @@ camera (where it makes semantic sense — events, system status).
 | `events.py` | `/api/events` | Event feed; `?camera=` filters or `all`/empty merges streams newest-first; per-event `camera_id` field; `resolve_event_snapshot_path()` helper walks per-camera dirs w/ legacy-flat fallback | ✅ |
 | `config.py` | `/api/config` | Per-camera config hash (`config:{camera_id}`); detection thresholds, notification toggles | ✅ |
 | `zones.py` | `/api/zones` | Per-camera zone CRUD (`zones:{camera_id}` hash) | ✅ |
-| `cameras.py` | `/api/cameras` | Camera registry: list/get/upsert/delete; `POST /test-rtsp` runs ffprobe; `GET /next-slot` for compose slot allocation | ✅ |
+| `cameras.py` | `/api/cameras` | Camera registry: list / get / upsert / delete; `POST /test-rtsp` (ffprobe); `GET /next-slot` (compose slot allocation); `GET /{id}/status` (latest `orchestrator:audit` entry → live status badge); `PATCH /{id}/enabled` (pause/unpause without delete). Upsert + delete publish to `cameras:events` so the orchestrator reconciles immediately | ✅ |
 | `faces.py` | `/api/faces` | Face enrollment proxy to face-recognizer service (port 8081 not host-exposed) | shared DB |
 | `unknowns.py` | `/api/unknowns` | Unknown face management (list, label, delete) | shared DB |
 | `browse.py` | `/api/browse` | Vehicle snapshot browser; `/days`, `/days/{date}`, `/snapshot/{camera}/{date}/{filename}` (also `/{date}/{filename}` legacy form) | ✅ |
@@ -324,7 +329,7 @@ camera (where it makes semantic sense — events, system status).
 | `app.js` | 362 | WebSocket connection, settings sliders, module init |
 | `ai.js` | 962 | AI chat, vision tab, DVR tab, onboarding wizard |
 | `generate.js` | 1570 | Image generation, gallery, sweep, img2img, prompt history |
-| `events.js` | 345 | Event feed polling, rendering, face cache, photo lightbox |
+| `events.js` | 715 | Event feed polling + cursor pagination + journal fallback, type-filter pills, name search, Face Matched detail modal (thumbnail grid + similarity scores), photo lightbox |
 | `zones.js` | 500+ | Zone drawing canvas, CRUD operations, alert level config |
 | `faces.js` | 430+ | Face enrollment wizard, multi-angle capture |
 | `browse.js` | 260+ | Vehicle snapshot browser, face gallery |
@@ -445,17 +450,24 @@ the reply.
 ## Image Generation
 
 ### Service: ComfyUI
-- Mounts `./models/comfyui/` for checkpoints, LoRAs, VAE
+- Mounts `./models/comfyui/` for checkpoints, LoRAs, VAE, ADetailer YOLO models
 - Dashboard proxies all requests to `http://comfyui:8188`
+- Custom nodes baked into the image: AnimateDiff-Evolved, VideoHelperSuite, IPAdapter Plus, GGUF (for FP8 quantized WAN), **ComfyUI-Impact-Pack + Impact-Subpack** (FaceDetailer / UltralyticsDetectorProvider — A1111-style ADetailer)
+- ComfyUI native UI exposed at `http://localhost:8188` for advanced workflows
 
 ### Features
-- **txt2img**: prompt → ComfyUI workflow → poll for result
-- **img2img**: upload source image + denoise strength
-- **Batch generation**: queue multiple seeds
-- **Parameter sweep**: steps × CFG × LoRA strength grid
-- **Gallery**: browse generated images with metadata, lightbox preview, "Use These Settings"
-- **Prompt history**: server-side storage with revision tracking (tracks changes during generation)
-- **VRAM management**: `gpu:generation_active` flag pauses detectors during generation, auto-unloads Ollama models
+- **txt2img / img2img**: prompt + optional source image → ComfyUI workflow → poll for result
+- **Stacked LoRAs**: up to 5 LoRAs chained as `LoraLoader → LoraLoader → ...` before KSampler, each with independent strength. Backend uses node IDs 100+ for the chain.
+- **Multi-pass ADetailer**: up to 4 FaceDetailer passes chained image→image (e.g. face fix → hand fix → eye fix in one generation). Backend uses node IDs 200+ for the chain. Per-pass seed is bumped so passes don't collapse onto identical noise.
+- **YOLO detector dropdown**: live list pulled from `/object_info/UltralyticsDetectorProvider` — files in `models/comfyui/ultralytics/{bbox,segm}/` auto-whitelist on ComfyUI restart via entrypoint script (Impact Subpack's safety check).
+- **Sampler + scheduler dropdowns**: live list pulled from `/object_info/KSampler` — every sampler ComfyUI knows about is available; default `euler` / `normal`.
+- **Batch generation**: queue multiple seeds.
+- **Parameter sweep**: steps × CFG × LoRA strength grid. Sweep panel ignores the stacked-LoRA list and uses its own single-LoRA selector for clean variable isolation.
+- **Gallery + prompt history**: server-side storage with revision tracking.
+- **VRAM management**: `gpu:generation_active` flag pauses detectors during generation, auto-unloads Ollama models.
+
+### WAN 2.2 video generation
+WAN diffusion model + UMT5 text encoder + VAE + CLIP-Vision auto-downloaded by `services/comfyui/entrypoint.sh` on first boot. Used directly through ComfyUI's native UI (the Generate tab is image-only).
 
 ---
 
@@ -501,12 +513,13 @@ All alerts are sent to **every approved Telegram user** (multi-user support).
 
 ## DVR Recording
 
-### Service: `recorder`
-- **Method**: ffmpeg RTSP→MP4 copy (no transcode — very low CPU)
-- **Segments**: 1-hour MP4 files
-- **Retention**: 28-day rolling cleanup
-- **Storage**: QNAP NAS via CIFS mount at `/recordings/`
-- **Naming**: `{camera_id}/YYYY-MM-DD/HH-MM-SS.mp4`
+### Service: `recorder` (and `recorder-cam2`, profile-gated)
+- **Method**: ffmpeg RTSP → MPEG-TS copy (no transcode — very low CPU)
+- **Segments**: 1-hour `.ts` files
+- **Retention**: 3-day rolling cleanup (`RETENTION_DAYS=3`)
+- **Storage**: bind-mounted to `./data/recordings/` on the WSL host (browseable from Windows Explorer without sudo)
+- **Naming**: `{camera_id}/YYYY-MM-DD/HH-MM.ts`
+- **QNAP overlay** (optional): when `docker-compose.qnap.yml` is layered in, the bind mount can be swapped to an NFS/CIFS path with no code change
 
 ### Playback API (`recordings.py`)
 - `GET /api/recordings/dates` — list available recording dates
@@ -646,13 +659,15 @@ becomes either a QNAP NFS mount or stays local with shorter retention.
 | `portainer-data` | Docker | Portainer state |
 | `qnap-snapshots`, `qnap-events`, `qnap-telegram`, `qnap-generations`, `qnap-videos`, `qnap-clips` | Local Docker by default; CIFS when `docker-compose.qnap.yml` overlay is used | 6 storage volumes that can flip between local and NAS-backed at runtime |
 | `./data/recordings` (bind mount) | Bind mount to WSL host path (since `ed2c3c2`) | DVR recordings — browseable from Windows Explorer without sudo; will be swapped to NFS mount when QNAP arrives, code paths unchanged |
+| `./services/dashboard/static` + `./services/dashboard/{routes,pollers,helpers,*.py}` | Read-only bind mounts on the dashboard container | Dashboard source live-reload. HTML/CSS/JS changes are live on browser refresh; Python changes only need `docker compose restart dashboard` (no rebuild). The image still `COPY`s them for builds-from-scratch — the mounts just shadow that at runtime |
+| `/var/run/docker.sock` → `/var/run/docker.sock` (on orchestrator only) | Bind mount | Required for the orchestrator to manage compose profiles. **Deliberately NOT mounted on the dashboard** — see Phase 7b decision in REFACTOR_PLAN.md |
 
 ### Profiles + Overlay Files
 
 | Trigger | Effect |
 |---------|--------|
-| `docker compose up` (no profile) | Base file. Recorder runs (since `aa13d25`) with local bind mount + 3-day retention. The 6 `qnap-*` volumes are plain local Docker volumes |
-| `docker compose --profile cam2 up` | Activates the cam2 slot: ingester, pose-detector, vehicle-detector, tracker, recorder all spin up for the basement camera |
+| `docker compose up` (no profile) | Base file. Recorder runs (since `aa13d25`) with local bind mount + 3-day retention. The 6 `qnap-*` volumes are plain local Docker volumes. The `orchestrator` service starts here too and is responsible for activating the cam2-cam5 profiles based on the registry |
+| `docker compose --profile camN up` (manual) | Manual activation of a slot — normally NOT needed since the orchestrator does this automatically when a camera is registered in the dashboard. Useful for debugging or first-run before the orchestrator is in place |
 | `docker compose -f docker-compose.yml -f docker-compose.qnap.yml up` | Overlay rewrites the 6 `qnap-*` volumes to CIFS mounts pointing at QNAP. Requires QNAP at `QNAP_IP` with a `vision-labs` share + 6 subfolders. Recordings stay local-disk by default until you swap that mount too |
 
 ### GPU Sharing — split across two cards
@@ -704,18 +719,26 @@ services/
 │       ├── single.html  # Old per-camera dashboard (now at /single.html?camera=X)
 │       ├── cameras.html # Camera registry admin UI
 │       └── (existing JS/CSS modules — events.js, zones.js, faces.js, …)
-├── recorder/            # ffmpeg RTSP → MP4 DVR (profile-gated to nas)
+├── recorder/            # ffmpeg RTSP → .ts DVR. Always on for front_door; recorder-cam2..cam5
+│                        # are profile-gated and managed by the orchestrator. recorder.py
+│                        # reads RTSP URL from cameras:registry if RTSP_URL env is empty.
+├── orchestrator/        # NEW (Phase 7b). Single-purpose sidecar with the Docker socket.
+│                        # Watches cameras:events + cameras:registry; runs
+│                        # `docker compose --profile <cam> up/down` automatically.
+│                        # Writes audit history to orchestrator:audit Redis stream.
 ├── comfyui/             # Stable Diffusion inference
 ├── prometheus/          # Metrics config
 └── grafana/             # Provisioned dashboard JSON
 ```
 
-### Multi-camera state (Phase 7+)
-- **Registry**: `cameras:registry` Redis hash — `{id: <camera_id>, name, rtsp_sub, rtsp_main, gpu_id, enabled, detect_persons, detect_vehicles, detect_faces}`.
-- **Slot pattern**: each camera beyond `front_door` runs in a profile-gated set of services (`docker compose --profile cam2 up -d` starts ingester/pose/vehicle/face/tracker for cam2). The cam2 slot is in `docker-compose.yml`; cam3/cam4 are copy-paste additions.
+### Multi-camera state (Phase 7+ — fully shipped)
+- **Registry**: `cameras:registry` Redis hash — `{id, name, rtsp_sub, rtsp_main, gpu_id, enabled, detect_persons, detect_vehicles, detect_faces}`.
+- **Slot pool (Phase 7c)**: pre-defined service blocks for `cam2`, `cam3`, `cam4`, `cam5` in `docker-compose.yml`, each profile-gated. `front_door` runs unconditionally as the primary.
+- **Auto-orchestration (Phase 7b)**: the `orchestrator` service watches `cameras:registry` + the `cameras:events` pub/sub channel and reconciles compose profiles automatically — adding a camera in the dashboard spawns its services within ~10s, no terminal command needed. Writes every action to `orchestrator:audit` so the UI can show live status badges. The dashboard intentionally does NOT have the Docker socket; the orchestrator does, with a strict allowlist of profiles it may up/down (`ALLOWED_PROFILES`).
+- **Per-camera detector flags**: each detector reads `detect_persons` / `detect_vehicles` / `detect_faces` from its registry entry at startup and exits cleanly (Exit 0, restart policy `on-failure`) if its detector is disabled. Saves GPU.
 - **WebSocket**: `/ws/live?camera=<id>` — each grid tile opens its own connection per camera.
-- **AI tools** (Phase 9a iter 1): `get_live_scene` aggregates all cameras; `query_events` and `capture_snapshot` take a `camera` arg. System prompt enumerates registered cameras so the LLM can route. Remaining 7 tools still default to primary (iter 2 work).
-- **Telegram commands**: still single-camera (iter 2/9b work).
+- **AI tools**: every multi-camera-relevant tool accepts a `camera` arg (`""` / `"<id>"` / `"all"`). See `routes/ai_tools.py`.
+- **Telegram commands**: per-command `[camera]` token parsing in `bot_commands.py`.
 
 ### Contracts
 ```

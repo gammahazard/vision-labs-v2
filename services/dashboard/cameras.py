@@ -48,12 +48,34 @@ import routes as ctx
 logger = logging.getLogger("dashboard.cameras")
 
 REGISTRY_KEY = "cameras:registry"
+EVENTS_CHANNEL = "cameras:events"          # pub/sub to nudge the orchestrator
+AUDIT_STREAM = "orchestrator:audit"        # orchestrator writes here; we read for status
 
-# Phase 7c: pre-defined camera slots. Each slot has a profile-gated set of
-# services in docker-compose.yml. When a user registers a camera with one of
-# these IDs, running `docker compose --profile <slot> up -d` starts its detectors.
-# To add more slots: duplicate the cam2 block in docker-compose.yml and append here.
-AVAILABLE_SLOTS = ["cam2"]
+
+def _publish_event(action: str, camera_id: str) -> None:
+    """Nudge the orchestrator that something in the registry changed.
+
+    Best-effort — orchestrator also runs a periodic reconcile, so a missed
+    nudge just means up to RECONCILE_INTERVAL extra latency before services
+    catch up. We don't care if pub/sub delivery fails.
+    """
+    try:
+        payload = json.dumps({
+            "action": action,                  # "upsert" | "delete" | "enable" | "disable"
+            "camera_id": camera_id,
+            "ts": time.time(),
+        })
+        ctx.r.publish(EVENTS_CHANNEL, payload)
+    except Exception as e:
+        logger.debug(f"Failed to publish cameras:events {action} {camera_id}: {e}")
+
+# Phase 7b: pre-defined camera slots. Each slot has a profile-gated set of
+# services in docker-compose.yml. The orchestrator service watches the
+# registry and runs `docker compose --profile <slot> up -d` automatically
+# when a camera with one of these IDs is added.
+# To add more slots: duplicate the cam2 block in docker-compose.yml, update
+# this list, and update ALLOWED_PROFILES in the orchestrator service env.
+AVAILABLE_SLOTS = ["cam2", "cam3", "cam4", "cam5"]
 
 
 def next_available_slot() -> Optional[str]:
@@ -260,8 +282,17 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
         entry.setdefault("detect_persons", True)
         entry.setdefault("detect_vehicles", True)
         entry.setdefault("detect_faces", True)
+        was_enabled = bool(existing.get("enabled", True)) if existing else None
         ctx.r.hset(REGISTRY_KEY, cid, json.dumps(entry))
         logger.info(f"Registry upsert: {cid} ({entry.get('name', cid)})")
+
+        # Nudge the orchestrator. For enable/disable transitions, send the
+        # more specific action so its audit stream is easier to read.
+        now_enabled = bool(entry.get("enabled", True))
+        if existing and was_enabled is not None and was_enabled != now_enabled:
+            _publish_event("enable" if now_enabled else "disable", cid)
+        else:
+            _publish_event("upsert", cid)
         return True, None
     except Exception as e:
         return False, str(e)
@@ -270,10 +301,46 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
 def delete_camera(camera_id: str) -> bool:
     """Remove a camera from the registry. Returns True if it existed."""
     try:
-        return bool(ctx.r.hdel(REGISTRY_KEY, camera_id))
+        removed = bool(ctx.r.hdel(REGISTRY_KEY, camera_id))
+        if removed:
+            _publish_event("delete", camera_id)
+        return removed
     except Exception as e:
         logger.warning(f"Registry delete({camera_id}) failed: {e}")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator status — read the audit stream to surface live state in the UI
+# ---------------------------------------------------------------------------
+
+def latest_orchestrator_action(profile: str, max_scan: int = 50) -> Optional[dict]:
+    """Find the most recent orchestrator action for a given profile.
+
+    The audit stream is shared across profiles, so we scan back up to
+    `max_scan` entries looking for one whose `profile` field matches.
+    Returns the parsed entry (timestamp coerced to float, success to bool)
+    or None if nothing for this profile is in the recent history.
+    """
+    try:
+        rows = ctx.r.xrevrange(AUDIT_STREAM, count=max_scan)
+    except Exception:
+        return None
+    for _entry_id, data in rows:
+        if data.get("profile") != profile:
+            continue
+        try:
+            ts = float(data.get("timestamp", 0))
+        except (ValueError, TypeError):
+            ts = 0.0
+        return {
+            "action": data.get("action", ""),
+            "profile": profile,
+            "success": data.get("success") == "1",
+            "detail": data.get("detail", ""),
+            "timestamp": ts,
+        }
+    return None
 
 
 def seed_default_if_empty(default_id: str, default_name: str,

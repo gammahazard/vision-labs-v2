@@ -73,7 +73,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "vl_active_persons",
+          "expr": "sum(vl_active_persons)",
           "legendFormat": "People",
           "refId": "A"
         }
@@ -171,34 +171,41 @@
       "id": 3,
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "title": "Events / min",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(vl_events_total{event_type=\"person_appeared\"}[1m]) * 60",
-          "legendFormat": "Appeared",
+          "expr": "sum by (camera) (rate(vl_events_total{event_type=\"person_appeared\"}[1m])) * 60",
+          "legendFormat": "Appeared \u00b7 {{camera}}",
           "refId": "A"
         },
         {
-          "expr": "rate(vl_events_total{event_type=\"person_left\"}[1m]) * 60",
-          "legendFormat": "Left",
+          "expr": "sum by (camera) (rate(vl_events_total{event_type=\"person_left\"}[1m])) * 60",
+          "legendFormat": "Left \u00b7 {{camera}}",
           "refId": "B"
         },
         {
-          "expr": "rate(vl_events_total{event_type=\"person_identified\"}[1m]) * 60",
-          "legendFormat": "Identified",
+          "expr": "sum by (camera) (rate(vl_events_total{event_type=\"person_identified\"}[1m])) * 60",
+          "legendFormat": "Identified \u00b7 {{camera}}",
           "refId": "C"
         },
         {
-          "expr": "rate(vl_events_total{event_type=\"vehicle_detected\"}[1m]) * 60",
-          "legendFormat": "Vehicle",
+          "expr": "sum by (camera) (rate(vl_events_total{event_type=\"vehicle_detected\"}[1m])) * 60",
+          "legendFormat": "Vehicle \u00b7 {{camera}}",
           "refId": "D"
         }
       ]
@@ -263,11 +270,18 @@
       "id": 4,
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "title": "YOLO Inference Time",
@@ -275,7 +289,7 @@
       "targets": [
         {
           "expr": "vl_inference_ms",
-          "legendFormat": "Inference (ms)",
+          "legendFormat": "{{camera}}",
           "refId": "A"
         }
       ]
@@ -356,11 +370,18 @@
       "id": 6,
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "title": "Stream Lengths",
@@ -368,17 +389,17 @@
       "targets": [
         {
           "expr": "vl_stream_length{stream=\"detections\"}",
-          "legendFormat": "Detection stream",
+          "legendFormat": "detections \u00b7 {{camera}}",
           "refId": "A"
         },
         {
           "expr": "vl_stream_length{stream=\"frames\"}",
-          "legendFormat": "Frame stream",
+          "legendFormat": "frames \u00b7 {{camera}}",
           "refId": "B"
         },
         {
           "expr": "vl_stream_length{stream=\"events\"}",
-          "legendFormat": "Event stream",
+          "legendFormat": "events \u00b7 {{camera}}",
           "refId": "C"
         }
       ]
@@ -553,7 +574,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Temp °C"
+              "options": "Temp \u00b0C"
             },
             "properties": [
               {
@@ -593,7 +614,7 @@
         },
         {
           "expr": "DCGM_FI_DEV_GPU_TEMP",
-          "legendFormat": "Temp °C",
+          "legendFormat": "Temp \u00b0C",
           "refId": "B"
         }
       ]
@@ -986,29 +1007,36 @@
       "id": 13,
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "title": "Notifications Sent",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(vl_notifications_total{type=\"person\"}[5m]) * 300",
-          "legendFormat": "Person",
+          "expr": "sum by (camera) (rate(vl_notifications_total{type=\"person\"}[5m])) * 300",
+          "legendFormat": "Person \u00b7 {{camera}}",
           "refId": "A"
         },
         {
-          "expr": "rate(vl_notifications_total{type=\"vehicle\"}[5m]) * 300",
-          "legendFormat": "Vehicle",
+          "expr": "sum by (camera) (rate(vl_notifications_total{type=\"vehicle\"}[5m])) * 300",
+          "legendFormat": "Vehicle \u00b7 {{camera}}",
           "refId": "B"
         },
         {
-          "expr": "rate(vl_notifications_total{type=\"identified\"}[5m]) * 300",
-          "legendFormat": "Identified",
+          "expr": "sum by (camera) (rate(vl_notifications_total{type=\"identified\"}[5m])) * 300",
+          "legendFormat": "Identified \u00b7 {{camera}}",
           "refId": "C"
         }
       ]

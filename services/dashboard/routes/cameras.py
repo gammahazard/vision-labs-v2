@@ -180,8 +180,66 @@ async def update_one(camera_id: str, request: Request):
 
 @router.delete("/{camera_id}")
 async def delete_one(camera_id: str):
-    """Remove a camera from the registry. Doesn't tear down any services."""
+    """Remove a camera from the registry.
+
+    Phase 7b: a delete also nudges the orchestrator (via Redis pub/sub
+    inside registry.delete_camera), which will tear down the matching
+    profile's services within seconds. The dashboard does not invoke
+    Docker directly.
+    """
     removed = registry.delete_camera(camera_id)
     if not removed:
         return JSONResponse({"error": "Not found"}, status_code=404)
     return {"ok": True}
+
+
+@router.get("/{camera_id}/status")
+async def camera_status(camera_id: str):
+    """Latest orchestrator action for this camera's profile.
+
+    Returns the most recent up/down attempt the orchestrator made for the
+    profile matching this camera_id, if any. Used by the UI to show a live
+    status badge (Pending / Running / Error) after Save without polling
+    Docker directly.
+
+    Response shape:
+        { "in_registry": bool,
+          "enabled": bool | null,
+          "slot": str | null,     # only set if the camera id maps to a slot
+          "latest_action": { action, success, detail, timestamp } | null }
+    """
+    entry = registry.get_camera(camera_id)
+    in_registry = entry is not None
+    enabled = entry.get("enabled", True) if entry else None
+    slot = camera_id if camera_id in registry.AVAILABLE_SLOTS else None
+    latest = registry.latest_orchestrator_action(slot) if slot else None
+    return {
+        "in_registry": in_registry,
+        "enabled": enabled,
+        "slot": slot,
+        "latest_action": latest,
+    }
+
+
+@router.patch("/{camera_id}/enabled")
+async def set_enabled(camera_id: str, request: Request):
+    """Flip the `enabled` flag without otherwise editing the entry.
+
+    Body: { "enabled": true | false }
+
+    The orchestrator picks up the change via the pub/sub event published
+    inside registry.upsert_camera and starts/stops the slot's services.
+    """
+    entry = registry.get_camera(camera_id)
+    if not entry:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    enabled = bool(body.get("enabled"))
+    entry["enabled"] = enabled
+    ok, err = registry.upsert_camera(entry)
+    if not ok:
+        return JSONResponse({"error": err}, status_code=400)
+    return {"ok": True, "enabled": enabled}

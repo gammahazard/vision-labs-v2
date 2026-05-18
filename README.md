@@ -18,8 +18,8 @@ Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubun
 | **Telegram notifications** | Real-time photo alerts with AI scene descriptions, broadcast to all approved users |
 | **AI assistant** | Qwen 3 14B local LLM with 18 tool functions — query events, send alerts, capture snapshots, set reminders |
 | **Vision analysis** | MiniCPM-V multimodal model analyzes camera snapshots and user-uploaded images |
-| **Image generation** | ComfyUI + SDXL for on-device txt2img/img2img with LoRA support, batch generation, gallery |
-| **DVR recording** | ffmpeg-copy 1-hour `.ts` segments with rolling retention. Profile-gated; requires QNAP NAS to enable |
+| **Image generation** | ComfyUI + SDXL on-device txt2img/img2img with **stacked LoRAs** (up to 5 with per-LoRA strength), **multi-pass ADetailer** face/hand fix (Impact Pack), live sampler/scheduler dropdowns, batch generation, gallery |
+| **DVR recording** | ffmpeg-copy 1-hour `.ts` segments with 3-day rolling retention. Runs by default to `./data/recordings/{camera_id}/` (bind-mounted on the WSL host so it's browseable from Windows Explorer). Optional QNAP overlay flips the destination to NFS/CIFS |
 | **Zone management** | Draw detection/alert/dead zones on the camera view — configurable per time-of-day |
 | **Local retention** | Daily prune of `/data/snapshots` and `/data/events` (default 4 days, configurable). Disabled by setting `SNAPSHOT_RETENTION_DAYS=0` |
 | **System monitoring** | Prometheus + Grafana dashboards with GPU, Redis, and inference metrics |
@@ -59,7 +59,8 @@ Portainer ◀──▶ https://localhost:9443 (Docker management UI)
 | **dashboard** | — | FastAPI backend + static frontend — WebSocket live view (authenticated), REST APIs, background pollers, retention prune |
 | **ollama** | ✅ GPU 1 (3090) | Local LLM server — Qwen 3 14B (chat + tools) and MiniCPM-V (vision) |
 | **comfyui** | ✅ GPU 1 (3090) | Stable Diffusion inference — SDXL txt2img/img2img with LoRA support |
-| **recorder** | — | ffmpeg RTSP→`.ts` copy (no transcode), 1-hour segments. **Profile-gated** — only runs with `--profile nas` |
+| **recorder** | — | ffmpeg RTSP→`.ts` copy (no transcode), 1-hour segments, 3-day retention. Runs by default to `./data/recordings/`; cam2-cam5 recorders are profile-gated and managed by the orchestrator |
+| **orchestrator** | — | Watches `cameras:registry` and reconciles compose profiles. When you add a camera via the dashboard, this service auto-runs `docker compose --profile <slot> up -d` (the dashboard itself stays Docker-socket-free for security). Slots: `cam2`–`cam5`. Audits every action to `orchestrator:audit` Redis stream |
 | **prometheus** | — | Metrics collection (GPU, Redis, inference timing) |
 | **grafana** | — | Monitoring dashboards embedded in the system monitor page |
 | **redis-exporter** | — | Exports Redis metrics to Prometheus |
@@ -135,6 +136,17 @@ docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
 | `QNAP_IP` | No | QNAP NAS IP for CIFS volume mounts (used when `--profile nas`) |
 | `QNAP_USER` | No | QNAP login username |
 | `QNAP_PASSWORD` | No | QNAP login password |
+| `VEHICLE_RATE_LIMIT_SEC` | No | tracker: min seconds between vehicle events (default 3) |
+| `ACTION_DEBOUNCE_FRAMES` | No | tracker: frames a new pose-action must be stable for (default 10) |
+| `ACTION_STICKY_MULTIPLIER` | No | tracker: hysteresis multiplier on action changes (default 2) |
+| `MIN_BBOX_AREA` | No | tracker: minimum detection bbox area in px² (default 3072) |
+| `IDENTITY_GRACE_SECONDS` | No | tracker: seconds to wait for face recognition before announcing unknown (default 4.0) |
+| `VEHICLE_IOU_THRESHOLD` | No | tracker: IoU for parked-vehicle matching (default 0.2) |
+| `MAX_EVENT_STREAM_LEN` | No | tracker: cap on `events:{cam}` stream (default 5000) |
+| `MAX_DETECTION_STREAM_LEN` | No | pose/vehicle detectors: cap on detection streams (default 1000) |
+| `CACHE_REFRESH_INTERVAL` | No | face-recognizer: seconds between cache reloads from shared DB (default 30) |
+| `ALLOWED_PROFILES` | No | orchestrator: profile names it's permitted to up/down (default `cam2,cam3,cam4,cam5`) |
+| `RECONCILE_INTERVAL` | No | orchestrator: safety-net reconcile loop period in seconds (default 10) |
 
 ---
 
@@ -163,7 +175,7 @@ Per-camera detailed dashboard. The `?camera=` URL param scopes everything on the
 Grid tiles link to `/single.html?camera=<id>` by default. Visiting `/single.html` with no param falls back to the primary camera.
 
 ### Cameras (`cameras.html`) — Registry admin
-Add/edit/delete cameras. Test RTSP URLs via the **Test Connection** button (runs ffprobe in the dashboard container). Choose per-camera which detectors run (Persons / Vehicles / Faces). When you Save, the UI shows the docker compose command to start the new camera's detection services.
+Add / edit / delete / pause cameras. Test RTSP URLs via the **Test Connection** button (runs ffprobe in the dashboard container). Per-camera detector toggle (Persons / Vehicles / Faces). On Save, the **orchestrator** sees the registry change via the `cameras:events` Redis pub/sub channel and brings the slot's services up automatically — no terminal command needed. A status pill on each camera row shows live state: `running`, `pending`, `paused`, `stopped`, or `<action> failed`. The pause checkbox flips `enabled: false` in the registry; orchestrator tears down detectors while the registration stays so you can re-enable later. Pre-defined slots: `cam2`–`cam5` (extend by duplicating a block in `docker-compose.yml` and adding to `AVAILABLE_SLOTS` in `services/dashboard/cameras.py` + `ALLOWED_PROFILES` env on the orchestrator).
 
 ### AI Assistant (`ai.html`)
 Three-tab interface:
@@ -172,7 +184,17 @@ Three-tab interface:
 - **DVR tab**: browse and play back recorded camera footage with a per-camera **Camera** dropdown (lists every camera that actually has recordings on disk) plus a date picker; click a segment to play. Runs locally on disk by default (no QNAP required).
 
 ### Image Generation (`ai.html` — Generate tab)
-ComfyUI-powered. Drop SDXL `.safetensors` files into `models/comfyui/checkpoints/` to enable — none are auto-downloaded.
+ComfyUI-powered. Drop model files into:
+
+| Folder | Purpose |
+|---|---|
+| `models/comfyui/checkpoints/` | SDXL / SD1.5 / Flux checkpoints (`.safetensors`) — none are auto-downloaded |
+| `models/comfyui/loras/` | LoRAs — stack up to 5 per generation, each with its own strength slider |
+| `models/comfyui/vae/` | VAE overrides |
+| `models/comfyui/ultralytics/bbox/` | ADetailer face/hand/eye detectors (`.pt`) |
+| `models/comfyui/ultralytics/segm/` | ADetailer segmentation detectors (`-seg.pt`) |
+
+UI exposes the live ComfyUI sampler + scheduler lists, plus a multi-pass ADetailer stack (chain face → hand fixes in one generation). YOLO `.pt` files auto-whitelist on ComfyUI restart via Impact Subpack. Image generation pauses always-on detectors via a Redis flag so the 3090 isn't fighting itself.
 
 ### System Monitor (`monitoring.html`)
 People count, inference time, GPU status, Redis memory cards, plus embedded Grafana dashboard with adjustable time range.

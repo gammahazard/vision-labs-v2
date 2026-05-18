@@ -59,14 +59,22 @@
 </head>
 
 <body>
-    <div class="cam-page">
-        <div class="cam-nav">
-            <a href="/">🏠 Home</a>
-            <a href="/single.html">📺 Detail</a>
-            <a href="/cameras.html" class="active">📹 Cameras</a>
-            <a href="/telegram.html">📲 Telegram</a>
-            <a href="/monitoring.html">📊 Monitoring</a>
+    <nav class="navbar">
+        <div class="navbar-left">
+            <a href="/" class="navbar-brand">
+                <span class="navbar-logo">◉</span> Vision Labs
+            </a>
+            <div class="navbar-links">
+                <a href="/" class="nav-link">🏠 Home</a>
+                <a href="/single.html" class="nav-link">📺 Detail view</a>
+                <a href="/cameras.html" class="nav-link nav-link--active">📹 Cameras</a>
+                <a href="/ai.html" class="nav-link">🤖 AI</a>
+                <a href="/telegram.html" class="nav-link">🔐 Telegram</a>
+                <a href="/monitoring.html" class="nav-link">📊 Monitoring</a>
+            </div>
         </div>
+    </nav>
+    <div class="cam-page">
 
         <h1><span>📹</span> Cameras</h1>
         <div class="cam-subtitle">Register cameras for vision-labs. Auto-detect runs against any LAN RTSP URL.</div>
@@ -149,6 +157,7 @@
     </div>
 
     <script src="cameras.js"></script>
+    <script src="nav.js?v=1"></script>
 </body>
 
 </html>

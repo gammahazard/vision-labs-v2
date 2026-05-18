@@ -44,6 +44,41 @@ from zoneinfo import ZoneInfo
 # ---------------------------------------------------------------------------
 CAMERA_ID = os.getenv("CAMERA_ID", "front_door")
 RTSP_URL = os.getenv("RTSP_URL", "")
+REDIS_HOST_FOR_REGISTRY = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT_FOR_REGISTRY = int(os.getenv("REDIS_PORT", "6379"))
+
+
+def _load_rtsp_from_registry():
+    """If RTSP_URL not set in env, look it up from cameras:registry.
+
+    Mirrors the same fallback the camera-ingester does — lets slot-based
+    cameras (cam3, cam4, cam5) work without hardcoding their RTSP URL in
+    docker-compose.yml. The dashboard's camera-add UI writes the URL into
+    the registry; the orchestrator brings up this recorder for the slot;
+    we look up the URL here at startup.
+    """
+    global RTSP_URL
+    if RTSP_URL:
+        return  # env value wins
+    try:
+        import json as _json
+        import redis as _redis
+        r = _redis.Redis(host=REDIS_HOST_FOR_REGISTRY,
+                         port=REDIS_PORT_FOR_REGISTRY,
+                         decode_responses=True)
+        r.ping()
+        raw = r.hget("cameras:registry", CAMERA_ID)
+        if raw:
+            entry = _json.loads(raw)
+            RTSP_URL = entry.get("rtsp_sub", "")
+            if RTSP_URL:
+                print(f"[recorder] Loaded RTSP from registry for '{CAMERA_ID}': set", flush=True)
+    except Exception as e:
+        print(f"[recorder] Registry lookup failed (will fall back to env): {e}", flush=True)
+
+
+_load_rtsp_from_registry()
+
 RECORDING_DIR = os.getenv("RECORDING_DIR", "/recordings")
 SEGMENT_DURATION = int(os.getenv("SEGMENT_DURATION", "3600"))  # 1 hour
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "28"))

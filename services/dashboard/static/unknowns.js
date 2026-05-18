@@ -172,6 +172,45 @@ async function deleteUnknown(uid) {
 }
 
 /**
+ * Manually scan all unknowns against enrolled faces.
+ *
+ * Promotes unknowns whose embedding matches a known person (as extra
+ * recognition angles) and deletes loose matches. Same logic that runs
+ * at startup, exposed as a button so the user can trigger it after
+ * labeling a few unknowns to vacuum up the rest of the gallery.
+ */
+async function scanUnknowns() {
+    const btn = document.getElementById("scanUnknownsBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ Scanning..."; }
+    try {
+        const response = await fetch("/api/unknowns/scan", { method: "POST" });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            const promoted = data.promoted || 0;
+            const deleted = data.deleted || 0;
+            const remaining = data.after !== undefined ? data.after : "?";
+            if (promoted === 0 && deleted === 0) {
+                showEnrollStatus("🔍 Scan complete — no matches found.", "success");
+            } else {
+                showEnrollStatus(
+                    `🔍 Scan: absorbed ${promoted} angle(s), cleared ${deleted} loose match(es). ${remaining} unknown(s) left.`,
+                    "success"
+                );
+            }
+            loadUnknowns();
+            loadFaces();
+        } else {
+            showEnrollStatus(`❌ ${data.error || "Scan failed"}`, "error");
+        }
+    } catch (err) {
+        console.error("Scan unknowns error:", err);
+        showEnrollStatus("❌ Scan unavailable", "error");
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "🔍 Scan"; }
+    }
+}
+
+/**
  * Clear all unknown faces at once.
  */
 async function clearAllUnknowns() {

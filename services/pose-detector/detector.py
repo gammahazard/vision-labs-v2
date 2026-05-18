@@ -71,7 +71,7 @@ CONFIG_KEY = stream_key(_CFG_TMPL, camera_id=CAMERA_ID)
 DETECTION_FRAME = stream_key(_DET_FRAME_TMPL, detector_type="pose", camera_id=CAMERA_ID)
 
 # Max detections to keep in the output stream
-MAX_DETECTION_STREAM_LEN = 1000
+MAX_DETECTION_STREAM_LEN = int(os.getenv("MAX_DETECTION_STREAM_LEN", "1000"))
 
 # How often to check Redis for config changes (every N frames)
 CONFIG_RELOAD_INTERVAL = 25

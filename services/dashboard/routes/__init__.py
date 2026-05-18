@@ -29,6 +29,7 @@ FACE_API_URL: str = ""          # face-recognizer service URL
 EVENT_STREAM: str = ""
 FRAME_STREAM: str = ""
 DETECTION_STREAM: str = ""
+VEHICLE_DET_STREAM: str = ""            # `detections:vehicle:{cam_id}` for routes/metrics.py
 STATE_KEY: str = ""
 CONFIG_KEY: str = ""
 

@@ -70,10 +70,9 @@ TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
 # Vision model config — for AI scene analysis on detection snapshots
 from constants import OLLAMA_HOST, VISION_MODEL, OLLAMA_KEEP_ALIVE
 
-# Rate limiting — reads cooldown from Redis config, falls back to defaults
-_last_person_notification = 0.0
-
-
+# Rate limiting — cooldown values come from Redis config; the last-broadcast
+# timestamps live in Redis too (see _COOLDOWN_KEY below) so restarts don't
+# reset the gate.
 def _get_cooldown(key: str, default: int) -> int:
     """Read a cooldown value from Redis config, falling back to default."""
     try:
@@ -89,6 +88,30 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 logger = logging.getLogger("dashboard.notifications")
+
+# Rate-limit timestamps persist in a Redis hash so a dashboard restart
+# can't bypass an active cooldown. Keyed by event-type; value is the unix
+# timestamp of the last broadcast.
+_COOLDOWN_KEY = "notify:last"
+
+
+def _get_last_notification(event_type: str) -> float:
+    """Return the last-broadcast timestamp for the given event type, 0 if never."""
+    try:
+        val = ctx.r.hget(_COOLDOWN_KEY, event_type)
+        return float(val) if val else 0.0
+    except (redis.RedisError, ValueError, TypeError):
+        return 0.0
+
+
+def _set_last_notification(event_type: str, ts: float) -> None:
+    """Record the last-broadcast timestamp. Best-effort — failure to write
+    just falls back to the previous behavior (in-process counter), so we
+    swallow Redis errors rather than crashing the notification path."""
+    try:
+        ctx.r.hset(_COOLDOWN_KEY, event_type, str(ts))
+    except redis.RedisError as e:
+        logger.warning(f"Failed to persist cooldown timestamp: {e}")
 
 
 def _now_str() -> str:
@@ -225,8 +248,15 @@ async def send_photo(photo_bytes: bytes, caption: str = "",
 
 
 async def broadcast_photo(photo_bytes: bytes, caption: str = "",
-                          reply_markup: dict = None) -> int:
-    """Send a photo to ALL approved users. Returns first message_id."""
+                          reply_markup: dict = None,
+                          camera_id: str = "") -> int:
+    """Send a photo to ALL approved users. Returns first message_id.
+
+    `camera_id` is used to label the Prometheus notification counter
+    so Grafana can chart "alerts per camera". Callers should pass the
+    event's camera_id from event_data; falls back to dashboard primary
+    if not provided.
+    """
     chat_ids = _get_all_chat_ids()
     if not chat_ids:
         return 0
@@ -243,11 +273,13 @@ async def broadcast_photo(photo_bytes: bytes, caption: str = "",
             from routes.metrics import vl_notifications_total
             # Determine notification type from caption keywords
             if "Vehicle" in caption:
-                vl_notifications_total.labels(type="vehicle").inc()
+                ntype = "vehicle"
             elif "Identified" in caption:
-                vl_notifications_total.labels(type="identified").inc()
+                ntype = "identified"
             else:
-                vl_notifications_total.labels(type="person").inc()
+                ntype = "person"
+            cam = camera_id or ctx.CAMERA_ID
+            vl_notifications_total.labels(camera=cam, type=ntype).inc()
         except Exception:
             pass  # Metrics not loaded yet during startup
 
@@ -665,29 +697,22 @@ async def notify_person_detected(event_data: dict,
     instead of grabbing a new live frame. This ensures the photo
     shows the same frame that triggered the detection.
     """
-    global _last_person_notification
-
     if not is_configured():
         return 0
 
     now = time.time()
     cooldown = _get_cooldown("notify_cooldown", 60)
-    if now - _last_person_notification < cooldown:
-        remaining = cooldown - (now - _last_person_notification)
+    last_sent = _get_last_notification("person")
+    if now - last_sent < cooldown:
+        remaining = cooldown - (now - last_sent)
         logger.debug(f"Person notification rate-limited ({remaining:.0f}s remaining in {cooldown}s cooldown)")
         return 0  # Rate limited
 
-    # Check suppression BEFORE updating the rate-limit timer.
-    # If suppressed, we don't want to burn the cooldown window.
+    _set_last_notification("person", now)
+
     identity = event_data.get("identity_name", "")
     zone = event_data.get("zone", "")
     action = event_data.get("action", "")
-    time_period = event_data.get("time_period", "")
-    confidence = float(event_data.get("confidence", "0") or "0")
-
-
-    _last_person_notification = now
-
     person_id = event_data.get("person_id", "unknown")
     name = identity if identity else person_id
     parts = [f"\U0001f6a8 <b>Person Detected</b>"]
@@ -726,7 +751,7 @@ async def notify_person_detected(event_data: dict,
         if bbox_json:
             frame = draw_bbox_on_frame(frame, bbox_json,
                                        label=name, color=(0, 255, 0))
-        msg_id = await broadcast_photo(frame, caption)
+        msg_id = await broadcast_photo(frame, caption, camera_id=event_data.get("camera_id", ""))
     else:
         await broadcast_text(caption)
         msg_id = 0
@@ -757,8 +782,6 @@ async def notify_person_identified(event_data: dict,
     identity_name = event_data.get("identity_name", "")
     zone = event_data.get("zone", "")
     action = event_data.get("action", "")
-    time_period = event_data.get("time_period", "")
-    confidence = float(event_data.get("confidence", "0") or "0")
 
     if not identity_name:
         return 0  # Skip if no name was identified
@@ -788,7 +811,7 @@ async def notify_person_identified(event_data: dict,
             frame = draw_bbox_on_frame(frame, bbox_json,
                                        label=identity_name,
                                        color=(255, 255, 0))
-        msg_id = await broadcast_photo(frame, caption)
+        msg_id = await broadcast_photo(frame, caption, camera_id=event_data.get("camera_id", ""))
     else:
         await broadcast_text(caption)
         msg_id = 0
@@ -799,9 +822,6 @@ async def notify_person_identified(event_data: dict,
 # ---------------------------------------------------------------------------
 # Notify on vehicle idle (rate-limited separately from person notifications)
 # ---------------------------------------------------------------------------
-_last_vehicle_idle_notification = 0.0
-
-
 async def notify_vehicle_idle(event_data: dict,
                                event_id: str = "",
                                snapshot_bytes: bytes = None) -> int:
@@ -815,27 +835,23 @@ async def notify_vehicle_idle(event_data: dict,
     If snapshot_bytes is provided, uses those bytes for the photo
     instead of grabbing a new live frame.
     """
-    global _last_vehicle_idle_notification
-
     if not is_configured():
         return 0
 
     now = time.time()
     cooldown = _get_cooldown("vehicle_cooldown", 60)
-    if now - _last_vehicle_idle_notification < cooldown:
-        remaining = cooldown - (now - _last_vehicle_idle_notification)
+    last_sent = _get_last_notification("vehicle_idle")
+    if now - last_sent < cooldown:
+        remaining = cooldown - (now - last_sent)
         logger.debug(f"Vehicle idle notification rate-limited ({remaining:.0f}s remaining in {cooldown}s cooldown)")
         return 0  # Rate limited
 
+    _set_last_notification("vehicle_idle", now)
+
     vehicle_class = event_data.get("vehicle_class", "vehicle")
     zone = event_data.get("zone", "")
-    time_period = event_data.get("time_period", "")
     duration_raw = float(event_data.get("duration", "0") or "0")
     confidence = event_data.get("vehicle_confidence", "")
-
-
-
-    _last_vehicle_idle_notification = now
 
     # Format duration as human-readable string
     if duration_raw >= 3600:
@@ -880,7 +896,7 @@ async def notify_vehicle_idle(event_data: dict,
         if bbox_json:
             frame = draw_bbox_on_frame(frame, bbox_json,
                                        label=vehicle_class, color=(0, 165, 255))
-        msg_id = await broadcast_photo(frame, caption)
+        msg_id = await broadcast_photo(frame, caption, camera_id=event_data.get("camera_id", ""))
     else:
         await broadcast_text(caption)
         msg_id = 0

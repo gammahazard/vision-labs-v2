@@ -47,18 +47,106 @@ function renderCameras(cameras) {
         if (c.detect_faces !== false) dets.push('faces');
         const detStr = dets.length ? dets.join(' · ') : 'no detectors';
         return `
-            <div class="cam-item">
+            <div class="cam-item" data-camera-id="${escape(c.id)}">
                 <div class="cam-item-info">
-                    <div class="cam-item-name">${escape(c.name || c.id)} <span style="color:#64748b;font-weight:400;font-size:0.75rem;">· ${escape(c.id)}</span></div>
+                    <div class="cam-item-name">
+                        ${escape(c.name || c.id)}
+                        <span style="color:#64748b;font-weight:400;font-size:0.75rem;">· ${escape(c.id)}</span>
+                        <span class="cam-status" id="status-${escape(c.id)}"
+                              style="margin-left:0.5rem;font-size:0.7rem;padding:2px 8px;border-radius:10px;background:#1e293b;color:#94a3b8;vertical-align:middle;">…</span>
+                    </div>
                     <div class="cam-item-meta">${escape(subUrl)}</div>
-                    <div class="cam-item-meta" style="margin-top:0.15rem;">${escape(loc)} · ${enabled ? 'enabled' : 'disabled'} · ${escape(detStr)}</div>
+                    <div class="cam-item-meta" style="margin-top:0.15rem;">${escape(loc)} · ${escape(detStr)}</div>
                 </div>
-                <div class="cam-item-actions">
-                    <button class="cam-btn cam-btn-danger" onclick="handleDelete('${escape(c.id)}', '${escape(c.name || c.id)}')">Delete</button>
+                <div class="cam-item-actions" style="flex-direction:column;align-items:flex-end;gap:0.35rem;">
+                    <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.78rem;color:#94a3b8;cursor:pointer;">
+                        <input type="checkbox" ${enabled ? 'checked' : ''}
+                               onchange="handleEnableToggle('${escape(c.id)}', this.checked)"
+                               style="width:14px;height:14px;cursor:pointer;">
+                        ${enabled ? 'enabled' : 'paused'}
+                    </label>
+                    <button class="cam-btn cam-btn-danger"
+                            onclick="handleDelete('${escape(c.id)}', '${escape(c.name || c.id)}')"
+                            style="padding:0.3rem 0.65rem;font-size:0.78rem;">Delete</button>
                 </div>
             </div>
         `;
     }).join('');
+
+    // Kick off live status polling for every camera tile we just rendered.
+    for (const c of cameras) refreshCameraStatus(c.id);
+}
+
+// ---------------------------------------------------------------------------
+// Status badge — polls /api/cameras/{id}/status, paints the small pill.
+// Slot cameras (cam2..cam5) show real orchestrator state; front_door
+// always shows "running" since it's not slot-gated.
+// ---------------------------------------------------------------------------
+async function refreshCameraStatus(camId) {
+    try {
+        const res = await fetch(`/api/cameras/${encodeURIComponent(camId)}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        paintStatusBadge(camId, data);
+    } catch (e) { /* silent */ }
+}
+
+function paintStatusBadge(camId, data) {
+    const el = document.getElementById(`status-${camId}`);
+    if (!el) return;
+    // Decide label + color
+    let label = 'running';
+    let bg = 'rgba(34,197,94,0.15)';
+    let fg = '#4ade80';
+
+    if (data.enabled === false) {
+        label = 'paused';
+        bg = 'rgba(148,163,184,0.18)';
+        fg = '#94a3b8';
+    } else if (data.slot) {
+        // Slot camera — look at the orchestrator action
+        const a = data.latest_action;
+        if (!a) {
+            label = 'pending';
+            bg = 'rgba(245,158,11,0.18)';
+            fg = '#fbbf24';
+        } else if (!a.success) {
+            label = `${a.action} failed`;
+            bg = 'rgba(239,68,68,0.18)';
+            fg = '#f87171';
+            el.title = a.detail || 'see orchestrator logs';
+        } else if (a.action === 'up') {
+            label = 'running';
+        } else if (a.action === 'down') {
+            label = 'stopped';
+            bg = 'rgba(148,163,184,0.18)';
+            fg = '#94a3b8';
+        }
+    }
+    el.textContent = label;
+    el.style.background = bg;
+    el.style.color = fg;
+}
+
+async function handleEnableToggle(camId, enabled) {
+    try {
+        const res = await fetch(`/api/cameras/${encodeURIComponent(camId)}/enabled`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showMsg(enabled ? `▶ Enabled — services starting…` : `⏸ Paused — services stopping…`, 'ok');
+            // Wait a moment for the orchestrator to react, then refresh the badge
+            setTimeout(() => refreshCameraStatus(camId), 1500);
+            setTimeout(loadCameras, 5000);
+        } else {
+            showMsg(`✗ ${data.error || 'toggle failed'}`, 'err');
+        }
+    } catch (e) {
+        showMsg(`✗ ${e.message}`, 'err');
+    }
 }
 
 function escape(s) {
@@ -124,17 +212,26 @@ async function handleAddCamera(event) {
         const data = await res.json();
         if (data.ok) {
             if (data.activation_cmd) {
-                // Show the docker compose command in a long-lived banner the
-                // user can copy. Keep it visible until they dismiss / refresh.
-                const el = $('camMsg');
-                el.className = 'cam-msg show ok';
-                el.innerHTML = `✓ Saved camera "<b>${escape(name)}</b>" as slot <code>${escape(id)}</code>. To start its detection services, run:<br>
-                    <code style="display:block;margin-top:0.5rem;padding:0.5rem;background:#0f172a;border-radius:4px;font-size:0.85rem;user-select:all;">${escape(data.activation_cmd)}</code>`;
+                // Phase 7b: orchestrator service automatically brings up the
+                // matching profile when we publish to cameras:events (which
+                // happens inside the registry upsert). Show provisioning
+                // status and let the badge in the list reflect live state.
+                showMsg(`✓ Saved "${name}" as slot ${id}. Provisioning services — watch the status badge in the list (can take ~30-60s for the first start).`, 'ok');
+                // Poll the status badge aggressively while the orchestrator
+                // brings services up. Container startup can take 30-60s on
+                // first run (image pulls, GPU warmup). Poll every 3 seconds
+                // for the first 90 seconds, then stop — the periodic load
+                // takes over after that.
+                let polls = 0;
+                const poller = setInterval(() => {
+                    refreshCameraStatus(id);
+                    polls++;
+                    if (polls >= 30) clearInterval(poller); // 30 × 3s = 90s
+                }, 3000);
             } else {
-                showMsg(`✓ Saved camera "${name}". (Custom ID — you'll need to add this camera's services to docker-compose.yml manually.)`, 'ok');
+                showMsg(`✓ Saved "${name}". Custom ID — services must be added to docker-compose.yml manually.`, 'ok');
             }
             $('addCameraForm').reset();
-            // Re-fetch next slot to auto-fill the ID field for the next add
             loadNextSlot();
             loadCameras();
         } else {
@@ -149,7 +246,7 @@ async function handleAddCamera(event) {
 }
 
 async function handleDelete(id, name) {
-    if (!confirm(`Delete camera "${name}"? This only removes it from the registry — running services won't be stopped.`)) return;
+    if (!confirm(`Delete camera "${name}"?\n\nThe orchestrator will stop its detection services within seconds. The face DB is shared across cameras and is NOT affected by this delete.`)) return;
     try {
         const res = await fetch(`/api/cameras/${encodeURIComponent(id)}`, { method: 'DELETE' });
         const data = await res.json();

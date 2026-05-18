@@ -136,6 +136,20 @@ async def label_unknown(uid: int, data: dict):
         return JSONResponse(status_code=503, content={"error": "Face recognizer not available"})
 
 
+@router.post("/unknowns/scan")
+async def scan_unknowns():
+    """Proxy: trigger the face-recognizer's reconcile sweep on demand."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{ctx.FACE_API_URL}/api/unknowns/scan", timeout=30,
+            )
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception as e:
+        ctx.logger.warning(f"Scan unknowns failed: {e}")
+        return JSONResponse(status_code=503, content={"error": "Face recognizer not available"})
+
+
 @router.delete("/unknowns/clear")
 async def clear_all_unknowns():
     """Proxy: remove all auto-captured unknown faces."""

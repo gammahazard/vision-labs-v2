@@ -697,6 +697,97 @@ If any step breaks, we revert the last change and figure out why before continui
 
 ---
 
+## Post-refactor follow-ups discovered in the wild
+
+### tracker `block=0` deadlock on `detect_vehicles=false` cameras *(fixed May 2026)*
+
+**Symptom:** `tracker-cam2` looked alive (container Up, banner logged, SIGTERM handled cleanly) but `events:cam2` stayed at 0 and `state:cam2` was empty for 8 hours. `/who basement` Telegram returned "no state". Pose detector for cam2 was producing detections normally (`detections:pose:cam2` had 1000+ entries) and face-recognizer-cam2 was consuming fine.
+
+**Root cause:** `services/tracker/tracker.py` had two `XREADGROUP` calls per loop iteration — one for pose, one for vehicles. The vehicle call used `block=0` with a comment `# Non-blocking — just check what's available`. **The comment was wrong.** In Redis Streams, `block=0` means "block indefinitely". For front_door this was fine because `vehicle-detector` (single-instance, GPU 0) constantly publishes to `detections:vehicle:front_door`, so the call returns within milliseconds. For cam2, the camera registry has `detect_vehicles: false` and there is no `vehicle-detector-cam2` service, so `detections:vehicle:cam2` is permanently empty — the call **blocked forever** on the very first iteration, before the pose message could be processed/acked.
+
+**Diagnosis trail:**
+- `XINFO CONSUMERS detections:pose:cam2 trackers` → `idle: 274000 ms`, `pending: 1` → consumer made one read and stopped
+- `XPENDING` → the one pending message ID matched `last-delivered-id` → tracker received message but never acked
+- `py-spy dump --pid 1` inside container → stack stuck in `redis._read_from_socket` inside `xreadgroup` (proved it was inside a syscall, not crashed)
+
+**Fix:** remove the `block=` argument from the vehicle XREADGROUP call. With redis-py, omitting `block` means no BLOCK option in the Redis command, which translates to "return immediately if no data" — the intended behavior.
+
+**Secondary gotcha during the fix:** docker-compose builds **per-service images**, not per-build-context. `docker compose build tracker` only rebuilt `vision-labs-tracker:latest`. `tracker-cam2` uses a separate image tag `vision-labs-tracker-cam2:latest` that didn't get rebuilt until `docker compose build tracker-cam2` was run explicitly. The cam2 container was running stale code with the old `block=0` until that second build. Watch for this with any future per-camera service rebuild — `docker compose build` with no service arg rebuilds everything safely.
+
+### Telegram bbox offset *(open as of May 2026 — cosmetic; diagnosis below, fix held for verification)*
+
+**Observed:** On cam2 person-detection Telegram photos the bounding box draws offset to the right of (and slightly below) the actual person, even with a stationary subject. User suspects the same offset exists on front_door — needs side-by-side verification tomorrow.
+
+#### Tentative diagnosis (traced May 11, ~04:30 EDT — independent re-trace planned tomorrow)
+
+**Most-likely root cause:** `services/dashboard/routes/notifications.py:392-402` `draw_bbox_on_frame()`:
+
+```python
+# If snapshot is HD (>= 1000px wide), scale bbox from SD coords
+if snap_w >= 1000:
+    sd_frame = get_sd_frame()      # ← Bug A: no camera_id arg → returns primary camera's frame
+    if sd_frame:
+        sd_arr = np.frombuffer(sd_frame, np.uint8)
+        sd_img = cv2.imdecode(sd_arr, cv2.IMREAD_COLOR)
+        if sd_img is not None:
+            sd_h, sd_w = sd_img.shape[:2]
+            sx = snap_w / sd_w
+            sy = snap_h / sd_h
+            x1, y1, x2, y2 = x1 * sx, y1 * sy, x2 * sx, y2 * sy
+```
+
+Two compounding issues:
+
+1. **Heuristic `snap_w >= 1000`** assumes only HD main-streams have ≥1000-wide frames. Basement camera's RTSP **sub-stream is 1280×720** (verified in `camera-ingester-cam2` startup log) — it trips the threshold even though it's a sub-stream, so the code mistakenly applies HD-rescaling.
+
+2. **`get_sd_frame()` called with no `camera_id` arg** (helper defined at notifications.py:351). The fallback path uses `ctx.FRAME_STREAM`, which is bound to the dashboard's primary camera = front_door. So for cam2 events the "SD reference frame" used to compute the scale factor comes from the wrong camera entirely (front_door's 896×512 sub-stream).
+
+**Predicted scaling for cam2** with a `[188, 197, 473, 714]` bbox (from a real recent event):
+- `snap_w` = 1280 → triggers HD branch
+- `sd_frame` = front_door 896×512 (wrong camera)
+- `sx` = 1280 / 896 ≈ 1.428
+- `sy` = 720 / 512 ≈ 1.406
+- scaled bbox: `[269, 277, 676, 1004]` — ~80px right, ~80px down, bottom edge overflows the 720-px frame
+- → matches the user's described "to the right of me" offset, direction + rough magnitude.
+
+**Predicted front_door behavior under the same code path:**
+- Sub-stream snapshot (896×512): `snap_w < 1000` → no scaling → ✅ correct
+- HD snapshot (2304×1296): `snap_w ≥ 1000`, `get_sd_frame()` returns front_door 896×512 (correct camera!) → `sx = 2304/896 ≈ 2.57` → ✅ correct (this is exactly the case the heuristic was designed for)
+
+So this code path **should be correct on front_door** in both snapshot modes. If front_door also shows offset, the bug is in a different overlay path — candidates to check tomorrow:
+- `services/dashboard/pollers/events.py:170-202` (uses explicit `is_hd` flag — looks correct on first read; verify)
+- `services/dashboard/websocket.py:352-410` (live-overlay path — different bbox source)
+- vehicle-event path at `services/dashboard/pollers/events.py:251` (no scaling at all — could be wrong on HD)
+
+**Supporting evidence gathered tonight:**
+- ingester logs: cam2 sub = 1280×720; front_door sub = 896×512, HD = 2304×1296
+- pose-detector emits `frame_width/frame_height` directly from `frame.shape` after `imdecode` — no inference-time resize that the bbox would need un-mapping from
+- tracker stores both `bbox` (latest) and `snapshot_bbox` (frozen at snapshot capture). Notification path uses `snapshot_bbox` first (verified at notifications.py:725, 786, 879), so bbox value is correctly time-aligned with the snapshot — the bug must be in the *draw* step, not the *capture* step.
+
+#### Proposed fixes (not applied — review tomorrow first)
+
+- **Option A (minimal, ~3 lines):** thread `camera_id` through `draw_bbox_on_frame()` to `get_sd_frame(camera_id=...)`. For cam2, the reference becomes its own 1280×720 sub-stream → sx/sy = 1.0 → scaling becomes a no-op even though the heuristic still triggers. Quick to apply, low risk, but leaves the broken heuristic in place.
+
+- **Option B (proper fix):** drop the `>= 1000` heuristic entirely. Either:
+  - have the tracker stamp `frame_width/frame_height` into the event hash (the pose-detector already reports them in its detection message), then in `draw_bbox_on_frame` compare to the snapshot's actual `img.shape` and scale only if they differ; or
+  - have `get_sd_frame()` always be the reference for a given camera and compute the scale factor unconditionally (1× when sizes match, real factor when they don't).
+  Either form removes the foot-gun for any future camera with a wide sub-stream.
+
+- **Option C (bonus, recommended either way):** change `get_sd_frame()` default — if no `camera_id` is passed, raise or warn rather than silently falling back to the primary. Prevents this exact class of bug from recurring elsewhere.
+
+#### Tomorrow's verification plan
+
+1. Walk in front of both cameras, screenshot the Telegram photo for each. Note offset direction + magnitude.
+2. **If predictions hold** (cam2 offset, front_door correct): apply Option A as a one-shot test, rebuild dashboard, retest both cameras. Both should align.
+3. **If front_door is also offset**: my trace is wrong / incomplete — investigate the events poller and websocket overlay paths instead. The bug is somewhere downstream of `_emit_event` either way, but Option A wouldn't fix it.
+4. Independent of which is right — Option B is the cleaner long-term fix once we've confirmed which path is the culprit. Option C is worth doing regardless.
+
+#### Bug-fix discipline reminder
+
+The `block=0` tracker bug had a similarly confident single-trace diagnosis tonight, and the **per-service image gotcha** hid behind it for a full extra rebuild cycle. Treat this trace as a strong hypothesis, not a confirmed root cause, until tomorrow's observation matches the predictions in this section.
+
+---
+
 ## Decision log
 
 ### Why slot-based (7c) over auto-spawn (7e)

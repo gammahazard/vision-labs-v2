@@ -195,4 +195,4 @@ For reference (not your problem to do). Most of these are now complete:
 - ~~Forced admin password rotation on first login~~ — **done**
 - ~~Face-recognizer honors `gpu:generation_active`~~ — **done**
 
-Outstanding items live in `PHASES.md` Phase 5 (sticky-identity cache, vehicle stationarity reset, hardcoded model names, etc.).
+Outstanding items live in `PHASES.md` Phase 5 (vehicle stationarity reset, dead-zone normalized-coords mismatch, bcrypt/argon2 password hashing, graceful poller shutdown, recorder error events, etc.). Earlier "sticky-identity cache" and hardcoded model names are done — see the matching `[x]` items in PHASES.md.

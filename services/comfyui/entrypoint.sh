@@ -22,6 +22,10 @@ mkdir -p "$MODEL_DIR/diffusion_models"
 mkdir -p "$MODEL_DIR/text_encoders"
 mkdir -p "$MODEL_DIR/vae"
 mkdir -p "$MODEL_DIR/wan_loras"
+mkdir -p "$MODEL_DIR/ultralytics/bbox"
+mkdir -p "$MODEL_DIR/ultralytics/segm"
+mkdir -p "$MODEL_DIR/sams"
+mkdir -p "$MODEL_DIR/embeddings"
 
 # Make every model subdirectory writable by the host user. Without this, dirs
 # created by `mkdir -p` above are owned by root (the container's UID) and the
@@ -116,6 +120,37 @@ if [ ! -f "$WAN_CLIP" ]; then
 else
     echo "[entrypoint] WAN CLIP Vision already present"
 fi
+
+# ===========================================================================
+# ADetailer / Impact Pack detection models
+# ===========================================================================
+
+# --- YOLOv8 face detector (default — used by FaceDetailer for ADetailer-style face fixing) ---
+FACE_DET="$MODEL_DIR/ultralytics/bbox/face_yolov8m.pt"
+if [ ! -f "$FACE_DET" ]; then
+    echo "[entrypoint] Downloading YOLOv8 face detector (~52 MB)..."
+    wget -q --show-progress -O "$FACE_DET" \
+        "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt" || \
+        echo "[entrypoint] WARNING: face detector download failed — ADetailer face fixing will not work until you drop a .pt into ultralytics/bbox/"
+else
+    echo "[entrypoint] Face detector (face_yolov8m.pt) already present"
+fi
+
+# Re-chown after downloads so files end up owned by the host user too
+chown -R "${HOST_UID}:${HOST_GID}" "$MODEL_DIR" 2>/dev/null || true
+
+# Auto-whitelist any .pt the user has dropped into bbox/ or segm/. The Subpack
+# blocks unsafe (pickle-format) model loads by default; this trusts everything in
+# those folders since they are user-managed. To opt out, delete the file below.
+WL_DIR="/app/user/default/ComfyUI-Impact-Subpack"
+WL_FILE="$WL_DIR/model-whitelist.txt"
+mkdir -p "$WL_DIR"
+{
+    for d in "$MODEL_DIR/ultralytics/bbox" "$MODEL_DIR/ultralytics/segm"; do
+        [ -d "$d" ] && find "$d" -maxdepth 1 -name '*.pt' -printf '%f\n' 2>/dev/null
+    done
+} | sort -u > "$WL_FILE"
+echo "[entrypoint] Whitelisted $(wc -l < "$WL_FILE") ultralytics model(s)"
 
 echo "[entrypoint] Model check complete. Starting ComfyUI..."
 

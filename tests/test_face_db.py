@@ -305,6 +305,54 @@ class TestUnknownFaces:
         assert db.delete_unknown(9999) is False
 
 
+class TestSaveUnknownNearMissSuppression:
+    """Tests for the near-miss suppression in save_unknown — prevents the
+    gallery from accumulating off-angle frames of already-enrolled people."""
+
+    def test_skips_save_when_near_miss_to_known(self, db):
+        """An unknown that's plausibly a known person (sim >= 0.30 against
+        any enrolled angle, given match_threshold=0.5) should NOT be saved."""
+        emb = random_embedding(seed=42)
+        db.enroll("Alice", emb.copy(), b"photo")
+
+        # Build a vector with sim ~0.40 against Alice — below match_threshold
+        # but above the near-miss gate (0.30). This is the "first-frame-of-
+        # Alice walking on screen" case we want to suppress.
+        np.random.seed(7)
+        base = emb / np.linalg.norm(emb)
+        noise = np.random.randn(512).astype(np.float32)
+        noise -= noise.dot(base) * base
+        noise /= np.linalg.norm(noise)
+        near_miss = base * 0.40 + noise * np.sqrt(1 - 0.40**2)
+        near_miss = near_miss / np.linalg.norm(near_miss)
+        sim = float(np.dot(base, near_miss))
+        assert 0.30 <= sim < 0.50, f"setup sim={sim} not in near-miss band"
+
+        before = db.unknown_count
+        result = db.save_unknown(near_miss, b"first_frame")
+        assert result is None  # Suppressed
+        assert db.unknown_count == before  # Gallery unchanged
+
+    def test_still_saves_true_strangers(self, db):
+        """A face that's NOT close to any known person should still be saved."""
+        db.enroll("Alice", random_embedding(seed=1), b"photo")
+        # A different random vector — cosine sim to Alice should be near 0
+        stranger = random_embedding(seed=999)
+        sim = float(np.dot(stranger, db._cache[0]["embedding"]))
+        assert sim < 0.30, f"setup sim={sim} too high; test won't isolate stranger case"
+
+        uid = db.save_unknown(stranger, b"truly_unknown")
+        assert uid is not None
+        assert db.unknown_count == 1
+
+    def test_no_known_faces_means_always_save(self, db):
+        """With an empty known_faces cache, save_unknown never suppresses."""
+        assert db.count == 0
+        uid = db.save_unknown(random_embedding(seed=1), b"first")
+        assert uid is not None
+        assert db.unknown_count == 1
+
+
 class TestLabelUnknown:
     def test_label_promotes_to_known(self, db):
         """Labeling an unknown promotes it to known_faces."""
@@ -397,7 +445,7 @@ class TestMatchAndClearUnknowns:
         assert db.unknown_count == 1
 
         # Now retroactively clear unknowns matching this embedding
-        cleared = db.match_and_clear_unknowns("Alice", emb.copy())
+        cleared = db.match_and_clear_unknowns("Alice", emb.copy())["count"]
         assert cleared == 1
         assert db.unknown_count == 0
 
@@ -409,7 +457,7 @@ class TestMatchAndClearUnknowns:
         db.save_unknown(random_embedding(seed=999), b"photo2")
         assert db.unknown_count == 2
 
-        cleared = db.match_and_clear_unknowns("Alice", emb.copy())
+        cleared = db.match_and_clear_unknowns("Alice", emb.copy())["count"]
         assert cleared == 1  # Only the similar one
         assert db.unknown_count == 1  # Different one still there
 
@@ -421,13 +469,255 @@ class TestMatchAndClearUnknowns:
         assert db.unknown_count == 2
 
         # Try to clear with an unrelated embedding
-        cleared = db.match_and_clear_unknowns("Alice", random_embedding(seed=999))
+        cleared = db.match_and_clear_unknowns("Alice", random_embedding(seed=999))["count"]
         assert cleared == 0
         assert db.unknown_count == 2  # Nothing removed
 
     def test_returns_zero_with_no_unknowns(self, db):
         """Empty unknowns cache → returns 0, no crash."""
         assert db.unknown_count == 0
-        cleared = db.match_and_clear_unknowns("Alice", random_embedding(seed=1))
+        cleared = db.match_and_clear_unknowns("Alice", random_embedding(seed=1))["count"]
         assert cleared == 0
+
+    def test_matching_unknowns_promoted_as_extra_angles(self, db):
+        """Matching unknowns become additional known_faces rows under the same name.
+
+        Mirrors the real-world flow: the gallery accumulates unknowns BEFORE
+        anyone is enrolled, then enrollment + sweep absorbs the matches.
+        Doing this in reverse would trip the near-miss save suppression."""
+        emb = random_embedding(seed=42)
+
+        # Unknown captured first (no enrolled people yet → save succeeds)
+        unknown_emb = similar_embedding(emb, noise=0.02)
+        db.save_unknown(unknown_emb, b"angle_photo")
+        assert db.unknown_count == 1
+
+        # Now enroll Alice
+        db.enroll("Alice", emb.copy(), b"original_photo")
+        assert db.count == 1
+
+        # Retroactive sweep should PROMOTE the unknown, not delete it
+        promoted = db.match_and_clear_unknowns("Alice", emb.copy())["count"]
+        assert promoted == 1
+        assert db.unknown_count == 0
+        # Alice should now have 2 angles enrolled
+        assert db.count == 2
+        names = {f["name"] for f in db.list_faces()}
+        assert names == {"Alice"}
+
+    def test_promoted_unknown_preserves_photo_as_known_face(self, db):
+        """The unknown's photo travels with it into known_faces."""
+        emb = random_embedding(seed=7)
+        photo = b"\xff\xd8\xff\xe0unknown_jpeg_bytes"
+        db.save_unknown(similar_embedding(emb, noise=0.01), photo)
+
+        db.match_and_clear_unknowns("Bob", emb.copy())
+        # The new known face row should carry the unknown's photo
+        new_faces = db.list_faces()
+        assert len(new_faces) == 1
+        retrieved = db.get_photo(new_faces[0]["id"])
+        assert retrieved == photo
+
+    def test_promoted_angles_improve_matching(self, db):
+        """After promotion, the original unknown's embedding matches as 'Alice'."""
+        emb_a = random_embedding(seed=42)
+        emb_a_angle = similar_embedding(emb_a, noise=0.02)
+        db.save_unknown(emb_a_angle.copy(), b"angle")
+
+        # Enroll Alice with the OTHER angle, then absorb the unknown
+        db.enroll("Alice", emb_a.copy(), b"front")
+        db.match_and_clear_unknowns("Alice", emb_a.copy())
+
+        # Matching with the promoted angle's embedding should now identify Alice
+        result = db.match(emb_a_angle.copy())
+        assert result is not None
+        assert result["name"] == "Alice"
+
+    def test_non_matching_unknowns_untouched(self, db):
+        """Unknowns that do NOT match are neither promoted nor deleted."""
+        emb_target = random_embedding(seed=1)
+        emb_other = random_embedding(seed=999)
+        db.save_unknown(emb_other, b"stranger")
+
+        promoted = db.match_and_clear_unknowns("Alice", emb_target)["count"]
+        assert promoted == 0
+        assert db.count == 0  # nothing promoted
+        assert db.unknown_count == 1  # stranger still in gallery
+
+
+class TestReconcileUnknowns:
+    """Tests for FaceDB.reconcile_unknowns — startup two-tier sweep."""
+
+    def test_promotes_strong_match_on_startup(self, db):
+        """An unknown that strongly matches a known face is promoted on reconcile.
+
+        Order matters: save the unknown BEFORE enrolling, otherwise the
+        near-miss save suppression blocks the unknown from being captured."""
+        emb = random_embedding(seed=42)
+        db.save_unknown(similar_embedding(emb, noise=0.02), b"angle")
+        db.enroll("Alice", emb.copy(), b"front")
+
+        result = db.reconcile_unknowns()
+        assert result["matched_names"].get("Alice") == 1
+        assert result["promoted"] == 1
+        assert result["deleted"] == 0
+        assert db.unknown_count == 0
+        # Alice gained an extra angle
+        assert db.count == 2
+
+    def test_deletes_loose_match_without_promoting(self, db):
+        """An unknown that loosely matches (>= 0.6 * threshold but < threshold)
+        should be deleted, not promoted. With match_threshold=0.5, a sim of
+        ~0.35 lands in the delete tier."""
+        # Build a base, then create a deliberately-mid-similarity vector
+        base = random_embedding(seed=1)
+        # Mix base with orthogonal noise to land in the [0.3, 0.5) sim band
+        np.random.seed(2)
+        noise = np.random.randn(512).astype(np.float32)
+        noise -= noise.dot(base) * base  # orthogonalize
+        noise /= np.linalg.norm(noise)
+        mid = base * 0.4 + noise * np.sqrt(1 - 0.4**2)
+        mid = mid / np.linalg.norm(mid)
+        sim = float(np.dot(base, mid))
+        # Sanity-check the test setup: sim must be in the delete tier
+        assert 0.5 * 0.6 <= sim < 0.5, f"setup sim={sim} not in delete tier"
+
+        # Save the unknown BEFORE enrolling Alice — once Alice exists, the
+        # near-miss save suppression would block this same call.
+        db.save_unknown(mid, b"loose")
+        db.enroll("Alice", base.copy(), b"photo")
+
+        result = db.reconcile_unknowns()
+        assert result["matched_names"].get("Alice") == 1
+        assert result["promoted"] == 0
+        assert result["deleted"] == 1
+        assert db.unknown_count == 0
+        # Alice did NOT gain an angle — only the original enrollment row
+        assert db.count == 1
+
+    def test_keeps_unknown_below_both_thresholds(self, db):
+        """Truly different unknowns stay in the gallery."""
+        db.enroll("Alice", random_embedding(seed=1), b"photo")
+        db.save_unknown(random_embedding(seed=999), b"stranger")
+
+        result = db.reconcile_unknowns()
+        assert result["matched_names"] == {}
+        assert result["promoted"] == 0
+        assert result["deleted"] == 0
+        assert db.unknown_count == 1
+        assert db.count == 1
+
+
+class TestCacheReload:
+    """Tests for FaceDB._load_cache — multi-container DB sync behavior."""
+
+    def test_picks_up_external_known_face(self, db, tmp_path):
+        """A second FaceDB sharing the same SQLite sees enrollments after reload."""
+        # Two instances pointing at the same DB (simulating two containers)
+        db_path = db.db_path
+        emb = random_embedding(seed=1)
+        db.enroll("Alice", emb.copy(), b"photo")
+        assert db.count == 1
+
+        # Second instance loads the same row at startup
+        db2 = FaceDB(db_path=db_path, match_threshold=0.5)
+        assert db2.count == 1
+
+        # First instance enrolls another face — db2 is out of sync
+        db.enroll("Bob", random_embedding(seed=2), b"photo")
+        assert db.count == 2
+        assert db2.count == 1  # stale
+
+        # After reload, db2 picks up the new row
+        db2._load_cache()
+        assert db2.count == 2
+        names = {f["name"] for f in db2.list_faces()}
+        assert names == {"Alice", "Bob"}
+
+    def test_picks_up_external_unknown_captures(self, db, tmp_path):
+        """Same pattern for unknown_faces table."""
+        db_path = db.db_path
+        db2 = FaceDB(db_path=db_path, match_threshold=0.5)
+        assert db.unknown_count == 0
+        assert db2.unknown_count == 0
+
+        db.save_unknown(random_embedding(seed=1), b"u1")
+        db.save_unknown(random_embedding(seed=2), b"u2")
+        assert db2.unknown_count == 0  # stale
+
+        db2._load_cache()
+        assert db2.unknown_count == 2
+
+    def test_picks_up_external_promotions(self, db, tmp_path):
+        """If another container promotes unknowns→known, reload reflects both
+        the new known rows AND the disappearance from unknowns."""
+        db_path = db.db_path
+        emb = random_embedding(seed=42)
+        # Both instances have the same starting unknown row
+        db.save_unknown(similar_embedding(emb, noise=0.02), b"angle")
+        db2 = FaceDB(db_path=db_path, match_threshold=0.5)
+        assert db.unknown_count == 1
+        assert db2.unknown_count == 1
+        assert db2.count == 0
+
+        # First instance promotes via match_and_clear_unknowns
+        db.enroll("Alice", emb.copy(), b"front")
+        db.match_and_clear_unknowns("Alice", emb.copy())
+        assert db.count == 2  # original enroll + promoted angle
+        assert db.unknown_count == 0
+
+        # db2 still stale
+        assert db2.count == 0
+        assert db2.unknown_count == 1
+
+        # Reload — db2 catches up to truth
+        db2._load_cache()
+        assert db2.count == 2
+        assert db2.unknown_count == 0
+
+    def test_reload_is_idempotent(self, db):
+        """Calling _load_cache repeatedly with no DB changes is a no-op."""
+        db.enroll("Alice", random_embedding(seed=1), b"photo")
+        db.save_unknown(random_embedding(seed=2), b"unk")
+        before_known = list(db._cache)
+        before_unknown = list(db._unknown_cache)
+
+        db._load_cache()
+        db._load_cache()
+        db._load_cache()
+
+        assert len(db._cache) == len(before_known)
+        assert len(db._unknown_cache) == len(before_unknown)
+        # Ids should match (rows didn't change)
+        assert {f["id"] for f in db._cache} == {f["id"] for f in before_known}
+
+    def test_reload_swaps_in_a_new_list_object(self, db, tmp_path):
+        """_load_cache replaces self._cache with a freshly-built list rather
+        than mutating in place. This is the property that lets a reader on
+        another thread iterate the old list to completion without seeing
+        the rebuild — they hold the previous reference, the new list is
+        only seen by callers that re-read self._cache after the swap."""
+        db.enroll("Alice", random_embedding(seed=1), b"photo")
+
+        # Sibling DB instance simulates a second container that loaded the
+        # same row. We snapshot its cache reference BEFORE any mutation,
+        # then perform an external DB write (via the first instance) and
+        # trigger a reload on the sibling.
+        db2 = FaceDB(db_path=db.db_path, match_threshold=0.5)
+        old_known = db2._cache
+        old_unknown = db2._unknown_cache
+        assert len(old_known) == 1
+
+        # External writer adds a row
+        db.enroll("Bob", random_embedding(seed=2), b"photo")
+        db.save_unknown(random_embedding(seed=3), b"unk")
+
+        # Sibling reloads — must produce NEW list objects, not mutate the
+        # ones a reader might still be iterating.
+        db2._load_cache()
+        assert db2._cache is not old_known
+        assert db2._unknown_cache is not old_unknown
+        # And the new lists reflect the truth in SQLite
+        assert len(db2._cache) == 2
+        assert len(db2._unknown_cache) == 1
 

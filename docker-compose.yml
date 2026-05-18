@@ -288,6 +288,23 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./models/comfyui:/app/models:ro # WAN LoRA listing + model access
+      # Bind-mount the frontend so UI edits (HTML/CSS/JS) go live on browser
+      # refresh — without this, every static change needs a `docker compose
+      # build dashboard` round trip. The image still COPYs static/ in for
+      # builds-from-scratch; this mount just shadows it during runtime.
+      - ./services/dashboard/static:/app/static:ro
+      # Bind-mount Python source too so backend changes only need a `docker
+      # compose restart dashboard` (no rebuild). uvicorn doesn't auto-reload
+      # so we still need the restart, but it's ~5s vs ~1min for a rebuild.
+      - ./services/dashboard/routes:/app/routes:ro
+      - ./services/dashboard/pollers:/app/pollers:ro
+      - ./services/dashboard/helpers:/app/helpers:ro
+      - ./services/dashboard/server.py:/app/server.py:ro
+      - ./services/dashboard/cameras.py:/app/cameras.py:ro
+      - ./services/dashboard/websocket.py:/app/websocket.py:ro
+      - ./services/dashboard/ai_db.py:/app/ai_db.py:ro
+      - ./services/dashboard/constants.py:/app/constants.py:ro
+      - ./services/dashboard/event_renderer.py:/app/event_renderer.py:ro
       - auth-data:/data
       - qnap-snapshots:/data/snapshots
       - qnap-events:/data/events
@@ -579,6 +596,428 @@ services:
       - LOCATION_LON=${LOCATION_LON:--79.3832}
     volumes:
       - ./contracts:/app/contracts:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── cam3 slot — empty until a camera is registered with id="cam3" ──────
+  # All blocks identical to cam2 except CAMERA_ID + profile. RTSP URL is
+  # resolved from cameras:registry at startup, so no need to hardcode here.
+  recorder-cam3:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam3"]
+    volumes: [ "./data/recordings:/recordings" ]
+    environment:
+      - CAMERA_ID=cam3
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam3:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam3"]
+    environment:
+      - CAMERA_ID=cam3
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam3:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam3"]
+    environment:
+      - CAMERA_ID=cam3
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam3:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam3"]
+    environment:
+      - CAMERA_ID=cam3
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam3:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam3"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam3
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam3:
+    build: { context: ./services/tracker }
+    profiles: ["cam3"]
+    environment:
+      - CAMERA_ID=cam3
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  # ─── cam4 slot ──────────────────────────────────────────────────────────
+  recorder-cam4:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam4"]
+    volumes: [ "./data/recordings:/recordings" ]
+    environment:
+      - CAMERA_ID=cam4
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam4:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam4"]
+    environment:
+      - CAMERA_ID=cam4
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam4:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam4"]
+    environment:
+      - CAMERA_ID=cam4
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam4:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam4"]
+    environment:
+      - CAMERA_ID=cam4
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam4:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam4"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam4
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam4:
+    build: { context: ./services/tracker }
+    profiles: ["cam4"]
+    environment:
+      - CAMERA_ID=cam4
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  # ─── cam5 slot ──────────────────────────────────────────────────────────
+  recorder-cam5:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam5"]
+    volumes: [ "./data/recordings:/recordings" ]
+    environment:
+      - CAMERA_ID=cam5
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam5:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam5"]
+    environment:
+      - CAMERA_ID=cam5
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam5:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam5"]
+    environment:
+      - CAMERA_ID=cam5
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam5:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam5"]
+    environment:
+      - CAMERA_ID=cam5
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam5:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam5"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam5
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=0
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam5:
+    build: { context: ./services/tracker }
+    profiles: ["cam5"]
+    environment:
+      - CAMERA_ID=cam5
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Orchestrator — reconciles compose profiles against cameras:registry.
+  # Single-purpose sidecar; intentionally tiny attack surface (no HTTP, no
+  # auth flows). Has the Docker socket so it can `docker compose up/down`
+  # the cam2..cam5 profiles, but the dashboard does NOT — see Phase 7b in
+  # PHASES.md and the decision log in REFACTOR_PLAN.md.
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - COMPOSE_PROJECT_NAME=vision-labs
+      # Compose uses --project-directory for resolving relative build
+      # contexts. Set to the host's project path so the host Docker daemon
+      # can find ./services/* even though commands are issued from inside
+      # the orchestrator container.
+      - HOST_PROJECT_DIR=${PWD}
+      # PWD is referenced in the compose file (${PWD}:${PWD}:ro on the
+      # orchestrator's own volumes). When this orchestrator's inner
+      # compose CLI re-parses the file, it expands ${PWD} from its own
+      # process environment — pass through the host's PWD here so the
+      # expansion matches and the spec stays valid.
+      - PWD=${PWD}
+      - ALLOWED_PROFILES=cam2,cam3,cam4,cam5
+      - RECONCILE_INTERVAL=10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount the project dir read-only so the compose CLI can read the
+      # compose file. Resolution of build-context paths is done against
+      # HOST_PROJECT_DIR (above), not this mount point.
+      - ./:/workspace:ro
+      # Docker-in-Docker quirk: when compose runs `build`/`up` inside this
+      # container, the CLI verifies the build context path EXISTS at the
+      # absolute path it sends to the daemon (otherwise: "unable to prepare
+      # context: path /home/mongo/... not found"). The path needs to exist
+      # inside this container at the same string the host daemon uses too.
+      # Mounting the project dir at its host path satisfies both.
+      - ${PWD}:${PWD}:ro
     depends_on:
       redis:
         condition: service_healthy

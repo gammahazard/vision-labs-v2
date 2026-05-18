@@ -51,3 +51,7 @@ models/
 test_output.txt
 test_counts.txt
 line_counts.txt
+
+
+# Test virtualenv created for running tests outside Docker (this session)
+.venv-test/

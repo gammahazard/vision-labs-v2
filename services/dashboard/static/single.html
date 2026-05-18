@@ -158,6 +158,14 @@
                         events</span><span class="panel-toggle">▼</span></div>
             </div>
             <div class="panel-body">
+                <div class="event-filter-bar" id="eventFilterBar" role="tablist" aria-label="Filter events by type"
+                    style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+                    <!-- Populated by events.js — pills for All / Faces / People / Vehicles / Alerts -->
+                </div>
+                <input type="search" id="eventSearchInput" placeholder="🔍 Search events (name, action, zone…)"
+                    autocomplete="off"
+                    style="width:100%;padding:6px 10px;margin-bottom:8px;border-radius:6px;border:1px solid #2d3748;background:#0f172a;color:#e2e8f0;font-size:13px;font-family:inherit;">
+
                 <div class="event-list" id="eventList">
                     <div class="empty-state">No events yet — waiting for activity...</div>
                 </div>
@@ -273,6 +281,10 @@
                 <h2>❓ Unknown Faces</h2>
                 <div style="display: flex; align-items: center; gap: 0.5rem;">
                     <span class="face-count" id="unknownCount">0 captured</span>
+                    <button class="scan-unknowns-btn" id="scanUnknownsBtn"
+                        onclick="event.stopPropagation(); scanUnknowns()"
+                        title="Match unknowns against enrolled faces and absorb matches as extra angles"
+                        style="font-size: 0.7rem; padding: 0.2rem 0.5rem; background: rgba(96,165,250,0.18); border: 1px solid rgba(96,165,250,0.35); color: #60a5fa; border-radius: 6px; cursor: pointer;">🔍 Scan</button>
                     <button class="face-delete" id="clearAllUnknowns"
                         onclick="event.stopPropagation(); clearAllUnknowns()" title="Clear all unknowns"
                         style="font-size: 0.7rem; padding: 0.2rem 0.5rem;">🗑️ Clear
@@ -498,24 +510,28 @@
         <img id="eventDetailSnapshot" src="" alt="Event snapshot"
             style="width:100%; max-height:280px; object-fit:contain; border-radius:8px; margin-bottom:12px; display:none; background:#111; cursor:pointer;"
             title="Click for full size" onclick="if(this.src) _openEventPhoto(this.src, 'Event snapshot')">
+        <!-- face_reconciled events: grid of absorbed face thumbnails + scores.
+             Hidden by default; populated by events.js when a Face Matched
+             event is opened. -->
+        <div id="eventDetailFacesWrap" style="display:none; margin-bottom:12px;">
+            <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <span id="eventDetailFacesHeading">Absorbed angles</span>
+                <span id="eventDetailFacesStats" style="color:#64748b;font-size:11px;"></span>
+            </div>
+            <div id="eventDetailFacesGrid"
+                style="display:grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap:8px;"></div>
+        </div>
         <div id="eventDetailMeta" style="font-size:13px; color:#94a3b8; margin-bottom:12px; line-height:1.6;"></div>
         <div id="eventDetailAI"
             style="display:none; font-size:13px; color:#a78bfa; margin-bottom:12px; line-height:1.5; padding:8px 12px; background:rgba(139,92,246,0.08); border-radius:8px; border-left:3px solid #a78bfa;">
         </div>
         <div id="eventDetailActions" class="label-modal-actions" style="flex-wrap:wrap; gap:8px;">
-            <button class="label-modal-save" onclick="eventDetailVerdict('real_detection')">✅ Real Detection</button>
-            <button class="label-modal-cancel" style="background:#ef4444;" onclick="eventDetailVerdict('false_alarm')">❌
-                False Alarm</button>
-            <button class="label-modal-save" style="background:#6366f1;" onclick="eventDetailNamePrompt()">👤
-                Name</button>
             <button class="label-modal-cancel" onclick="closeEventDetailModal()">✕ Close</button>
         </div>
-        <div id="eventDetailNameRow" style="display:none; margin-top:10px;">
-            <div style="display:flex; gap:8px;">
-                <input type="text" id="eventDetailNameInput" placeholder="e.g. Neighbour Dave" class="label-modal-input"
-                    maxlength="50" style="flex:1;">
-                <button class="label-modal-save" onclick="eventDetailSubmitName()">Save</button>
-            </div>
+        <!-- Hidden inputs kept so old events.js code paths don't NPE if they
+             fire. The buttons that triggered them are gone. -->
+        <div id="eventDetailNameRow" style="display:none;">
+            <input type="text" id="eventDetailNameInput" style="display:none;">
         </div>
         <div id="eventDetailStatus"
             style="display:none; margin-top:8px; font-size:12px; color:#4ade80; text-align:center;"></div>
@@ -540,14 +556,15 @@
 
 <!-- app.js sets window.CAMERA_ID from ?camera URL param; the module scripts
      below use the same param to scope their API + WS calls to that camera. -->
-<script src="auth.js?v=6"></script>
 <script src="app.js?v=12"></script>
 
-<script src="events.js?v=13"></script>
+<script src="events.js?v=18"></script>
+<script src="nav.js?v=1"></script>
 <script src="faces.js?v=8"></script>
-<script src="unknowns.js?v=7"></script>
+<script src="unknowns.js?v=8"></script>
 <script src="zones.js?v=8"></script>
 <script src="conditions.js?v=7"></script>
+<script src="auth.js?v=6"></script>
 <script src="browse.js?v=1"></script>
 </body>
 

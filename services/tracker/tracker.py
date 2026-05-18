@@ -96,17 +96,20 @@ IDENTITY_KEY = stream_key(_IDKEY_TMPL, camera_id=CAMERA_ID)
 FRAME_STREAM = stream_key(_FRAME_TMPL, camera_id=CAMERA_ID)
 HD_FRAME_KEY = stream_key(_HD_FRAME_TMPL, camera_id=CAMERA_ID)
 
-MAX_EVENT_STREAM_LEN = 5000  # Keep more events than frames (they're small)
-VEHICLE_RATE_LIMIT_SEC = 3  # Max 1 vehicle event per 3 seconds
-VEHICLE_IDLE_TIMEOUT = float(os.getenv("VEHICLE_IDLE_TIMEOUT", "90.0"))  # Seconds stationary before idle alert
-VEHICLE_LOST_TIMEOUT = 10.0  # Seconds before dropping a tracked vehicle
-VEHICLE_IOU_THRESHOLD = 0.2  # Lower than person IoU — vehicles don't move much when parked
-CONFIG_RELOAD_INTERVAL = 10  # Check config every N detection messages
-ACTION_DEBOUNCE_FRAMES = 10  # New action must be stable for N frames before we accept it
-ACTION_STICKY_MULTIPLIER = 2 # Once set, require N * multiplier frames to change away
-MIN_BBOX_AREA = 3072          # ~1% of 640×480 frame — skip tiny distant detections
-IDENTITY_GRACE_SECONDS = 4.0  # When suppress_known is on, wait this long before announcing
-                               # to give face recognition time to identify known people
+# Tuning constants — env-overridable so the dashboard can promote any of
+# these to a UI knob later without a rebuild. Defaults preserve historic
+# behavior verbatim.
+MAX_EVENT_STREAM_LEN = int(os.getenv("MAX_EVENT_STREAM_LEN", "5000"))      # cap events:{cam_id}
+VEHICLE_RATE_LIMIT_SEC = int(os.getenv("VEHICLE_RATE_LIMIT_SEC", "3"))     # min seconds between vehicle events
+VEHICLE_IDLE_TIMEOUT = float(os.getenv("VEHICLE_IDLE_TIMEOUT", "90.0"))    # seconds stationary before idle alert
+VEHICLE_LOST_TIMEOUT = float(os.getenv("VEHICLE_LOST_TIMEOUT", "10.0"))    # seconds before dropping a tracked vehicle
+VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))   # lower than person IoU — parked cars don't move much
+CONFIG_RELOAD_INTERVAL = int(os.getenv("CONFIG_RELOAD_INTERVAL", "10"))    # check config every N detection messages
+ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))    # frames a new action must be stable for
+ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "2")) # once set, require N×multiplier to change away
+MIN_BBOX_AREA = int(os.getenv("MIN_BBOX_AREA", "3072"))                   # ~1% of 640×480 — skip tiny distant detections
+IDENTITY_GRACE_SECONDS = float(os.getenv("IDENTITY_GRACE_SECONDS", "4.0"))  # when suppress_known on, wait this long
+                                                                            # for face recognition to identify them
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -912,13 +915,16 @@ def run():
                 block=500,  # Shorter block so we can check vehicles too
             )
 
-            # Also check for vehicle detections
+            # Also check for vehicle detections — non-blocking poll.
+            # NOTE: `block=` MUST be omitted (or set to None). `block=0` means
+            # "block forever" in Redis XREADGROUP, which used to deadlock the
+            # tracker on cameras that have no vehicle producer (detect_vehicles=false)
+            # because the vehicle stream stays permanently empty for them.
             vehicle_messages = r.xreadgroup(
                 VEHICLE_CONSUMER_GROUP,
                 CONSUMER_NAME,
                 {VEHICLE_STREAM: ">"},
                 count=1,
-                block=0,  # Non-blocking — just check what's available
             )
         except redis.ConnectionError:
             logger.warning("Redis connection lost — retrying...")

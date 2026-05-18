@@ -69,6 +69,10 @@ MATCH_THRESHOLD = float(os.getenv("MATCH_THRESHOLD", "0.45"))
 API_PORT = int(os.getenv("API_PORT", "8081"))
 CONSUMER_GROUP = os.getenv("CONSUMER_GROUP", "face_recognizers")
 CONSUMER_NAME = os.getenv("CONSUMER_NAME", "recognizer_1")
+# How often to re-read the shared SQLite caches. Needed when multiple
+# face-recognizer containers (e.g. cam2) share the same DB — without this,
+# only the container that handled an enrollment knows about it.
+CACHE_REFRESH_INTERVAL = float(os.getenv("CACHE_REFRESH_INTERVAL", "30"))
 
 # Stream keys — resolved from contracts/streams.py
 FRAME_STREAM = stream_key(_FRAME_TMPL, camera_id=CAMERA_ID)
@@ -388,11 +392,13 @@ async def enroll_face(data: dict):
     face_id = face_db.enroll(name, embedding, photo)
 
     # Retroactively clear unknowns that match this newly enrolled face
-    cleared = face_db.match_and_clear_unknowns(name, embedding)
+    absorb_result = face_db.match_and_clear_unknowns(name, embedding)
+    cleared = absorb_result["count"]
+    promoted = absorb_result["promoted"]
 
     # Publish enrollment event to event stream
     try:
-        r.xadd(EVENT_STREAM, {
+        r_global.xadd(EVENT_STREAM, {
             "event_type": "face_enrolled",
             "person_id": name,
             "timestamp": str(time.time()),
@@ -402,17 +408,22 @@ async def enroll_face(data: dict):
             "camera_id": CAMERA_ID,
         }, maxlen=1000)
         if cleared > 0:
-            r.xadd(EVENT_STREAM, {
+            r_global.xadd(EVENT_STREAM, {
                 "event_type": "face_reconciled",
                 "person_id": name,
                 "timestamp": str(time.time()),
-                "action": f"Cleared {cleared} unknowns matched to {name}",
+                "action": f"Absorbed {cleared} unknown(s) as extra angles for {name}",
                 "duration": "0",
                 "direction": "",
                 "camera_id": CAMERA_ID,
+                # Per-row details so the dashboard modal can render thumbnails
+                # + similarity scores when this event is clicked.
+                "promoted_face_ids": json.dumps([p["face_id"] for p in promoted]),
+                "similarities": json.dumps([p["similarity"] for p in promoted]),
+                "count": str(cleared),
             }, maxlen=1000)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to publish enrollment event: {e}")
 
     return {
         "success": True,
@@ -471,12 +482,15 @@ async def label_unknown(uid: int, data: dict):
             break
 
     cleared = 0
+    promoted: list[dict] = []
     if labeled_embedding is not None:
-        cleared = face_db.match_and_clear_unknowns(name, labeled_embedding)
+        absorb_result = face_db.match_and_clear_unknowns(name, labeled_embedding)
+        cleared = absorb_result["count"]
+        promoted = absorb_result["promoted"]
 
     # Publish labeling event to event stream
     try:
-        r.xadd(EVENT_STREAM, {
+        r_global.xadd(EVENT_STREAM, {
             "event_type": "face_enrolled",
             "person_id": name,
             "timestamp": str(time.time()),
@@ -486,17 +500,20 @@ async def label_unknown(uid: int, data: dict):
             "camera_id": CAMERA_ID,
         }, maxlen=1000)
         if cleared > 0:
-            r.xadd(EVENT_STREAM, {
+            r_global.xadd(EVENT_STREAM, {
                 "event_type": "face_reconciled",
                 "person_id": name,
                 "timestamp": str(time.time()),
-                "action": f"Cleared {cleared} unknowns matched to {name}",
+                "action": f"Absorbed {cleared} unknown(s) as extra angles for {name}",
                 "duration": "0",
                 "direction": "",
                 "camera_id": CAMERA_ID,
+                "promoted_face_ids": json.dumps([p["face_id"] for p in promoted]),
+                "similarities": json.dumps([p["similarity"] for p in promoted]),
+                "count": str(cleared),
             }, maxlen=1000)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to publish label event: {e}")
 
     return {
         "success": True,
@@ -514,6 +531,58 @@ async def delete_unknown(uid: int):
     if deleted:
         return {"success": True, "message": f"Unknown {uid} deleted"}
     return JSONResponse(status_code=404, content={"error": "Unknown face not found"})
+
+
+@api.post("/api/unknowns/scan")
+async def scan_unknowns():
+    """
+    Manually trigger the reconcile sweep — promote unknowns that match
+    enrolled people (as extra angles) and delete loose matches. Same
+    logic as startup reconcile, exposed for dashboard "Scan unknowns".
+
+    Useful workflow: label a few unknowns to bootstrap recognition for
+    a person, then hit Scan to vacuum up the rest of their gallery
+    rows in one shot.
+    """
+    before = face_db.unknown_count
+    result = face_db.reconcile_unknowns()
+    after = face_db.unknown_count
+
+    # Publish a per-person face_reconciled event for the feed. Include
+    # the per-row promotion details so the modal can show thumbnails.
+    matched_names = result.get("matched_names", {})
+    promoted_by_name = result.get("promoted_by_name", {})
+    for name, cnt in matched_names.items():
+        promoted = promoted_by_name.get(name, [])
+        try:
+            r_global.xadd(EVENT_STREAM, {
+                "event_type": "face_reconciled",
+                "person_id": name,
+                "timestamp": str(time.time()),
+                "action": f"Manual scan: reconciled {cnt} unknown(s) against {name}",
+                "duration": "0",
+                "direction": "",
+                "camera_id": CAMERA_ID,
+                "promoted_face_ids": json.dumps([p["face_id"] for p in promoted]),
+                "similarities": json.dumps([p["similarity"] for p in promoted]),
+                "count": str(cnt),
+            }, maxlen=1000)
+        except Exception as e:
+            logger.warning(f"Failed to publish scan event: {e}")
+
+    return {
+        "success": True,
+        "promoted": result.get("promoted", 0),
+        "deleted": result.get("deleted", 0),
+        "matched_names": matched_names,
+        "before": before,
+        "after": after,
+        "message": (
+            f"Promoted {result.get('promoted', 0)} angle(s) and "
+            f"deleted {result.get('deleted', 0)} loose match(es). "
+            f"{after} unknown(s) remaining."
+        ),
+    }
 
 
 @api.delete("/api/unknowns")
@@ -535,6 +604,31 @@ async def clear_all_unknowns():
 def start_api():
     """Run the FastAPI enrollment API in a separate thread."""
     uvicorn.run(api, host="0.0.0.0", port=API_PORT, log_level="warning")
+
+
+def cache_refresh_loop():
+    """Periodically reload face_db caches from SQLite.
+
+    Required for multi-container deployments where one face-recognizer
+    handles enrollments (front_door, the one wired to the dashboard) and
+    other instances (e.g. cam2) need to pick up new known faces or
+    unknown captures without a restart.
+
+    The reload is an atomic swap (see FaceDB._load_cache), so live
+    matching on the main thread keeps working without lock contention.
+    """
+    while not _shutdown:
+        # Sleep in short chunks so SIGTERM is honored quickly
+        slept = 0.0
+        while slept < CACHE_REFRESH_INTERVAL and not _shutdown:
+            time.sleep(min(1.0, CACHE_REFRESH_INTERVAL - slept))
+            slept += 1.0
+        if _shutdown:
+            break
+        try:
+            face_db._load_cache()
+        except Exception as e:
+            logger.warning(f"Periodic cache refresh failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -585,25 +679,31 @@ def run():
         logger.info(f"Camera '{CAMERA_ID}' has detect_faces=false — exiting cleanly")
         return
 
-    # Reconcile: clear any unknowns that now match known faces
-    matched = face_db.reconcile_unknowns()
-    if matched:
-        total = sum(matched.values())
-        detail = ", ".join(f"{name}: {cnt}" for name, cnt in matched.items())
-        logger.info(f"Startup reconciliation: cleared {total} unknowns ({detail})")
+    # Reconcile: promote strong matches as extra angles, delete loose ones
+    result = face_db.reconcile_unknowns()
+    matched_names = result.get("matched_names", {})
+    promoted_by_name = result.get("promoted_by_name", {})
+    if matched_names:
+        total = sum(matched_names.values())
+        detail = ", ".join(f"{name}: {cnt}" for name, cnt in matched_names.items())
+        logger.info(f"Startup reconciliation: processed {total} unknowns ({detail})")
         try:
-            for name, cnt in matched.items():
+            for name, cnt in matched_names.items():
+                promoted = promoted_by_name.get(name, [])
                 r.xadd(EVENT_STREAM, {
                     "event_type": "face_reconciled",
                     "person_id": name,
                     "timestamp": str(time.time()),
-                    "action": f"Startup: cleared {cnt} unknowns matched to {name}",
+                    "action": f"Startup: reconciled {cnt} unknown(s) against {name}",
                     "duration": "0",
                     "direction": "",
                     "camera_id": CAMERA_ID,
+                    "promoted_face_ids": json.dumps([p["face_id"] for p in promoted]),
+                    "similarities": json.dumps([p["similarity"] for p in promoted]),
+                    "count": str(cnt),
                 }, maxlen=1000)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to publish reconcile event: {e}")
 
     # Setup consumer group
     setup_consumer_group(r)
@@ -612,6 +712,16 @@ def run():
     api_thread = threading.Thread(target=start_api, daemon=True)
     api_thread.start()
     logger.info(f"Enrollment API running on port {API_PORT}")
+
+    # Periodic cache refresh — keeps multi-container deployments in sync.
+    # The dashboard only proxies enrollments to ONE recognizer (front_door),
+    # so without this, every other recognizer instance would have a stale
+    # cache until restart.
+    cache_thread = threading.Thread(target=cache_refresh_loop, daemon=True)
+    cache_thread.start()
+    logger.info(
+        f"Cache refresh loop running (interval={CACHE_REFRESH_INTERVAL}s)"
+    )
 
     # Tracking metrics
     frames_processed = 0

@@ -80,6 +80,11 @@ body {
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    /* Stay pinned to the top as the page scrolls. Without this, long pages
+       like Cameras and Monitoring scroll the navbar away on mobile. */
+    position: sticky;
+    top: 0;
+    z-index: 30;
 }
 
 .navbar-left {
@@ -144,6 +149,13 @@ body {
     display: flex;
     align-items: center;
     gap: 16px;
+}
+
+/* Event filter pills — minor desktop hover affordance. Base look is set
+   inline in events.js so the bar renders with no FOUC. */
+.event-filter-pill:hover:not(.active) {
+    background: rgba(96, 165, 250, 0.18) !important;
+    color: #cbd5e1 !important;
 }
 
 .logo {
@@ -1130,6 +1142,15 @@ input[type="range"]::-moz-range-thumb {
     padding: 24px;
     width: 340px;
     max-width: 90vw;
+    /* Cap height to the viewport (minus a comfortable gutter so the rounded
+       corners + shadow stay visible) and scroll inside when content like
+       a long AI description or the absorbed-faces grid overflows. The
+       overlay itself is `display: flex; align-items: center` so the modal
+       stays centered while it grows up to this cap. */
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
@@ -1231,7 +1252,8 @@ input[type="range"]::-moz-range-thumb {
         overflow: auto;
     }
 
-    /* Navbar: wrap stats below nav links */
+    /* Navbar: stack vertically — brand on row 1, links on row 2 (scrollable
+       horizontally so nothing ever gets cut off), stats on row 3. */
     .navbar {
         flex-wrap: wrap;
         height: auto;
@@ -1240,8 +1262,9 @@ input[type="range"]::-moz-range-thumb {
     }
 
     .navbar-left {
-        gap: 0.6rem;
-        flex: 1;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        width: 100%;
         min-width: 0;
     }
 
@@ -1250,18 +1273,43 @@ input[type="range"]::-moz-range-thumb {
         display: none;
     }
 
+    .navbar-brand {
+        flex-shrink: 0;
+    }
+
+    /* Event-filter pills wrap on a fresh row at mobile width and get a
+       slightly tighter touch target. The pill base styles live inline in
+       the bar's innerHTML for portability; this just tunes mobile. */
+    .event-filter-bar { gap: 4px !important; }
+    .event-filter-pill { font-size: 11px !important; padding: 5px 9px !important; }
+
+    /* Nav links get their own full-width row, scroll horizontally if
+       the link count outgrows the viewport. Prevents any link (like
+       Monitoring) from being clipped at narrow widths. */
     .navbar-links {
-        gap: 2px;
-        flex-wrap: wrap;
+        flex: 1 1 100%;
+        gap: 4px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x proximity;
+        scrollbar-width: none;          /* Firefox */
+        padding-bottom: 2px;
+    }
+    .navbar-links::-webkit-scrollbar {
+        display: none;                  /* Chrome/Safari */
     }
 
     .nav-link {
-        padding: 0.35rem 0.6rem;
+        padding: 0.4rem 0.7rem;
         font-size: 0.82rem;
         /* Larger touch target */
         min-height: 36px;
         display: flex;
         align-items: center;
+        flex-shrink: 0;                 /* never let a link compress */
+        scroll-snap-align: start;
     }
 
     /* Stats bar: full width second row */

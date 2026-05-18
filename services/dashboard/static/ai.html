@@ -23,6 +23,8 @@
             </a>
             <div class="navbar-links">
                 <a href="/" class="nav-link">🏠 Home</a>
+                <a href="/single.html" class="nav-link">📺 Detail view</a>
+                <a href="/cameras.html" class="nav-link">📹 Cameras</a>
                 <a href="/ai.html" class="nav-link nav-link--active">🤖 AI</a>
                 <a href="/telegram.html" class="nav-link">🔐 Telegram</a>
                 <a href="/monitoring.html" class="nav-link">📊 Monitoring</a>
@@ -306,21 +308,38 @@
                             <span class="generate-range-value" id="genCfgValue">7.0</span>
                         </div>
                     </div>
-                    <!-- LoRA row -->
+                    <!-- LoRA stack (multi-LoRA, A1111-style) -->
+                    <div class="generate-control-group">
+                        <label>LoRAs <span style="color:#71717a;font-weight:400">(stack up to 5)</span></label>
+                        <div id="genLoraStack"></div>
+                        <button type="button" class="gallery-btn" id="genLoraAddBtn" style="margin-top:6px;">+ Add LoRA</button>
+                        <!-- Hidden legacy fields — kept so the Sweep panel keeps working unchanged. -->
+                        <select id="genLora" style="display:none"><option value=""></option></select>
+                        <input type="range" id="genLoraStrength" min="0" max="1" step="0.05" value="0.80" style="display:none">
+                        <span id="genLoraStrengthValue" style="display:none">0.80</span>
+                    </div>
+                    <!-- Sampler / Scheduler row -->
                     <div class="generate-lora-group">
                         <div class="generate-control-group">
-                            <label>LoRA</label>
-                            <select id="genLora">
-                                <option value="">None</option>
+                            <label>Sampler</label>
+                            <select id="genSampler">
+                                <option value="euler">euler</option>
                             </select>
                         </div>
                         <div class="generate-control-group">
-                            <label>LoRA Strength</label>
-                            <div class="generate-range-row">
-                                <input type="range" id="genLoraStrength" min="0" max="1" step="0.05" value="0.80">
-                                <span class="generate-range-value" id="genLoraStrengthValue">0.80</span>
-                            </div>
+                            <label>Scheduler</label>
+                            <select id="genScheduler">
+                                <option value="normal">normal</option>
+                            </select>
                         </div>
+                    </div>
+                    <!-- ADetailer stack (chain multiple FaceDetailer passes — A1111-style) -->
+                    <div class="generate-control-group">
+                        <label>Detailers <span style="color:#71717a;font-weight:400">(stack up to 4 — runs in order, e.g. face → hands)</span></label>
+                        <div id="genDetectorStack"></div>
+                        <button type="button" class="gallery-btn" id="genDetectorAddBtn" style="margin-top:6px;">+ Add Detailer</button>
+                        <!-- Hidden legacy single-detector field kept for backend backward-compat. -->
+                        <select id="genDetector" style="display:none"><option value=""></option></select>
                     </div>
                 </div>
 
@@ -559,8 +578,9 @@
     </div>
 
     <script src="ai.js?v=2"></script>
-    <script src="generate.js"></script>
+    <script src="generate.js?v=4"></script>
 
+    <script src="nav.js?v=1"></script>
 </body>
 
 </html>

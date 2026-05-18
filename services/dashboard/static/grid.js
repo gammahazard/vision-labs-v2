@@ -227,7 +227,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 // -----------------------------------------------------------------------------
-// Initial load: fetch cameras, build tiles, set grid layout based on count
+// Initial load + periodic refresh: fetch cameras, build/update tiles.
+// The refresh polls every 30s so new cameras added on /cameras.html show up
+// here without a manual tab reload. We diff against the existing tile set so
+// established tiles + their WebSockets keep running; only added/removed
+// cameras trigger DOM changes.
 // -----------------------------------------------------------------------------
 async function loadCameras() {
     try {
@@ -235,30 +239,57 @@ async function loadCameras() {
         if (res.status === 401) { window.location.href = '/login.html'; return; }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        renderTiles(data.cameras || []);
+        reconcileTiles(data.cameras || []);
     } catch (e) {
-        $('grid').innerHTML = `<div class="empty">Failed to load cameras: ${escapeHtml(e.message)}</div>`;
+        // Don't blow away the grid on a transient fetch failure — only
+        // overwrite if the grid is empty (first-load failure).
+        const grid = $('grid');
+        if (!grid.children.length || grid.querySelector('.empty')) {
+            grid.innerHTML = `<div class="empty">Failed to load cameras: ${escapeHtml(e.message)}</div>`;
+        }
     }
 }
 
-function renderTiles(cameras) {
+function reconcileTiles(cameras) {
     const grid = $('grid');
-    grid.innerHTML = '';
-    if (!cameras.length) {
+    // Build the desired-set (enabled cameras only, ordered)
+    const desired = cameras.filter(c => c.enabled !== false);
+    const desiredIds = new Set(desired.map(c => c.id));
+
+    // Empty-state handling: if nothing to show, blow away tiles + display message
+    if (desired.length === 0) {
+        for (const tile of TILES.values()) tile.destroy();
+        TILES.clear();
         grid.innerHTML = `<div class="empty">No cameras registered yet. <a href="/cameras.html">Add one →</a></div>`;
         return;
     }
-    // Apply layout hint classes based on camera count
-    grid.classList.remove('cams-3-plus', 'cams-5-plus');
-    if (cameras.length >= 3) grid.classList.add('cams-3-plus');
-    if (cameras.length >= 5) grid.classList.add('cams-5-plus');
 
-    for (const cam of cameras) {
-        if (cam.enabled === false) continue;
-        const tile = new CameraTile(cam);
-        TILES.set(cam.id, tile);
-        grid.appendChild(tile.element);
+    // Remove the empty-state if present (first time we have cameras)
+    const emptyEl = grid.querySelector('.empty');
+    if (emptyEl) emptyEl.remove();
+
+    // Tear down tiles for cameras no longer in the desired set
+    for (const [id, tile] of TILES) {
+        if (!desiredIds.has(id)) {
+            tile.destroy();
+            if (tile.element.parentNode) tile.element.parentNode.removeChild(tile.element);
+            TILES.delete(id);
+        }
     }
+
+    // Add tiles for new cameras (preserving order from the API response)
+    for (const cam of desired) {
+        if (!TILES.has(cam.id)) {
+            const tile = new CameraTile(cam);
+            TILES.set(cam.id, tile);
+            grid.appendChild(tile.element);
+        }
+    }
+
+    // Re-apply layout-hint classes based on current count
+    grid.classList.remove('cams-3-plus', 'cams-5-plus');
+    if (desired.length >= 3) grid.classList.add('cams-3-plus');
+    if (desired.length >= 5) grid.classList.add('cams-5-plus');
 }
 
 // Clean up tiles when leaving the page
@@ -266,4 +297,10 @@ window.addEventListener('beforeunload', () => {
     for (const tile of TILES.values()) tile.destroy();
 });
 
-document.addEventListener('DOMContentLoaded', loadCameras);
+document.addEventListener('DOMContentLoaded', () => {
+    loadCameras();
+    // Re-poll every 30s so newly-added or paused cameras show up without
+    // a manual reload. The reconcile is a diff, so existing tiles + their
+    // WebSocket connections are untouched.
+    setInterval(loadCameras, 30_000);
+});

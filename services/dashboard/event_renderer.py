@@ -126,7 +126,7 @@ def render_event(evt: dict) -> dict:
         title = f"Face Matched — {display_name}"
         if time_str: parts.append(time_str)
         action = evt.get("action")
-        parts.append(action or "Cleared unknown")
+        parts.append(action or "Reconciled unknown")
         photo = {"kind": "face", "identity_name": identity,
                  "event_id": None, "camera_id": evt.get("camera_id") or None,
                  "snapshot_key": None, "caption": display_name}

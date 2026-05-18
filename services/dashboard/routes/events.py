@@ -10,6 +10,8 @@ PURPOSE:
 
 import os
 import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -20,6 +22,8 @@ import routes as ctx
 router = APIRouter(prefix="/api", tags=["events"])
 
 SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
+EVENT_JOURNAL_DIR = os.environ.get("EVENT_JOURNAL_DIR", "/data/events")
+_TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
 
 
 def _enabled_camera_ids() -> list:
@@ -31,47 +35,141 @@ def _enabled_camera_ids() -> list:
     return ids if ids else [ctx.CAMERA_ID]
 
 
-@router.get("/events")
-async def get_events(count: int = 50, camera: str = ""):
+def _ms_from_stream_id(mid) -> int:
+    """Extract the millisecond timestamp from a Redis stream id 'MS-SEQ'."""
+    try:
+        return int(str(mid).split("-")[0])
+    except Exception:
+        return 0
+
+
+def _read_journal(cam_ids: list, cutoff_ms: int | None,
+                  count: int, seen_ids: set) -> list[tuple]:
+    """Read events from the on-disk JSONL journal, newest-first.
+
+    Returns a list of (event_id, data_dict, camera_id) tuples, matching the
+    shape used by the Redis stream loop so the caller can render them uniformly.
+
+    - `cutoff_ms`: if set, only entries with timestamp_ms < cutoff are returned.
+    - `seen_ids`: ids already returned from Redis — skipped to avoid duplicates
+      when the most recent journal day overlaps with the in-memory stream.
     """
-    Return the most recent events from one or more camera streams.
+    if not os.path.isdir(EVENT_JOURNAL_DIR):
+        return []
 
-    - camera="" or "all"  → merge events across every enabled camera, newest-first
+    cam_set = set(cam_ids) if cam_ids else None
+    cutoff_ts = (cutoff_ms / 1000.0) if cutoff_ms is not None else None
+
+    # Start scanning from the day of the cutoff (or today if no cutoff).
+    if cutoff_ms is not None:
+        start_date = datetime.fromtimestamp(cutoff_ms / 1000.0, tz=_TZ_LOCAL).date()
+    else:
+        start_date = datetime.now(_TZ_LOCAL).date()
+
+    out: list[tuple] = []
+    current = start_date
+    # Bound the search to a year of history so we don't scan forever
+    # if the cutoff predates the oldest journal file.
+    for _ in range(366):
+        path = os.path.join(EVENT_JOURNAL_DIR, f"{current.isoformat()}.jsonl")
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    lines = f.readlines()
+            except OSError:
+                lines = []
+
+            day: list[tuple[float, dict]] = []
+            for line in lines:
+                try:
+                    entry = json.loads(line)
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                eid = entry.get("id", "")
+                if eid in seen_ids:
+                    continue
+                try:
+                    ts = float(entry.get("timestamp", 0))
+                except (ValueError, TypeError):
+                    continue
+                if cutoff_ts is not None and ts >= cutoff_ts:
+                    continue
+                if cam_set and entry.get("camera") not in cam_set:
+                    continue
+                day.append((ts, entry))
+
+            # Sort newest-first within the day (file is append-only chronological)
+            day.sort(key=lambda x: x[0], reverse=True)
+            for _ts, entry in day:
+                out.append((entry.get("id", ""), entry, entry.get("camera", "")))
+                if len(out) >= count:
+                    return out
+
+        current -= timedelta(days=1)
+
+    return out
+
+
+@router.get("/events")
+async def get_events(count: int = 50, camera: str = "", before: str = ""):
+    """
+    Return events from one or more camera streams.
+
+    - camera="" or "all"  → merge events across every enabled camera
     - camera="<id>"       → only that camera
+    - before=<event_id>   → cursor: return events strictly OLDER than this id
+                            (powers the home page's "Load older" pagination)
 
-    Each event has a `camera_id` field. Used by:
-      - the dashboard event feed panel
-      - the home page combined Recent Activity widget
-      - per-camera detail page (with camera=<id>)
+    Pulls from the Redis stream first. If the stream doesn't have enough
+    history (capped at maxlen=1000 per camera), falls through to the
+    JSONL journal on disk for older events. Response includes `has_more`
+    so the frontend can hide the "Load older" button when we've reached
+    the end.
     """
     from contracts.streams import EVENT_STREAM as _EVT_TMPL, stream_key as _stream_key
+    from event_renderer import render_event
 
     try:
-        # Decide which streams to read
         cam = (camera or "").strip().lower()
         if cam in ("", "all"):
             cam_ids = _enabled_camera_ids()
         else:
             cam_ids = [camera]
 
-        # Pull last N from each camera, then merge by millisecond timestamp
-        merged = []
+        # ---- Phase 1: pull from Redis stream(s) ----
+        # `(ID` is the Redis exclusive-bound syntax — gives items with id < ID.
+        max_id = f"({before}" if before else "+"
+        merged: list[tuple] = []
         for cid in cam_ids:
             evt_stream = _stream_key(_EVT_TMPL, camera_id=cid)
-            events_raw = ctx.r.xrevrange(evt_stream, count=count)
+            try:
+                events_raw = ctx.r.xrevrange(evt_stream, max=max_id, count=count)
+            except redis.ResponseError:
+                # Bad cursor (or empty stream) — skip this camera silently
+                events_raw = []
             for event_id, data in events_raw:
                 merged.append((event_id, dict(data), cid))
 
-        # Newest-first by stream ms-timestamp (encoded in stream id "MS-SEQ")
-        def _ms(mid):
-            try:
-                return int(str(mid).split("-")[0])
-            except Exception:
-                return 0
-        merged.sort(key=lambda x: _ms(x[0]), reverse=True)
+        merged.sort(key=lambda x: _ms_from_stream_id(x[0]), reverse=True)
         merged = merged[:count]
 
-        from event_renderer import render_event
+        # ---- Phase 2: fall through to journal if Redis didn't satisfy ----
+        if len(merged) < count:
+            # Cutoff for the journal scan: strictly older than the oldest Redis
+            # result, or older than the request cursor if Redis gave us nothing.
+            if merged:
+                cutoff_ms = _ms_from_stream_id(merged[-1][0])
+            elif before:
+                cutoff_ms = _ms_from_stream_id(before)
+            else:
+                cutoff_ms = None  # no cursor — let journal return newest
+
+            remaining = count - len(merged)
+            seen_ids = {mid for mid, _d, _c in merged}
+            journal_results = _read_journal(cam_ids, cutoff_ms, remaining, seen_ids)
+            merged.extend(journal_results)
+
+        # ---- Phase 3: render & return ----
         events = []
         for event_id, data, src_cam in merged:
             evt = {
@@ -93,6 +191,12 @@ async def get_events(count: int = 50, camera: str = ""):
                 "vehicle_class": data.get("vehicle_class", ""),
                 "vehicle_confidence": data.get("vehicle_confidence", ""),
                 "snapshot_key": data.get("snapshot_key", ""),
+                # face_reconciled-only details — populated when an enrollment,
+                # label, scan, or startup reconcile absorbed gallery rows.
+                # Both are JSON-encoded arrays (strings) for the frontend to parse.
+                "promoted_face_ids": data.get("promoted_face_ids", ""),
+                "similarities": data.get("similarities", ""),
+                "count": data.get("count", ""),
                 # Telegram-specific (only set for unauthorized_access events)
                 "telegram_username": data.get("telegram_username", ""),
                 "telegram_user_id": data.get("telegram_user_id", ""),
@@ -103,7 +207,14 @@ async def get_events(count: int = 50, camera: str = ""):
             # Single source of truth for display: see services/dashboard/event_renderer.py
             evt["render"] = render_event(evt)
             events.append(evt)
-        return {"events": events, "cameras": cam_ids}
+
+        # has_more is best-effort: if we filled the page, there's likely more.
+        # If we returned fewer than requested, we've hit the end of storage.
+        return {
+            "events": events,
+            "cameras": cam_ids,
+            "has_more": len(events) >= count,
+        }
     except redis.ConnectionError:
         return JSONResponse(status_code=503, content={"error": "Redis unavailable"})
 

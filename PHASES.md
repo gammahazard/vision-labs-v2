@@ -4,6 +4,11 @@
 
 Each phase has an **exit criterion** — don't move forward until it's met. Tick boxes as you go.
 
+> **Status snapshot (May 2026):** Phases 0–4 done. Phase 5 mostly cleaned up (remaining items listed inline below). Phase 7 multi-camera fully shipped:
+> - 7a/7c: registry, per-camera detector flags (`detect_persons` / `detect_vehicles` / `detect_faces`), event feed fan-out, AI tool multi-camera, slot-based service definitions in `docker-compose.yml`.
+> - **7b: orchestrator service** that watches `cameras:registry` via the `cameras:events` pub/sub channel and reconciles compose profiles automatically. Adding a camera in the UI now spawns its services without any terminal command. Enable/disable toggle in the cameras page; status badges driven by the new `orchestrator:audit` stream. Slot pool expanded from 1 → 4 (cam2–cam5). The dashboard does NOT have the Docker socket; only the orchestrator does.
+> - The earlier A1 audit finding (vehicle stream key drift in `routes/metrics.py`) is fixed via `ctx.VEHICLE_DET_STREAM`. The B3 tuning constants (`VEHICLE_RATE_LIMIT_SEC`, `ACTION_DEBOUNCE_FRAMES`, `MAX_DETECTION_STREAM_LEN`, etc.) are now env-overridable; see `.env.example`.
+
 ---
 
 ## Phase 0 — Host bootstrap (WSL + Docker Engine + project move)
@@ -181,6 +186,20 @@ These four were applied during the WSL/Windows migration since they prevent disk
 - [ ] All services default `CAMERA_ID=front_door`. Multi-camera support requires aligning 7 services in lockstep — partly addressed by the camera registry (`cameras:registry`) added in `phase7`, but actual per-camera service spawning (Phase 7b) still pending.
 
 **Exit criterion:** none individually blocks anything — just chip away. Re-run Phase 4 smoke tests after each change.
+
+---
+
+## Phase 8 — Packaging for distribution (in planning)
+
+See [PACKAGING_PLAN.md](PACKAGING_PLAN.md) for the full plan. Summary:
+
+- **Phase A**: Remove the Generate tab + ComfyUI service (foundational cleanup, ~4-6h)
+- **Phase B**: Hardware profiles (`small` / `mid` / `full`) + single-GPU support
+- **Phase C**: Pre-built images pushed to GHCR — drops first-install from 30min → 3min
+- **Phase D**: First-run setup wizard — GPU auto-detect, per-camera detector flags from a "is this indoor or outdoor?" question
+- **Phase E**: Native installer (deferred until we have multiple non-author users)
+
+Detection / faces / DVR / tracking are designed to run on ≤2 GB VRAM. The only component that materially varies with hardware is the AI chat LLM (Qwen 3B / 7B / 14B).
 
 ---
 

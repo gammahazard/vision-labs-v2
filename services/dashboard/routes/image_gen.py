@@ -11,6 +11,8 @@ ENDPOINTS:
     GET  /api/generate/status             — ComfyUI health + queue status
     GET  /api/generate/models             — List available checkpoint models
     GET  /api/generate/loras              — List available LoRA models
+    GET  /api/generate/samplers           — Live sampler + scheduler enum lists
+    GET  /api/generate/detectors          — YOLO ADetailer model list (Impact Pack)
     GET  /api/generate/history/{prompt_id} — Get generation result(s)
 """
 
@@ -139,6 +141,61 @@ def _get_default_model() -> str:
 # ---------------------------------------------------------------------------
 # Standard text-to-image workflow for ComfyUI API
 # ---------------------------------------------------------------------------
+def _normalize_loras(loras, legacy_lora: str, legacy_strength: float) -> list:
+    """Coerce the LoRA spec into a clean list of {lora_name, strength} dicts.
+
+    Accepts the new `loras` array form OR the legacy single `lora`/`lora_strength`
+    fields. Returns an empty list if no LoRA is configured.
+    """
+    if loras and isinstance(loras, list):
+        out = []
+        for item in loras:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("lora_name") or item.get("name") or ""
+            if not name:
+                continue
+            try:
+                strength = float(
+                    item.get("strength", item.get("strength_model", 0.8))
+                )
+            except (TypeError, ValueError):
+                strength = 0.8
+            if strength == 0:
+                continue  # zero strength = no-op, skip
+            out.append({"lora_name": name, "strength": strength})
+        return out
+    if legacy_lora:
+        return [{"lora_name": legacy_lora, "strength": float(legacy_strength or 0.8)}]
+    return []
+
+
+def _apply_lora_chain(workflow: dict, loras: list) -> tuple:
+    """Chain LoraLoader nodes (IDs 100, 101, ...) onto the checkpoint outputs.
+
+    Returns (model_ref, clip_ref) — the final node refs that downstream nodes
+    (KSampler, CLIPTextEncode, FaceDetailer) should point at.
+    """
+    model_ref = ["4", 0]
+    clip_ref = ["4", 1]
+    for i, item in enumerate(loras):
+        node_id = str(100 + i)
+        strength = item["strength"]
+        workflow[node_id] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "lora_name": item["lora_name"],
+                "strength_model": strength,
+                "strength_clip": strength,
+                "model": model_ref,
+                "clip": clip_ref,
+            },
+        }
+        model_ref = [node_id, 0]
+        clip_ref = [node_id, 1]
+    return model_ref, clip_ref
+
+
 def _build_txt2img_workflow(
     prompt: str,
     negative_prompt: str = "",
@@ -151,10 +208,18 @@ def _build_txt2img_workflow(
     batch_size: int = 1,
     lora: str = "",
     lora_strength: float = 0.8,
+    loras: list = None,
+    sampler_name: str = "euler",
+    scheduler: str = "normal",
+    detector: str = "",
+    detectors: list = None,
 ) -> dict:
     """Build a ComfyUI API workflow for text-to-image generation."""
     if seed < 0:
         seed = random.randint(0, 2**32 - 1)
+
+    lora_stack = _normalize_loras(loras, lora, lora_strength)
+    detector_chain = _normalize_detectors(detectors, detector)
 
     workflow = {
         "3": {
@@ -163,10 +228,10 @@ def _build_txt2img_workflow(
                 "seed": seed,
                 "steps": steps,
                 "cfg": cfg,
-                "sampler_name": "euler",
-                "scheduler": "normal",
+                "sampler_name": sampler_name or "euler",
+                "scheduler": scheduler or "normal",
                 "denoise": 1.0,
-                "model": ["4", 0] if not lora else ["10", 0],
+                "model": ["4", 0],
                 "positive": ["6", 0],
                 "negative": ["7", 0],
                 "latent_image": ["5", 0],
@@ -190,14 +255,14 @@ def _build_txt2img_workflow(
             "class_type": "CLIPTextEncode",
             "inputs": {
                 "text": prompt,
-                "clip": ["4", 1] if not lora else ["10", 1],
+                "clip": ["4", 1],
             },
         },
         "7": {
             "class_type": "CLIPTextEncode",
             "inputs": {
                 "text": negative_prompt or "ugly, blurry, low quality, deformed",
-                "clip": ["4", 1] if not lora else ["10", 1],
+                "clip": ["4", 1],
             },
         },
         "8": {
@@ -216,20 +281,106 @@ def _build_txt2img_workflow(
         },
     }
 
-    # Add LoRA loader node if specified
-    if lora:
-        workflow["10"] = {
-            "class_type": "LoraLoader",
-            "inputs": {
-                "lora_name": lora,
-                "strength_model": lora_strength,
-                "strength_clip": lora_strength,
-                "model": ["4", 0],
-                "clip": ["4", 1],
-            },
-        }
+    # Build LoRA chain (nodes 100..) and rewire model/clip refs to its tail.
+    model_ref, clip_ref = _apply_lora_chain(workflow, lora_stack)
+    workflow["3"]["inputs"]["model"] = model_ref
+    workflow["6"]["inputs"]["clip"] = clip_ref
+    workflow["7"]["inputs"]["clip"] = clip_ref
+
+    # Optional ADetailer-style fixup chain (faces, hands, etc). One or more
+    # FaceDetailer passes appended after VAEDecode; SaveImage reads from the tail.
+    if detector_chain:
+        _append_detailer_chain(
+            workflow, detector_chain, model_ref=model_ref, clip_ref=clip_ref,
+            seed=seed, steps=steps, cfg=cfg,
+            sampler_name=sampler_name or "euler",
+            scheduler=scheduler or "normal",
+        )
 
     return workflow
+
+
+def _normalize_detectors(detectors, legacy_detector: str) -> list:
+    """Coerce the detector spec into a clean list of model names.
+
+    Accepts the new `detectors` array OR the legacy single `detector` string.
+    Drops empties; preserves order (chain runs top-to-bottom).
+    """
+    if detectors and isinstance(detectors, list):
+        return [d for d in detectors if isinstance(d, str) and d]
+    if legacy_detector:
+        return [legacy_detector]
+    return []
+
+
+def _append_detailer_chain(
+    workflow: dict, detectors: list, *, model_ref: list, clip_ref: list,
+    seed: int, steps: int, cfg: float,
+    sampler_name: str, scheduler: str,
+) -> None:
+    """Chain N FaceDetailer passes (one per detector) onto a workflow.
+
+    Each pass: UltralyticsDetectorProvider → FaceDetailer. The first detailer
+    reads from VAEDecode (node 8); subsequent detailers chain image-in from the
+    previous detailer's output, so a face fix → hand fix sequence works as one
+    pipeline. SaveImage (node 9) is rewired to the tail of the chain.
+
+    Detailer node IDs occupy the 200+ range to stay clear of the base workflow
+    (1–21) and the LoRA chain (100+).
+    """
+    if not detectors:
+        return
+
+    image_ref = ["8", 0]  # base: VAEDecode
+    for i, detector in enumerate(detectors):
+        provider_id = str(200 + i * 2)      # 200, 202, 204, ...
+        detailer_id = str(200 + i * 2 + 1)  # 201, 203, 205, ...
+        workflow[provider_id] = {
+            "class_type": "UltralyticsDetectorProvider",
+            "inputs": {"model_name": detector},
+        }
+        workflow[detailer_id] = {
+            "class_type": "FaceDetailer",
+            "inputs": {
+                "image": image_ref,
+                "model": model_ref,
+                "clip": clip_ref,
+                "vae": ["4", 2],
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "bbox_detector": [provider_id, 0],
+                "guide_size": 384,
+                "guide_size_for": True,
+                "max_size": 1024,
+                # Bump the seed per-pass so each detailer picks fresh noise; otherwise
+                # chained passes can collapse onto the same noise pattern.
+                "seed": seed + i + 1,
+                "steps": steps,
+                "cfg": cfg,
+                "sampler_name": sampler_name,
+                "scheduler": scheduler,
+                "denoise": 0.5,
+                "feather": 5,
+                "noise_mask": True,
+                "force_inpaint": True,
+                "bbox_threshold": 0.5,
+                "bbox_dilation": 10,
+                "bbox_crop_factor": 3.0,
+                "sam_detection_hint": "center-1",
+                "sam_dilation": 0,
+                "sam_threshold": 0.93,
+                "sam_bbox_expansion": 0,
+                "sam_mask_hint_threshold": 0.7,
+                "sam_mask_hint_use_negative": "False",
+                "drop_size": 10,
+                "wildcard": "",
+                "cycle": 1,
+            },
+        }
+        image_ref = [detailer_id, 0]
+
+    # Reroute SaveImage to the tail of the detailer chain.
+    workflow["9"]["inputs"]["images"] = image_ref
 
 
 def _build_img2img_workflow(
@@ -244,10 +395,18 @@ def _build_img2img_workflow(
     batch_size: int = 1,
     lora: str = "",
     lora_strength: float = 0.8,
+    loras: list = None,
+    sampler_name: str = "euler",
+    scheduler: str = "normal",
+    detector: str = "",
+    detectors: list = None,
 ) -> dict:
     """Build a ComfyUI API workflow for image-to-image generation."""
     if seed < 0:
         seed = random.randint(0, 2**32 - 1)
+
+    lora_stack = _normalize_loras(loras, lora, lora_strength)
+    detector_chain = _normalize_detectors(detectors, detector)
 
     workflow = {
         "3": {
@@ -256,10 +415,10 @@ def _build_img2img_workflow(
                 "seed": seed,
                 "steps": steps,
                 "cfg": cfg,
-                "sampler_name": "euler",
-                "scheduler": "normal",
+                "sampler_name": sampler_name or "euler",
+                "scheduler": scheduler or "normal",
                 "denoise": denoise,
-                "model": ["4", 0] if not lora else ["10", 0],
+                "model": ["4", 0],
                 "positive": ["6", 0],
                 "negative": ["7", 0],
                 "latent_image": ["11", 0],  # VAEEncode output
@@ -275,14 +434,14 @@ def _build_img2img_workflow(
             "class_type": "CLIPTextEncode",
             "inputs": {
                 "text": prompt or "high quality, detailed",
-                "clip": ["4", 1] if not lora else ["10", 1],
+                "clip": ["4", 1],
             },
         },
         "7": {
             "class_type": "CLIPTextEncode",
             "inputs": {
                 "text": negative_prompt or "ugly, blurry, low quality, deformed",
-                "clip": ["4", 1] if not lora else ["10", 1],
+                "clip": ["4", 1],
             },
         },
         "8": {
@@ -316,17 +475,19 @@ def _build_img2img_workflow(
         },
     }
 
-    if lora:
-        workflow["10"] = {
-            "class_type": "LoraLoader",
-            "inputs": {
-                "lora_name": lora,
-                "strength_model": lora_strength,
-                "strength_clip": lora_strength,
-                "model": ["4", 0],
-                "clip": ["4", 1],
-            },
-        }
+    # Build LoRA chain (nodes 100..) and rewire model/clip refs to its tail.
+    model_ref, clip_ref = _apply_lora_chain(workflow, lora_stack)
+    workflow["3"]["inputs"]["model"] = model_ref
+    workflow["6"]["inputs"]["clip"] = clip_ref
+    workflow["7"]["inputs"]["clip"] = clip_ref
+
+    if detector_chain:
+        _append_detailer_chain(
+            workflow, detector_chain, model_ref=model_ref, clip_ref=clip_ref,
+            seed=seed, steps=steps, cfg=cfg,
+            sampler_name=sampler_name or "euler",
+            scheduler=scheduler or "normal",
+        )
 
     return workflow
 
@@ -364,6 +525,11 @@ async def generate_image(request_body: dict):
         batch_size = min(int(request_body.get("batch_size", 1)), 4)
         lora = request_body.get("lora", "")
         lora_strength = float(request_body.get("lora_strength", 0.8))
+        loras = request_body.get("loras", None)
+        sampler_name = request_body.get("sampler_name", "euler") or "euler"
+        scheduler = request_body.get("scheduler", "normal") or "normal"
+        detector = request_body.get("detector", "") or ""
+        detectors = request_body.get("detectors", None)
 
         workflow = _build_txt2img_workflow(
             prompt=prompt_text,
@@ -377,6 +543,11 @@ async def generate_image(request_body: dict):
             batch_size=batch_size,
             lora=lora,
             lora_strength=lora_strength,
+            loras=loras,
+            sampler_name=sampler_name,
+            scheduler=scheduler,
+            detector=detector,
+            detectors=detectors,
         )
 
         # Queue the prompt with ComfyUI
@@ -406,6 +577,11 @@ async def generate_image(request_body: dict):
             "model": model,
             "lora": lora,
             "lora_strength": lora_strength,
+            "loras": loras or [],
+            "sampler": sampler_name,
+            "scheduler": scheduler,
+            "detector": detector,
+            "detectors": detectors or [],
             "width": width,
             "height": height,
             "steps": steps,
@@ -452,6 +628,11 @@ async def generate_img2img(
     batch_size: int = Form(1),
     lora: str = Form(""),
     lora_strength: float = Form(0.8),
+    loras: str = Form(""),  # JSON-encoded array: [{"lora_name":..., "strength":...}, ...]
+    sampler_name: str = Form("euler"),
+    scheduler: str = Form("normal"),
+    detector: str = Form(""),
+    detectors: str = Form(""),  # JSON-encoded array of detector model names
 ):
     """Upload an image and generate variations using img2img."""
     lock_acquired = False
@@ -487,6 +668,20 @@ async def generate_img2img(
         comfyui_image_name = upload_result.get("name", filename)
         logger.info(f"Image uploaded to ComfyUI: {comfyui_image_name}")
 
+        # Parse JSON-encoded loras + detectors arrays (FormData can't pass arrays natively)
+        def _parse_json_array(raw, label):
+            if not raw:
+                return None
+            try:
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, list) else None
+            except json.JSONDecodeError:
+                logger.warning(f"img2img: ignoring malformed {label} JSON: {raw[:80]}")
+                return None
+
+        loras_parsed = _parse_json_array(loras, "loras")
+        detectors_parsed = _parse_json_array(detectors, "detectors")
+
         # Build img2img workflow
         workflow = _build_img2img_workflow(
             image_name=comfyui_image_name,
@@ -500,6 +695,11 @@ async def generate_img2img(
             batch_size=batch_size,
             lora=lora,
             lora_strength=lora_strength,
+            loras=loras_parsed,
+            sampler_name=sampler_name,
+            scheduler=scheduler,
+            detector=detector,
+            detectors=detectors_parsed,
         )
 
         # Queue with ComfyUI
@@ -528,6 +728,11 @@ async def generate_img2img(
             "model": model,
             "lora": lora,
             "lora_strength": lora_strength,
+            "loras": loras_parsed or [],
+            "sampler": sampler_name,
+            "scheduler": scheduler,
+            "detector": detector,
+            "detectors": detectors_parsed or [],
             "denoise": denoise,
             "steps": steps,
             "cfg": cfg,
@@ -758,6 +963,69 @@ async def list_loras():
         return {"loras": [], "error": "ComfyUI is not running"}
     except Exception as e:
         return {"loras": [], "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/generate/samplers — Sampler + scheduler dropdown options from KSampler
+# ---------------------------------------------------------------------------
+@router.get("/api/generate/samplers")
+async def list_samplers():
+    """Return ComfyUI's live list of sampler_name + scheduler enum values."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{COMFYUI_HOST}/object_info/KSampler",
+                timeout=10,
+            )
+
+        if resp.status_code != 200:
+            return {"samplers": [], "schedulers": [], "error": "Could not fetch KSampler info"}
+
+        data = resp.json()
+        inputs = data.get("KSampler", {}).get("input", {}).get("required", {})
+        samplers = inputs.get("sampler_name", [[]])[0]
+        schedulers = inputs.get("scheduler", [[]])[0]
+        return {"samplers": samplers, "schedulers": schedulers}
+
+    except httpx.ConnectError:
+        return {"samplers": [], "schedulers": [], "error": "ComfyUI is not running"}
+    except Exception as e:
+        return {"samplers": [], "schedulers": [], "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/generate/detectors — ADetailer YOLO detection models
+# ---------------------------------------------------------------------------
+@router.get("/api/generate/detectors")
+async def list_detectors():
+    """Return Impact Pack's UltralyticsDetectorProvider model list.
+
+    These are the .pt files under models/comfyui/ultralytics/{bbox,segm}/
+    used by FaceDetailer for the ADetailer-style face/hand/eye fix pass.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{COMFYUI_HOST}/object_info/UltralyticsDetectorProvider",
+                timeout=10,
+            )
+
+        if resp.status_code != 200:
+            return {
+                "detectors": [],
+                "error": "Impact Pack not installed — rebuild ComfyUI to enable ADetailer",
+            }
+
+        data = resp.json()
+        node_info = data.get("UltralyticsDetectorProvider", {})
+        inputs = node_info.get("input", {}).get("required", {})
+        detector_list = inputs.get("model_name", [[]])[0]
+        return {"detectors": detector_list}
+
+    except httpx.ConnectError:
+        return {"detectors": [], "error": "ComfyUI is not running"}
+    except Exception as e:
+        return {"detectors": [], "error": str(e)}
 
 
 # ---------------------------------------------------------------------------

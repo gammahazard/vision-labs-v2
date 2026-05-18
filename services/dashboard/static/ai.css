@@ -18,63 +18,11 @@
     touch-action: pan-y;
 }
 
-/* ---------------------------------------------------------------------------
- * Navbar
- * --------------------------------------------------------------------------- */
-.navbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 1.5rem;
-    height: 56px;
-    flex-shrink: 0;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-    z-index: 100;
-}
-
-.navbar-brand {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
-    color: var(--text-primary);
-    font-weight: 600;
-    font-size: 1.1rem;
-}
-
-.navbar-brand .logo-icon {
-    color: var(--accent);
-    font-size: 1.3rem;
-}
-
-.navbar-links {
-    display: flex;
-    gap: 0.25rem;
-}
-
-.navbar-links a {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    text-decoration: none;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    font-weight: 500;
-    transition: all 0.2s;
-}
-
-.navbar-links a:hover {
-    color: var(--text-primary);
-    background: var(--bg-panel);
-}
-
-.navbar-links a.active {
-    color: var(--accent);
-    background: var(--accent-bg);
-}
+/* Navbar styles live in style.css (single source of truth across all
+   pages). Previously this file duplicated them with subtly different
+   selectors (`.navbar-links a` vs `.nav-link`) which collided with the
+   unified navbar — broke spacing and removed the sticky-top behavior
+   on the AI page. */
 
 /* ---------------------------------------------------------------------------
  * Onboarding Wizard
@@ -649,14 +597,7 @@
         max-width: 92%;
     }
 
-    .navbar {
-        padding: 0 1rem;
-    }
-
-    .navbar-links a {
-        padding: 0.5rem 0.75rem;
-        font-size: 0.85rem;
-    }
+    /* Navbar mobile tweaks live in style.css alongside the base rules. */
 }
 
 /* Settings gear */

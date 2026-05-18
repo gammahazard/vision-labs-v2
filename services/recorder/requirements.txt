@@ -1,0 +1,5 @@
+# Redis client — used only by _load_rtsp_from_registry() to look up the
+# camera's RTSP URL from cameras:registry when the RTSP_URL env var is
+# empty (the slot-based-camera case: cam3, cam4, cam5 don't have a
+# hardcoded URL in docker-compose.yml).
+redis==5.2.1

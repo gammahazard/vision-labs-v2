@@ -21,6 +21,7 @@ SCHEMA:
 """
 
 import sqlite3
+import time
 import numpy as np
 import logging
 import os
@@ -38,6 +39,7 @@ MAX_UNKNOWN_FACES = int(os.getenv("MAX_UNKNOWN_FACES", "100"))
 # Similarity threshold for deduplicating unknown faces.
 # Higher = stricter (fewer "this is the same person" matches → more entries kept).
 UNKNOWN_DEDUP_THRESHOLD = float(os.getenv("UNKNOWN_DEDUP_THRESHOLD", "0.6"))
+
 
 
 class FaceDB:
@@ -90,14 +92,23 @@ class FaceDB:
         logger.info(f"Face database initialized at {self.db_path}")
 
     def _load_cache(self):
-        """Load all embeddings into memory for fast cosine similarity."""
-        self._cache = []
-        self._unknown_cache = []
+        """Rebuild both caches from SQLite and atomically swap them in.
+
+        Safe to call concurrently with readers. Builds new lists locally,
+        then assigns `self._cache` / `self._unknown_cache` in a single
+        bytecode op each — readers iterating the OLD lists complete safely,
+        and the next call sees the NEW lists. This is what lets multiple
+        face-recognizer containers sharing the same SQLite stay in sync
+        when one of them writes (enroll, label, reconcile) and the others
+        need to pick up the change without a restart.
+        """
+        new_cache: list[dict] = []
+        new_unknown_cache: list[dict] = []
         with sqlite3.connect(self.db_path) as conn:
             for row in conn.execute("SELECT id, name, embedding FROM known_faces"):
                 face_id, name, emb_bytes = row
                 embedding = np.frombuffer(emb_bytes, dtype=np.float32)
-                self._cache.append({
+                new_cache.append({
                     "id": face_id, "name": name, "embedding": embedding,
                 })
 
@@ -106,14 +117,27 @@ class FaceDB:
             ):
                 uid, emb_bytes, count = row
                 embedding = np.frombuffer(emb_bytes, dtype=np.float32)
-                self._unknown_cache.append({
+                new_unknown_cache.append({
                     "id": uid, "embedding": embedding, "sighting_count": count,
                 })
 
-        logger.info(
-            f"Loaded {len(self._cache)} known + "
-            f"{len(self._unknown_cache)} unknown faces into cache"
-        )
+        prev_known = len(getattr(self, "_cache", []))
+        prev_unknown = len(getattr(self, "_unknown_cache", []))
+        # Atomic swap (each assignment is a single STORE_ATTR bytecode op)
+        self._cache = new_cache
+        self._unknown_cache = new_unknown_cache
+
+        if prev_known != len(new_cache) or prev_unknown != len(new_unknown_cache):
+            logger.info(
+                f"Cache reloaded: {len(new_cache)} known "
+                f"(was {prev_known}), {len(new_unknown_cache)} unknown "
+                f"(was {prev_unknown})"
+            )
+        else:
+            logger.debug(
+                f"Cache reload: no change "
+                f"({len(new_cache)} known, {len(new_unknown_cache)} unknown)"
+            )
 
     # ------------------------------------------------------------------
     # Known face operations
@@ -132,7 +156,11 @@ class FaceDB:
             conn.commit()
             face_id = cursor.lastrowid
 
-        self._cache.append({"id": face_id, "name": name, "embedding": embedding})
+        # Re-read from SQLite instead of appending in place. If the periodic
+        # cache-refresh thread fires between our commit and an in-place
+        # .append(), we'd end up with a duplicate cache entry (the refresh
+        # already picked up our row, then our append adds it again).
+        self._load_cache()
         logger.info(f"Enrolled face: {name} (id={face_id})")
         return face_id
 
@@ -201,7 +229,7 @@ class FaceDB:
             deleted = cursor.rowcount > 0
 
         if deleted:
-            self._cache = [f for f in self._cache if f["id"] != face_id]
+            self._load_cache()
             logger.info(f"Deleted face id={face_id}")
 
         return deleted
@@ -217,9 +245,21 @@ class FaceDB:
         If a similar unknown was already captured, just bumps sighting_count.
         Otherwise creates a new entry. Keeps at most MAX_UNKNOWN_FACES.
 
-        Returns the unknown face ID if new, or None if deduplicated.
+        Returns the unknown face ID if new, or None if deduplicated/skipped.
         """
         embedding = embedding / np.linalg.norm(embedding)
+
+        # Near-miss suppression: if this embedding is plausibly a KNOWN
+        # person at an off angle (sim >= match_threshold * 0.6 = 0.30),
+        # don't save as unknown. Prevents the gallery from filling up with
+        # "first-frame-of-Alice" captures that almost matched her enrolled
+        # angles but didn't clear the live recognition threshold (0.50).
+        # Same loose-match bar that reconcile uses to delete loose unknowns.
+        near_miss_threshold = self.match_threshold * 0.6
+        for known in self._cache:
+            if float(np.dot(embedding, known["embedding"])) >= near_miss_threshold:
+                # Plausibly known — skip to avoid polluting the gallery.
+                return None
 
         # Dedup: check if we've already captured this unknown person
         for cached in self._unknown_cache:
@@ -328,11 +368,8 @@ class FaceDB:
             conn.execute("DELETE FROM unknown_faces WHERE id = ?", (uid,))
             conn.commit()
 
-        # Update caches
-        embedding = np.frombuffer(emb_bytes, dtype=np.float32)
-        self._cache.append({"id": face_id, "name": name, "embedding": embedding})
-        self._unknown_cache = [u for u in self._unknown_cache if u["id"] != uid]
-
+        # Re-read both caches from DB — see enroll() for the reason.
+        self._load_cache()
         logger.info(f"Labeled unknown {uid} as '{name}' (known id={face_id})")
         return face_id
 
@@ -346,73 +383,127 @@ class FaceDB:
             deleted = cursor.rowcount > 0
 
         if deleted:
-            self._unknown_cache = [u for u in self._unknown_cache if u["id"] != uid]
+            self._load_cache()
             logger.info(f"Deleted unknown face id={uid}")
 
         return deleted
 
-    def match_and_clear_unknowns(self, name: str, embedding: np.ndarray) -> int:
+    def match_and_clear_unknowns(self, name: str, embedding: np.ndarray) -> dict:
         """
-        Retroactively match all unknown faces against a newly enrolled embedding.
+        Retroactively promote matching unknowns as additional angles for `name`.
 
         After enrolling or labeling a face, scan every unknown face in the DB.
-        If cosine similarity >= match_threshold, delete that unknown (it's the
-        same person who just got enrolled). Returns the count of cleared unknowns.
+        Any unknown with cosine similarity >= match_threshold is moved from
+        unknown_faces → known_faces (same name), preserving its embedding +
+        photo as an extra angle for recognition.
+
+        Returns {
+            "count": int,         # angles absorbed
+            "promoted": [         # per-row details so the dashboard can show
+                {                 # a "what got absorbed" modal with thumbnails
+                    "face_id": int,         # new known_faces row id
+                    "similarity": float,    # cosine sim that triggered it
+                    "old_unknown_id": int,  # row id in unknown_faces before promotion
+                },
+                ...
+            ]
+        }
         """
         embedding = embedding / np.linalg.norm(embedding)
-        to_delete = []
-
+        # Capture (id, similarity) per candidate — we need the score so the
+        # UI can render confidence next to each absorbed thumbnail.
+        candidates: list[tuple[int, float]] = []
         for cached in self._unknown_cache:
-            similarity = float(np.dot(embedding, cached["embedding"]))
-            if similarity >= self.match_threshold:
-                to_delete.append(cached["id"])
+            sim = float(np.dot(embedding, cached["embedding"]))
+            if sim >= self.match_threshold:
+                candidates.append((cached["id"], sim))
 
-        if not to_delete:
-            return 0
+        if not candidates:
+            return {"count": 0, "promoted": []}
 
-        # Batch delete from DB
+        promoted: list[dict] = []
+        candidate_ids = [uid for uid, _ in candidates]
         with sqlite3.connect(self.db_path) as conn:
-            placeholders = ",".join("?" for _ in to_delete)
+            for uid, sim in candidates:
+                row = conn.execute(
+                    "SELECT embedding, photo FROM unknown_faces WHERE id = ?", (uid,)
+                ).fetchone()
+                if not row:
+                    continue
+                emb_bytes, photo = row
+                cursor = conn.execute(
+                    "INSERT INTO known_faces (name, embedding, photo) VALUES (?, ?, ?)",
+                    (name, emb_bytes, photo),
+                )
+                promoted.append({
+                    "face_id": cursor.lastrowid,
+                    "similarity": round(sim, 3),
+                    "old_unknown_id": uid,
+                })
+
+            placeholders = ",".join("?" for _ in candidate_ids)
             conn.execute(
                 f"DELETE FROM unknown_faces WHERE id IN ({placeholders})",
-                to_delete,
+                candidate_ids,
             )
             conn.commit()
 
-        # Update cache
-        delete_set = set(to_delete)
-        self._unknown_cache = [
-            u for u in self._unknown_cache if u["id"] not in delete_set
-        ]
-
+        # Re-read both caches from DB — see enroll() for the reason.
+        self._load_cache()
         logger.info(
-            f"Retroactive match: cleared {len(to_delete)} unknowns matching '{name}'"
+            f"Retroactive promotion: added {len(promoted)} angle(s) to "
+            f"'{name}' from unknowns"
         )
-        return len(to_delete)
+        return {"count": len(promoted), "promoted": promoted}
 
     def reconcile_unknowns(self) -> dict:
         """
-        Sweep all unknown faces against all known faces on startup.
+        Sweep all unknown faces against all known faces.
 
-        Any unknown whose embedding matches a known face is deleted.
-        Uses a relaxed threshold (70% of match_threshold) since we're
-        cleaning up, not making live identification decisions.
-        Returns a dict of {name: count} for cleared unknowns.
+        Two tiers:
+        - sim >= match_threshold: PROMOTE the unknown to known_faces under
+          the matched name, preserving the embedding + photo as an extra
+          recognition angle.
+        - match_threshold > sim >= match_threshold * 0.6: DELETE the unknown
+          (loose match — probably the same person but too noisy to keep as
+          an embedding).
+        - sim < match_threshold * 0.6: KEEP the unknown.
+
+        Called on startup AND on demand via the dashboard "Scan unknowns"
+        button. Returns:
+            {
+                "matched_names": {name: count},   # promoted + deleted per name
+                "promoted": int,                  # total angles added
+                "deleted": int,                   # loose matches removed
+                "promoted_by_name": {             # per-name promotion details
+                    name: [                       # so the dashboard modal can
+                        {                         # render thumbnails + scores
+                            "face_id": int,
+                            "similarity": float,
+                            "old_unknown_id": int,
+                        }, ...
+                    ]
+                }
+            }
         """
         if not self._cache or not self._unknown_cache:
-            return {}
+            return {"matched_names": {}, "promoted": 0, "deleted": 0,
+                    "promoted_by_name": {}}
 
-        reconcile_threshold = self.match_threshold * 0.6  # Relaxed for cleanup
+        delete_threshold = self.match_threshold * 0.6  # relaxed cleanup tier
         logger.info(
             f"Reconciling {len(self._unknown_cache)} unknowns against "
-            f"{len(self._cache)} known faces (threshold={reconcile_threshold:.2f})"
+            f"{len(self._cache)} known faces "
+            f"(promote>={self.match_threshold:.2f}, delete>={delete_threshold:.2f})"
         )
 
-        to_delete = []
-        matched_names = {}  # {name: count}
+        # Now (uid, name, similarity) so we can carry scores through to the UI.
+        to_promote: list[tuple[int, str, float]] = []
+        to_delete: list[int] = []
+        matched_names: dict[str, int] = {}
         for unknown in self._unknown_cache:
             emb = unknown["embedding"] / np.linalg.norm(unknown["embedding"])
-            best_sim = -1
+            best_sim = -1.0
             best_name = None
             for known in self._cache:
                 similarity = float(np.dot(emb, known["embedding"]))
@@ -420,38 +511,75 @@ class FaceDB:
                     best_sim = similarity
                     best_name = known["name"]
 
-            if best_sim >= reconcile_threshold:
+            if best_sim >= self.match_threshold:
+                to_promote.append((unknown["id"], best_name, best_sim))
+                matched_names[best_name] = matched_names.get(best_name, 0) + 1
+                logger.info(
+                    f"Reconcile: unknown {unknown['id']} → promote to "
+                    f"'{best_name}' (sim={best_sim:.3f})"
+                )
+            elif best_sim >= delete_threshold:
                 to_delete.append(unknown["id"])
                 matched_names[best_name] = matched_names.get(best_name, 0) + 1
                 logger.info(
-                    f"Reconcile: unknown {unknown['id']} matches "
-                    f"'{best_name}' (sim={best_sim:.3f})"
+                    f"Reconcile: unknown {unknown['id']} → delete "
+                    f"(loose match '{best_name}', sim={best_sim:.3f})"
                 )
             else:
                 logger.info(
-                    f"Reconcile: unknown {unknown['id']} best match "
-                    f"'{best_name}' (sim={best_sim:.3f}) — below threshold"
+                    f"Reconcile: unknown {unknown['id']} keep (best "
+                    f"'{best_name}' sim={best_sim:.3f} below {delete_threshold:.2f})"
                 )
 
-        if not to_delete:
+        if not to_promote and not to_delete:
             logger.info("Reconcile: no unknowns matched any known face")
-            return {}
+            return {"matched_names": {}, "promoted": 0, "deleted": 0,
+                    "promoted_by_name": {}}
 
+        promoted_count = 0
+        promoted_by_name: dict[str, list[dict]] = {}
+        all_to_remove = [uid for uid, _n, _s in to_promote] + to_delete
         with sqlite3.connect(self.db_path) as conn:
-            placeholders = ",".join("?" for _ in to_delete)
+            for uid, name, sim in to_promote:
+                row = conn.execute(
+                    "SELECT embedding, photo FROM unknown_faces WHERE id = ?", (uid,)
+                ).fetchone()
+                if not row:
+                    continue
+                emb_bytes, photo = row
+                cursor = conn.execute(
+                    "INSERT INTO known_faces (name, embedding, photo) VALUES (?, ?, ?)",
+                    (name, emb_bytes, photo),
+                )
+                promoted_by_name.setdefault(name, []).append({
+                    "face_id": cursor.lastrowid,
+                    "similarity": round(sim, 3),
+                    "old_unknown_id": uid,
+                })
+                promoted_count += 1
+
+            placeholders = ",".join("?" for _ in all_to_remove)
             conn.execute(
                 f"DELETE FROM unknown_faces WHERE id IN ({placeholders})",
-                to_delete,
+                all_to_remove,
             )
             conn.commit()
 
-        delete_set = set(to_delete)
-        self._unknown_cache = [
-            u for u in self._unknown_cache if u["id"] not in delete_set
-        ]
+        # Re-read the source of truth from SQLite. Fixes the multi-container
+        # race: whichever recognizer ran reconcile second sees the first's
+        # commits authoritatively from the DB instead of trusting a stale plan.
+        self._load_cache()
 
-        logger.info(f"Reconcile complete: cleared {len(to_delete)} unknowns")
-        return matched_names
+        logger.info(
+            f"Reconcile complete: promoted {promoted_count} angle(s), "
+            f"deleted {len(to_delete)} loose-match unknown(s)"
+        )
+        return {
+            "matched_names": matched_names,
+            "promoted": promoted_count,
+            "deleted": len(to_delete),
+            "promoted_by_name": promoted_by_name,
+        }
 
     @property
     def count(self) -> int:

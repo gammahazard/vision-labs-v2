@@ -17,6 +17,155 @@
     let _changeWatcher = null;
     let _lastSnapshot = null;
 
+    // --- Multi-LoRA stack ---
+    // The user-facing list of stacked LoRAs. Each row is {name, strength}.
+    // Empty name = "blank row" (user hasn't picked one yet); we'll skip it on submit.
+    const MAX_LORA_STACK = 5;
+    let _loraStack = [{ name: '', strength: 0.8 }];
+
+    function _renderLoraStack() {
+        const host = $('genLoraStack');
+        if (!host) return;
+        host.innerHTML = '';
+        _loraStack.forEach((row, idx) => host.appendChild(_buildLoraRow(row, idx)));
+        const addBtn = $('genLoraAddBtn');
+        if (addBtn) addBtn.disabled = _loraStack.length >= MAX_LORA_STACK;
+    }
+
+    function _buildLoraRow(row, idx) {
+        const wrap = document.createElement('div');
+        wrap.className = 'lora-row';
+        wrap.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:6px;';
+
+        const sel = document.createElement('select');
+        sel.style.cssText = 'flex:1;min-width:0;';
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = '— pick a LoRA —';
+        sel.appendChild(noneOpt);
+        _availableLoras.forEach(l => {
+            const o = document.createElement('option');
+            o.value = l;
+            o.textContent = l.replace('.safetensors', '').replace(/_/g, ' ');
+            if (l === row.name) o.selected = true;
+            sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => { _loraStack[idx].name = sel.value; });
+
+        const strengthWrap = document.createElement('div');
+        strengthWrap.style.cssText = 'display:flex;align-items:center;gap:4px;min-width:160px;';
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0'; slider.max = '1'; slider.step = '0.05';
+        slider.value = String(row.strength);
+        slider.style.cssText = 'flex:1;';
+        const val = document.createElement('span');
+        val.textContent = parseFloat(row.strength).toFixed(2);
+        val.style.cssText = 'min-width:34px;text-align:right;color:#a1a1aa;font-size:0.85em;';
+        slider.addEventListener('input', () => {
+            _loraStack[idx].strength = parseFloat(slider.value);
+            val.textContent = parseFloat(slider.value).toFixed(2);
+        });
+        strengthWrap.appendChild(slider);
+        strengthWrap.appendChild(val);
+
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.textContent = '✕';
+        rm.title = 'Remove this LoRA';
+        rm.style.cssText = 'background:#27272a;color:#e4e4e7;border:1px solid #3f3f46;border-radius:4px;cursor:pointer;padding:4px 8px;';
+        rm.addEventListener('click', () => {
+            _loraStack.splice(idx, 1);
+            if (_loraStack.length === 0) _loraStack.push({ name: '', strength: 0.8 });
+            _renderLoraStack();
+        });
+
+        wrap.appendChild(sel);
+        wrap.appendChild(strengthWrap);
+        wrap.appendChild(rm);
+        return wrap;
+    }
+
+    function _addLoraRow() {
+        if (_loraStack.length >= MAX_LORA_STACK) return;
+        _loraStack.push({ name: '', strength: 0.8 });
+        _renderLoraStack();
+    }
+
+    function _getActiveLoras() {
+        return _loraStack
+            .filter(r => r.name && r.name !== '')
+            .map(r => ({ lora_name: r.name, strength: r.strength }));
+    }
+
+    // --- Multi-ADetailer stack ---
+    // Each entry is just a detector model name ("bbox/face_yolov8m.pt" etc.). Order
+    // matters: the chain runs top-to-bottom (face fix → hand fix → ...).
+    const MAX_DETECTOR_STACK = 4;
+    let _detectorStack = [''];
+
+    function _renderDetectorStack() {
+        const host = $('genDetectorStack');
+        if (!host) return;
+        host.innerHTML = '';
+        _detectorStack.forEach((name, idx) => host.appendChild(_buildDetectorRow(name, idx)));
+        const addBtn = $('genDetectorAddBtn');
+        if (addBtn) addBtn.disabled = _detectorStack.length >= MAX_DETECTOR_STACK;
+    }
+
+    function _buildDetectorRow(name, idx) {
+        const wrap = document.createElement('div');
+        wrap.className = 'detector-row';
+        wrap.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:6px;';
+
+        const sel = document.createElement('select');
+        sel.style.cssText = 'flex:1;min-width:0;';
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = '— None —';
+        sel.appendChild(noneOpt);
+        if (_availableDetectors.length === 0 && _detectorLoadError) {
+            const err = document.createElement('option');
+            err.value = '';
+            err.disabled = true;
+            err.textContent = '— ' + _detectorLoadError;
+            sel.appendChild(err);
+        }
+        _availableDetectors.forEach(d => {
+            const o = document.createElement('option');
+            o.value = d;
+            o.textContent = d.replace('.pt', '').replace(/_/g, ' ');
+            if (d === name) o.selected = true;
+            sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => { _detectorStack[idx] = sel.value; });
+
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.textContent = '✕';
+        rm.title = 'Remove this detailer';
+        rm.style.cssText = 'background:#27272a;color:#e4e4e7;border:1px solid #3f3f46;border-radius:4px;cursor:pointer;padding:4px 8px;';
+        rm.addEventListener('click', () => {
+            _detectorStack.splice(idx, 1);
+            if (_detectorStack.length === 0) _detectorStack.push('');
+            _renderDetectorStack();
+        });
+
+        wrap.appendChild(sel);
+        wrap.appendChild(rm);
+        return wrap;
+    }
+
+    function _addDetectorRow() {
+        if (_detectorStack.length >= MAX_DETECTOR_STACK) return;
+        _detectorStack.push('');
+        _renderDetectorStack();
+    }
+
+    function _getActiveDetectors() {
+        return _detectorStack.filter(n => n && n !== '');
+    }
+
     function _snapshotParams() {
         return {
             prompt: ($('genPrompt') || {}).value || '',
@@ -26,6 +175,11 @@
             cfg: parseFloat(($('genCfg') || {}).value) || 7,
             lora: ($('genLora') || {}).value || '',
             lora_strength: parseFloat(($('genLoraStrength') || {}).value) || 0.8,
+            loras: JSON.stringify(_getActiveLoras()),
+            sampler_name: ($('genSampler') || {}).value || 'euler',
+            scheduler: ($('genScheduler') || {}).value || 'normal',
+            detector: ($('genDetector') || {}).value || '',
+            detectors: JSON.stringify(_getActiveDetectors()),
             seed: parseInt(($('genSeed') || {}).value) || -1,
             width: selectedWidth,
             height: selectedHeight,
@@ -34,7 +188,7 @@
 
     function _diffParams(a, b) {
         var changes = {};
-        var keys = ['prompt', 'negative_prompt', 'model', 'steps', 'cfg', 'lora', 'lora_strength', 'seed', 'width', 'height'];
+        var keys = ['prompt', 'negative_prompt', 'model', 'steps', 'cfg', 'lora', 'lora_strength', 'loras', 'sampler_name', 'scheduler', 'detector', 'detectors', 'seed', 'width', 'height'];
         for (var k = 0; k < keys.length; k++) {
             var key = keys[k];
             if (String(a[key]) !== String(b[key])) {
@@ -103,6 +257,20 @@
         checkComfyUIStatus();
         loadModels();
         loadLoras();
+        loadSamplers();
+        loadDetectors();
+
+        // Render the (initially empty) LoRA stack — the row dropdown is populated
+        // once loadLoras() resolves and calls _renderLoraStack() again.
+        _renderLoraStack();
+        const loraAddBtn = $('genLoraAddBtn');
+        if (loraAddBtn) loraAddBtn.addEventListener('click', _addLoraRow);
+
+        // Detector stack starts with one empty row; rows get a real list once
+        // loadDetectors() resolves and re-renders.
+        _renderDetectorStack();
+        const detectorAddBtn = $('genDetectorAddBtn');
+        if (detectorAddBtn) detectorAddBtn.addEventListener('click', _addDetectorRow);
 
         // Poll ComfyUI status every 10s so the dot updates when it comes online
         if (!_comfyuiPollTimer) {
@@ -264,7 +432,74 @@
         _checkReadyState();
     }
 
+    // --- Load samplers + schedulers (live from ComfyUI's KSampler node) ---
+    async function loadSamplers() {
+        const samplerSel = $('genSampler');
+        const schedulerSel = $('genScheduler');
+        if (!samplerSel || !schedulerSel) return;
+        try {
+            const resp = await fetch('/api/generate/samplers');
+            const data = await resp.json();
+            if (data.samplers && data.samplers.length > 0) {
+                samplerSel.innerHTML = '';
+                data.samplers.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s;
+                    opt.textContent = s;
+                    if (s === 'euler') opt.selected = true;
+                    samplerSel.appendChild(opt);
+                });
+            }
+            if (data.schedulers && data.schedulers.length > 0) {
+                schedulerSel.innerHTML = '';
+                data.schedulers.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s;
+                    opt.textContent = s;
+                    if (s === 'normal') opt.selected = true;
+                    schedulerSel.appendChild(opt);
+                });
+            }
+        } catch {
+            // ComfyUI offline — leave the default 'euler'/'normal' fallback in place.
+        }
+    }
+
+    // --- Load ADetailer YOLO detection models (Impact Pack) ---
+    // Mirrors the LoRA pattern: cache the list once, reuse it for every stacked row.
+    let _availableDetectors = [];
+    let _detectorLoadError = '';
+
+    async function loadDetectors() {
+        const select = $('genDetector');
+        try {
+            const resp = await fetch('/api/generate/detectors');
+            const data = await resp.json();
+            _availableDetectors = (data.detectors && data.detectors.length > 0) ? data.detectors.slice() : [];
+            _detectorLoadError = data.error || '';
+            // Legacy hidden select stays populated for the (now-deprecated) single-detector code path.
+            if (select) {
+                select.innerHTML = '<option value="">None</option>';
+                _availableDetectors.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d;
+                    opt.textContent = d.replace('.pt', '').replace(/_/g, ' ');
+                    select.appendChild(opt);
+                });
+            }
+        } catch {
+            _availableDetectors = [];
+            _detectorLoadError = 'Could not reach ComfyUI';
+        }
+        _renderDetectorStack();
+    }
+
     // --- Load LoRAs ---
+    // Cached list of LoRA filenames — used to populate every stacked LoRA row's dropdown
+    // without re-fetching. Single source of truth for both the legacy hidden #genLora
+    // (kept alive for the Sweep panel) and the new multi-row stack.
+    let _availableLoras = [];
+
     async function loadLoras() {
         const select = $('genLora');
         const sweepSelect = $('sweepLoraSelect');
@@ -272,24 +507,24 @@
         try {
             const resp = await fetch('/api/generate/loras');
             const data = await resp.json();
+            _availableLoras = (data.loras && data.loras.length > 0) ? data.loras.slice() : [];
             select.innerHTML = '<option value="">None</option>';
             if (sweepSelect) sweepSelect.innerHTML = '<option value="">(use main selection)</option>';
-            if (data.loras && data.loras.length > 0) {
-                data.loras.forEach(l => {
-                    const opt = document.createElement('option');
-                    opt.value = l;
-                    opt.textContent = l.replace('.safetensors', '').replace(/_/g, ' ');
-                    select.appendChild(opt);
-                    // Also add to sweep dropdown
-                    if (sweepSelect) {
-                        const sopt = opt.cloneNode(true);
-                        sweepSelect.appendChild(sopt);
-                    }
-                });
-            }
+            _availableLoras.forEach(l => {
+                const opt = document.createElement('option');
+                opt.value = l;
+                opt.textContent = l.replace('.safetensors', '').replace(/_/g, ' ');
+                select.appendChild(opt);
+                if (sweepSelect) {
+                    const sopt = opt.cloneNode(true);
+                    sweepSelect.appendChild(sopt);
+                }
+            });
         } catch {
             select.innerHTML = '<option value="">No LoRAs found</option>';
         }
+        // Render the stacked LoRA UI now that we have the option list
+        _renderLoraStack();
         _lorasLoaded = true;
         _checkReadyState();
     }
@@ -363,8 +598,15 @@
             cfg: parseFloat($('genCfg').value),
             seed: parseInt($('genSeed').value),
             batch_size: 4,
+            // Legacy single-LoRA fields — still sent for Sweep panel compatibility.
+            // When `loras` (below) is non-empty, the backend uses the array and ignores these.
             lora: $('genLora').value,
             lora_strength: parseFloat($('genLoraStrength').value),
+            loras: _getActiveLoras(),
+            sampler_name: ($('genSampler') || {}).value || 'euler',
+            scheduler: ($('genScheduler') || {}).value || 'normal',
+            detector: ($('genDetector') || {}).value || '',
+            detectors: _getActiveDetectors(),
         };
     }
 
@@ -830,6 +1072,10 @@
             if (sweepLora && params.lora_strength > 0) {
                 params.lora = sweepLora;
             }
+            // Sweep semantics live on the legacy single-LoRA fields; clear the multi-LoRA
+            // stack so the backend uses the legacy path (otherwise the stacked LoRAs would
+            // mask whatever the sweep is trying to vary).
+            params.loras = [];
             return params;
         });
     }
@@ -1539,6 +1785,12 @@
             formData.append('denoise', $('genDenoise').value);
             formData.append('lora', $('genLora').value);
             formData.append('lora_strength', $('genLoraStrength').value);
+            // FormData can't carry arrays of objects natively — backend parses this JSON string.
+            formData.append('loras', JSON.stringify(_getActiveLoras()));
+            formData.append('sampler_name', ($('genSampler') || {}).value || 'euler');
+            formData.append('scheduler', ($('genScheduler') || {}).value || 'normal');
+            formData.append('detector', ($('genDetector') || {}).value || '');
+            formData.append('detectors', JSON.stringify(_getActiveDetectors()));
             formData.append('batch_size', Math.min(parseInt($('genBatch').value) || 1, 4));
 
             const resp = await fetch('/api/generate/img2img', {
