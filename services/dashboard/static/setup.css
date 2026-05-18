@@ -189,6 +189,59 @@ body {
     font-weight: 500;
 }
 
+/* Multi-GPU chooser — shown only when 2+ GPUs detected */
+.gpu-mode-chooser {
+    margin-top: 16px;
+    padding: 14px 16px;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.gpu-mode-chooser > strong {
+    display: block;
+    margin-bottom: 12px;
+    color: var(--text-primary);
+}
+
+.gpu-mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 120ms ease;
+}
+
+.gpu-mode-option:hover { border-color: var(--text-secondary); }
+
+.gpu-mode-option input[type="radio"] {
+    margin-top: 4px;
+    accent-color: var(--accent);
+}
+
+.gpu-mode-option .opt-title {
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.gpu-mode-option .opt-meta {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.gpu-mode-option .opt-meta code {
+    font-size: 0.95em;
+}
+
+.gpu-mode-chooser .wizard-hint { margin: 6px 0 0; }
+
 /* ONVIF discovery */
 .discover-block {
     margin: 12px 0 20px;

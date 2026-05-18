@@ -14,6 +14,7 @@ const state = {
     current: 'welcome',
     detected: null,
     tier: null,
+    gpuMode: null,  // 'single' | 'dual' | null — set on hardware-detect step
     cameraAdded: false,
     cameraSkipped: false,
 };
@@ -98,31 +99,86 @@ function renderHardwareResult(data) {
             <td>${(g.vram_mb/1024).toFixed(1)} GB</td>
         </tr>
     `).join('');
-    const maxVram = Math.max(...data.gpus.map(g => g.vram_mb));
-    const tier = recommendTier(maxVram);
-    const slots = estimateSlots(maxVram, tier);
-    state.tier = tier;
 
-    // Concrete model names per tier so users with weak GPUs know what to set
-    // in CHAT_MODEL if they want chat at all (tiers/small.env disables it
-    // by default but offers commented options).
+    // Find the biggest GPU (preferred for chat LLM in dual mode)
+    const sorted = [...data.gpus].sort((a, b) => b.vram_mb - a.vram_mb);
+    const biggest = sorted[0];
+    const second = sorted[1] || null;
+
+    const biggestTier = recommendTier(biggest.vram_mb);
+    state.tier = biggestTier;
+
     const tierBlurbs = {
-        small: 'Small tier (6 GB GPU) — nano YOLO models, AI chat disabled by default. To enable a tiny chat model, set <code>CHAT_MODEL=qwen3:1.7b</code> in .env (~1.5 GB VRAM). Apply with <code>cat tiers/small.env >> .env</code>.',
-        mid: 'Mid tier (8-12 GB GPU) — standard "s" YOLO models. Chat options: <code>qwen3:3b</code> (~2 GB) or <code>qwen3:7b</code> (~5 GB). Defaults to qwen3:7b via <code>cat tiers/mid.env >> .env</code>.',
-        full: 'Full tier (16+ GB) — Qwen 3 14B chat (~9 GB) + MiniCPM-V vision LLM (~5 GB). Apply with <code>cat tiers/full.env >> .env</code>.',
+        small: 'Small tier (6 GB) — nano YOLO models, AI chat disabled by default. Set <code>CHAT_MODEL=qwen3:1.7b</code> (~1.5 GB) to enable a tiny chat model.',
+        mid: 'Mid tier (8-12 GB) — standard "s" YOLO models. Chat options: <code>qwen3:3b</code> (~2 GB) or <code>qwen3:7b</code> (~5 GB).',
+        full: 'Full tier (16+ GB) — Qwen 3 14B chat (~9 GB) + MiniCPM-V vision LLM (~5 GB).',
     };
+
+    // Build the GPU-mode chooser only when there are 2+ GPUs.
+    let modeChooserHtml = '';
+    if (data.gpus.length >= 2) {
+        // Option A: single-GPU on the biggest card
+        const singleSlots = estimateSlots(biggest.vram_mb, biggestTier);
+        // Option B: dual — detectors on smaller card, chat on bigger card.
+        // Detectors don't carry the chat overhead, so the smaller card hosts
+        // however many cameras its VRAM can fit at the chosen detector tier.
+        const detectorTier = recommendTier(second.vram_mb);
+        const dualSlots = estimateSlots(second.vram_mb, 'small');  // no chat on detector GPU
+        // The full tier is achievable on either single (biggest >= 16 GB) or dual.
+
+        modeChooserHtml = `
+            <div class="gpu-mode-chooser">
+                <strong>You have 2 GPUs. How do you want Vision Labs to use them?</strong>
+                <label class="gpu-mode-option">
+                    <input type="radio" name="gpuMode" value="single" checked>
+                    <div>
+                        <div class="opt-title">Use just GPU ${biggest.index} (${escapeHtml(biggest.name)})</div>
+                        <div class="opt-meta">
+                            Tier: <code>${biggestTier}</code> · ~${singleSlots} ${singleSlots === 1 ? 'camera' : 'cameras'}<br>
+                            <code>DETECTOR_GPU=${biggest.index}</code>, <code>CHAT_GPU=${biggest.index}</code>
+                        </div>
+                    </div>
+                </label>
+                <label class="gpu-mode-option">
+                    <input type="radio" name="gpuMode" value="dual">
+                    <div>
+                        <div class="opt-title">Split across both GPUs</div>
+                        <div class="opt-meta">
+                            Detectors on GPU ${second.index} (${escapeHtml(second.name)}) · ~${dualSlots} ${dualSlots === 1 ? 'camera' : 'cameras'}<br>
+                            Chat LLM on GPU ${biggest.index} (${escapeHtml(biggest.name)}) — full tier<br>
+                            <code>DETECTOR_GPU=${second.index}</code>, <code>CHAT_GPU=${biggest.index}</code>
+                        </div>
+                    </div>
+                </label>
+                <p class="wizard-hint">
+                    The wizard doesn't write .env automatically — apply the env values shown above by editing <code>.env</code> after setup completes.
+                </p>
+            </div>
+        `;
+    }
+
+    const singleSlots = estimateSlots(biggest.vram_mb, biggestTier);
 
     resultEl.innerHTML = `
         <table>
             <thead><tr><th>GPU</th><th>Model</th><th>VRAM</th></tr></thead>
             <tbody>${rows}</tbody>
         </table>
+        ${modeChooserHtml}
         <div class="recommended">
-            <strong>Recommended tier:</strong> <code>${tier}</code><br>
-            <strong>Estimated camera capacity:</strong> ${slots} ${slots === 1 ? 'camera' : 'cameras'} (with default detector mix)<br>
-            ${tierBlurbs[tier]}
+            <strong>Recommended tier:</strong> <code>${biggestTier}</code><br>
+            <strong>Estimated camera capacity:</strong> ${singleSlots} ${singleSlots === 1 ? 'camera' : 'cameras'} (single-GPU mode, with default detector mix)<br>
+            ${tierBlurbs[biggestTier]}
         </div>
     `;
+
+    // Wire the radios so state.gpuMode + the .env hint update together
+    document.querySelectorAll('input[name="gpuMode"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            state.gpuMode = e.target.value;
+        });
+    });
+    state.gpuMode = (data.gpus.length >= 2) ? 'single' : 'single';
 }
 
 function recommendTier(vramMb) {
