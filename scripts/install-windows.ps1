@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Vision Labs Windows installer — sets up WSL2 + Hyper-V firewall rules,
+    Vision Labs Windows installer -- sets up WSL2 + Hyper-V firewall rules,
     then hands off to the Linux installer running inside WSL.
 
 .DESCRIPTION
@@ -15,7 +15,7 @@
       - Tell the user to reboot
 
     PHASE 2 (user runs this in Ubuntu after reboot):
-      - User opens Ubuntu (start menu → "Ubuntu")
+      - User opens Ubuntu (start menu -> "Ubuntu")
       - User runs:  curl -fsSL <repo-url>/install-linux.sh | bash
       - Linux installer takes over from there
 
@@ -50,9 +50,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Write-Step    { param([string]$msg) Write-Host "==> $msg" -ForegroundColor Cyan }
-function Write-Ok      { param([string]$msg) Write-Host " ✓ $msg" -ForegroundColor Green }
-function Write-Warn    { param([string]$msg) Write-Host " ⚠ $msg" -ForegroundColor Yellow }
-function Write-Err     { param([string]$msg) Write-Host " ✗ $msg" -ForegroundColor Red }
+function Write-Ok      { param([string]$msg) Write-Host " [OK] $msg" -ForegroundColor Green }
+function Write-Warn    { param([string]$msg) Write-Host " [!] $msg" -ForegroundColor Yellow }
+function Write-Err     { param([string]$msg) Write-Host " [X] $msg" -ForegroundColor Red }
 function Write-Heading { param([string]$msg) Write-Host "`n$msg" -ForegroundColor White -BackgroundColor DarkBlue }
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ Write-Ok "GPU detected: $gpuName (driver $driverVersion)"
 # Heuristic: WSL CUDA needs driver R535+ which corresponds to file version 31.0.15.3573 or so.
 # A more reliable check is whether `nvidia-smi.exe` exists and reports something.
 if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
-    Write-Ok "nvidia-smi found — driver supports CUDA workloads"
+    Write-Ok "nvidia-smi found -- driver supports CUDA workloads"
 } else {
     Write-Warn "nvidia-smi.exe not in PATH. Driver may be too old for WSL-CUDA."
     Write-Host "  Recommend: download the latest driver from https://www.nvidia.com/Download/index.aspx" -ForegroundColor Yellow
@@ -103,7 +103,7 @@ if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
 # ---------------------------------------------------------------------------
 # WSL2 install / verify
 # ---------------------------------------------------------------------------
-Write-Heading "Step 1/3 — WSL2"
+Write-Heading "Step 1/3 -- WSL2"
 
 $wslOk = $false
 try {
@@ -131,9 +131,9 @@ if (-not $wslOk) {
 }
 
 # ---------------------------------------------------------------------------
-# .wslconfig — mirrored networking mode (enables LAN visibility + multicast)
+# .wslconfig -- mirrored networking mode (enables LAN visibility + multicast)
 # ---------------------------------------------------------------------------
-Write-Heading "Step 2/3 — WSL networking config"
+Write-Heading "Step 2/3 -- WSL networking config"
 
 $wslConfigPath = "$env:USERPROFILE\.wslconfig"
 $mirroredAlreadySet = $false
@@ -161,7 +161,7 @@ networkingMode=mirrored
 # ---------------------------------------------------------------------------
 # Hyper-V firewall rules for ONVIF auto-discovery
 # ---------------------------------------------------------------------------
-Write-Heading "Step 3/3 — Hyper-V firewall rules for ONVIF discovery"
+Write-Heading "Step 3/3 -- Hyper-V firewall rules for ONVIF discovery"
 
 if ($SkipFirewallRules) {
     Write-Warn "Skipping firewall rules (you passed -SkipFirewallRules)."
@@ -179,7 +179,7 @@ if ($SkipFirewallRules) {
 
     if (-not $wslVMId) {
         Write-Warn "No Hyper-V VM detected yet (probably because WSL2 was just installed)."
-        Write-Host "  After you reboot, re-run this script — it'll add the firewall rules then." -ForegroundColor Yellow
+        Write-Host "  After you reboot, re-run this script -- it'll add the firewall rules then." -ForegroundColor Yellow
     } else {
         Write-Ok "Found Hyper-V VM: $wslVMId"
 
@@ -187,7 +187,7 @@ if ($SkipFirewallRules) {
             param([string]$Name, [int]$Port, [string]$Description)
             $existing = Get-NetFirewallHyperVRule -Name $Name -ErrorAction SilentlyContinue
             if ($existing) {
-                Write-Host "  '$Description' already exists — skipping." -ForegroundColor DarkGray
+                Write-Host "  '$Description' already exists -- skipping." -ForegroundColor DarkGray
                 return
             }
             New-NetFirewallHyperVRule -Name $Name -DisplayName $Description `
@@ -212,7 +212,7 @@ if ($needsReboot) {
     Write-Host ""
     Write-Host "After the reboot:" -ForegroundColor White
     Write-Host "  1. WSL will finish setting up Ubuntu and prompt you to create a Linux username." -ForegroundColor Gray
-    Write-Host "     (Pick any username + password — they're local to WSL only.)" -ForegroundColor DarkGray
+    Write-Host "     (Pick any username + password -- they're local to WSL only.)" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  2. Open the Ubuntu terminal (Start menu -> 'Ubuntu') and run:" -ForegroundColor Gray
     Write-Host "        sudo apt update && sudo apt install -y git" -ForegroundColor Cyan
@@ -221,14 +221,14 @@ if ($needsReboot) {
     Write-Host "        bash scripts/install-linux.sh" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  3. After the Linux installer finishes, open http://localhost:8080 in your" -ForegroundColor Gray
-    Write-Host "     Windows browser — the wizard will walk you through camera setup." -ForegroundColor Gray
+    Write-Host "     Windows browser -- the wizard will walk you through camera setup." -ForegroundColor Gray
     Write-Host ""
     Write-Host "Reboot now? (Y/n): " -NoNewline -ForegroundColor Yellow
     $answer = Read-Host
     if ($answer -ne "n" -and $answer -ne "N") {
         Restart-Computer -Confirm:$false
     } else {
-        Write-Host "  OK — reboot manually when you're ready." -ForegroundColor Yellow
+        Write-Host "  OK -- reboot manually when you're ready." -ForegroundColor Yellow
     }
 } else {
     Write-Host ""
