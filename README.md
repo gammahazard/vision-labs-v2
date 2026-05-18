@@ -131,7 +131,11 @@ docker exec vision-labs-dashboard-1 rm /data/setup-state/setup.json
 docker compose restart dashboard
 ```
 
-Network camera discovery (ONVIF) and Telegram-bot setup are not in the v1 wizard — add cameras via manual RTSP URL entry, configure Telegram via `.env`. Auto-discovery was tested and **dropped** because WSL2 host-networking containers can't reliably do LAN multicast (verified empirically — both WS-Discovery and SSDP returned zero responders). See `PACKAGING_PLAN.md` § 7a for the detailed test results.
+**ONVIF auto-discovery** is built in. The wizard's step 3 (and the Cameras tab afterwards) has a "Scan my network" button that finds ONVIF-compatible cameras on a configurable subnet via unicast WS-Discovery probes (no multicast required, works in WSL2). Click a discovered camera, enter credentials, and the wizard pulls the RTSP URL via ONVIF `GetStreamUri` and prefills the form.
+
+Discovery finds: Reolink, Hikvision, Dahua, Amcrest, Axis, Unifi G-series, anything else with ONVIF firmware enabled. **Doesn't find:** DIY setups (Pi + mediamtx, go2rtc, OBS-as-server) because those don't implement ONVIF — they're general-purpose RTSP relays, and need manual URL entry. Same for cameras with ONVIF disabled in firmware (Reolink default state) — enable ONVIF in the camera's app first, then re-scan.
+
+Telegram-bot setup is not in the v1 wizard — configure it via `.env`.
 
 ### Build vs pre-built images
 

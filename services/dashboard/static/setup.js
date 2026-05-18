@@ -122,8 +122,134 @@ function estimateSlots(vramMb, tier) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 — First camera
+// Step 3 — First camera: ONVIF discovery
 // ---------------------------------------------------------------------------
+let _discoveredCameras = [];
+let _onvifSelected = null;  // camera the user clicked
+
+async function discoverCameras() {
+    const cidrInput = document.getElementById('discoverCidr');
+    const statusEl = document.getElementById('discoverStatus');
+    const resultsEl = document.getElementById('discoverResults');
+
+    statusEl.hidden = false;
+    resultsEl.hidden = true;
+    resultsEl.innerHTML = '';
+    statusEl.textContent = '⏳ Probing every IP in the subnet (this takes ~5-10s for a /24)...';
+
+    const cidr = cidrInput.value.trim();
+    try {
+        const resp = await fetch('/api/setup/discover-cameras', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cidr ? { cidr } : {}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            statusEl.textContent = `Scan failed: ${data.error || resp.status}`;
+            return;
+        }
+
+        // Fill in the auto-detected CIDR so the user sees what we scanned
+        if (data.cidr && !cidrInput.value) cidrInput.value = data.cidr;
+
+        _discoveredCameras = data.cameras || [];
+        if (_discoveredCameras.length === 0) {
+            statusEl.textContent = `No ONVIF cameras found on ${data.cidr}. If you have ONVIF cameras, make sure ONVIF is enabled in their settings. Otherwise expand "enter RTSP URL manually" below.`;
+            return;
+        }
+
+        statusEl.textContent = `Found ${_discoveredCameras.length} ONVIF camera${_discoveredCameras.length === 1 ? '' : 's'} on ${data.cidr}. Click one to connect.`;
+        resultsEl.hidden = false;
+        _discoveredCameras.forEach((cam, idx) => {
+            const card = document.createElement('div');
+            card.className = 'discover-card';
+            card.dataset.idx = idx;
+            const brand = cam.manufacturer && cam.manufacturer !== 'Streaming' ? cam.manufacturer : '';
+            const title = [brand, cam.model || cam.hardware, cam.name].filter(Boolean).join(' · ') || 'ONVIF device';
+            card.innerHTML = `
+                <div class="discover-card-title">${escapeHtml(title)}</div>
+                <div class="discover-card-meta">${escapeHtml(cam.ip)} — ${escapeHtml((cam.xaddrs[0] || '').replace(/\?.*/, ''))}</div>
+            `;
+            card.addEventListener('click', () => openOnvifModal(cam));
+            resultsEl.appendChild(card);
+        });
+    } catch (e) {
+        statusEl.textContent = `Network error: ${e}`;
+    }
+}
+
+function openOnvifModal(cam) {
+    _onvifSelected = cam;
+    document.getElementById('onvifCredsTitle').textContent =
+        `${cam.manufacturer || ''} ${cam.model || cam.hardware || 'camera'} at ${cam.ip}`.trim();
+    document.getElementById('onvifPassword').value = '';
+    document.getElementById('onvifCredsResult').hidden = true;
+    document.getElementById('onvifCredsModal').hidden = false;
+    setTimeout(() => document.getElementById('onvifPassword').focus(), 100);
+}
+
+function closeOnvifModal() {
+    document.getElementById('onvifCredsModal').hidden = true;
+    _onvifSelected = null;
+}
+
+async function connectOnvif() {
+    if (!_onvifSelected) return;
+    const username = document.getElementById('onvifUsername').value.trim();
+    const password = document.getElementById('onvifPassword').value;
+    const resultEl = document.getElementById('onvifCredsResult');
+
+    if (!password) {
+        resultEl.hidden = false;
+        resultEl.className = 'rtsp-test-result err';
+        resultEl.textContent = 'Password is required.';
+        return;
+    }
+
+    resultEl.hidden = false;
+    resultEl.className = 'rtsp-test-result';
+    resultEl.textContent = '⏳ Calling ONVIF GetStreamUri...';
+
+    try {
+        const resp = await fetch('/api/cameras/onvif-stream-uri', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                device_url: _onvifSelected.xaddrs[0],
+                username,
+                password,
+            }),
+        });
+        const data = await resp.json();
+        if (!data.ok) {
+            resultEl.className = 'rtsp-test-result err';
+            resultEl.textContent = `✗ ${data.error || 'Failed to fetch stream URL.'}`;
+            return;
+        }
+        // Prefill the manual form with the discovered URLs and open it.
+        const urls = data.rtsp_urls || [];
+        // Most cameras return [main, sub] or [sub, main] — heuristic: shorter
+        // URL or one containing "sub"/"02" is usually the sub-stream.
+        let sub = urls.find(u => /sub|02|low/i.test(u)) || urls[urls.length - 1];
+        let main = urls.find(u => /main|01|high/i.test(u)) || urls[0];
+        if (sub === main && urls.length > 1) main = urls.find(u => u !== sub);
+
+        document.getElementById('camName').value =
+            `${_onvifSelected.manufacturer || ''} ${_onvifSelected.model || ''}`.trim() || _onvifSelected.ip;
+        document.getElementById('camRtspSub').value = sub || '';
+        document.getElementById('camRtspMain').value = (main && main !== sub) ? main : '';
+
+        // Open the manual form so the user can review + click Add
+        document.querySelector('.manual-fallback').open = true;
+        closeOnvifModal();
+        document.getElementById('camName').focus();
+    } catch (e) {
+        resultEl.className = 'rtsp-test-result err';
+        resultEl.textContent = `✗ Network error: ${e}`;
+    }
+}
+
 async function testRtsp() {
     const url = document.getElementById('camRtspSub').value.trim();
     const resultEl = document.getElementById('rtspTestResult');
@@ -280,4 +406,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnAddCamera').addEventListener('click', addCamera);
     document.getElementById('btnSkipCamera').addEventListener('click', skipCamera);
     document.getElementById('btnFinish').addEventListener('click', finishWizard);
+
+    // ONVIF discovery
+    document.getElementById('btnDiscover').addEventListener('click', discoverCameras);
+    document.getElementById('btnOnvifCancel').addEventListener('click', closeOnvifModal);
+    document.getElementById('btnOnvifConnect').addEventListener('click', connectOnvif);
+    document.getElementById('onvifCredsModal').addEventListener('click', (e) => {
+        if (e.target.id === 'onvifCredsModal') closeOnvifModal();
+    });
 });

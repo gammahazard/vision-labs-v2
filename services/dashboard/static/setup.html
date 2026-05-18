@@ -76,36 +76,50 @@
         <section class="wizard-step" data-step="camera">
             <h2>Add your first camera.</h2>
             <p>
-                Paste your camera's RTSP URL below. If you're not sure of the
-                URL format, check the camera manufacturer's docs — most use
-                something like <code>rtsp://user:pass@host:554/&lt;path&gt;</code>.
-                You can also skip this step and add cameras later from the
+                You can scan your network for ONVIF-compatible cameras
+                (Reolink, Hikvision, Dahua, etc.), or enter an RTSP URL
+                manually. Skip the step to add cameras later from the
                 Cameras tab.
             </p>
 
-            <form id="cameraForm" class="camera-form">
-                <label>Name <span class="hint">(displayed in the UI)</span>
-                    <input type="text" id="camName" placeholder="Front Door" required>
-                </label>
+            <!-- Discover via ONVIF -->
+            <div class="discover-block">
+                <div class="discover-cidr-row">
+                    <label for="discoverCidr">Scan subnet
+                        <input type="text" id="discoverCidr" placeholder="192.168.1.0/24">
+                    </label>
+                    <button type="button" id="btnDiscover" class="btn-secondary">🔍 Scan network</button>
+                </div>
+                <div id="discoverStatus" class="discover-status" hidden></div>
+                <div id="discoverResults" class="discover-results" hidden></div>
+            </div>
 
-                <label>RTSP sub-stream URL <span class="hint">(used for detection)</span>
-                    <input type="text" id="camRtspSub" placeholder="rtsp://admin:password@192.168.1.10:554/h264Preview_01_sub" required>
-                </label>
+            <details class="manual-fallback">
+                <summary>Or enter RTSP URL manually</summary>
+                <form id="cameraForm" class="camera-form">
+                    <label>Name <span class="hint">(displayed in the UI)</span>
+                        <input type="text" id="camName" placeholder="Front Door" required>
+                    </label>
 
-                <label>RTSP main-stream URL <span class="hint">(optional — used for HD viewing)</span>
-                    <input type="text" id="camRtspMain" placeholder="rtsp://admin:password@192.168.1.10:554/h264Preview_01_main">
-                </label>
+                    <label>RTSP sub-stream URL <span class="hint">(used for detection)</span>
+                        <input type="text" id="camRtspSub" placeholder="rtsp://admin:password@192.168.1.10:554/h264Preview_01_sub" required>
+                    </label>
 
-                <fieldset class="detection-flags">
-                    <legend>What should this camera detect?</legend>
-                    <label><input type="checkbox" id="detectPersons" checked> Persons</label>
-                    <label><input type="checkbox" id="detectVehicles" checked> Vehicles</label>
-                    <label><input type="checkbox" id="detectFaces" checked> Faces (requires person detection)</label>
-                </fieldset>
+                    <label>RTSP main-stream URL <span class="hint">(optional — used for HD viewing)</span>
+                        <input type="text" id="camRtspMain" placeholder="rtsp://admin:password@192.168.1.10:554/h264Preview_01_main">
+                    </label>
 
-                <button type="button" id="btnTestRtsp" class="btn-secondary">Test connection</button>
-                <div id="rtspTestResult" class="rtsp-test-result" hidden></div>
-            </form>
+                    <fieldset class="detection-flags">
+                        <legend>What should this camera detect?</legend>
+                        <label><input type="checkbox" id="detectPersons" checked> Persons</label>
+                        <label><input type="checkbox" id="detectVehicles" checked> Vehicles</label>
+                        <label><input type="checkbox" id="detectFaces" checked> Faces (requires person detection)</label>
+                    </fieldset>
+
+                    <button type="button" id="btnTestRtsp" class="btn-secondary">Test connection</button>
+                    <div id="rtspTestResult" class="rtsp-test-result" hidden></div>
+                </form>
+            </details>
 
             <div class="wizard-actions">
                 <button id="btnBack3" class="btn-secondary">← Back</button>
@@ -113,6 +127,25 @@
                 <button id="btnAddCamera" class="btn-primary">Add camera →</button>
             </div>
         </section>
+
+        <!-- Modal: ONVIF credentials prompt -->
+        <div id="onvifCredsModal" class="modal-overlay" hidden>
+            <div class="modal-content">
+                <h3>Connect to <span id="onvifCredsTitle">camera</span></h3>
+                <p>Enter the camera's credentials. We'll use them once to fetch the RTSP URL via ONVIF.</p>
+                <label>Username
+                    <input type="text" id="onvifUsername" value="admin" autocomplete="off">
+                </label>
+                <label>Password
+                    <input type="password" id="onvifPassword" autocomplete="off">
+                </label>
+                <div id="onvifCredsResult" class="rtsp-test-result" hidden></div>
+                <div class="modal-actions">
+                    <button type="button" id="btnOnvifCancel" class="btn-tertiary">Cancel</button>
+                    <button type="button" id="btnOnvifConnect" class="btn-primary">Connect →</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Step 4: Finish -->
         <section class="wizard-step" data-step="finish">

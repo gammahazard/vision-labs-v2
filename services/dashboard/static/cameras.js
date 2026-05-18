@@ -153,6 +153,101 @@ function escape(s) {
     return String(s).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ---------------------------------------------------------------------------
+// ONVIF discovery (Phase D.5) — same backend as the wizard's scan flow
+// ---------------------------------------------------------------------------
+let _camTabDiscovered = [];
+
+async function handleDiscover() {
+    const cidrInput = $('discoverCidr');
+    const msgEl = $('discoverMsg');
+    const listEl = $('discoverList');
+
+    msgEl.textContent = '⏳ Probing every IP in the subnet (~5-10s for a /24)...';
+    msgEl.className = 'cam-msg';
+    listEl.innerHTML = '';
+
+    const cidr = cidrInput.value.trim();
+    try {
+        const resp = await fetch('/api/cameras/discover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cidr ? { cidr } : {}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            msgEl.textContent = `Scan failed: ${data.error || resp.status}`;
+            msgEl.className = 'cam-msg err';
+            return;
+        }
+        if (data.cidr && !cidrInput.value) cidrInput.value = data.cidr;
+        _camTabDiscovered = data.cameras || [];
+        if (_camTabDiscovered.length === 0) {
+            msgEl.textContent = `No ONVIF cameras found on ${data.cidr}. Use the manual form below.`;
+            return;
+        }
+        msgEl.textContent = `Found ${_camTabDiscovered.length} ONVIF camera${_camTabDiscovered.length === 1 ? '' : 's'} on ${data.cidr}. Click one to fill in the form.`;
+        msgEl.className = 'cam-msg ok';
+
+        _camTabDiscovered.forEach((cam, idx) => {
+            const brand = cam.manufacturer && cam.manufacturer !== 'Streaming' ? cam.manufacturer : '';
+            const title = [brand, cam.model || cam.hardware, cam.name].filter(Boolean).join(' · ') || 'ONVIF device';
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#0f172a;border:1px solid #334155;border-radius:6px;padding:0.6rem 0.9rem;cursor:pointer;';
+            card.onmouseover = () => card.style.borderColor = '#4ade80';
+            card.onmouseout = () => card.style.borderColor = '#334155';
+            card.innerHTML = `
+                <div style="color:#e2e8f0;font-weight:600;font-size:0.9rem;">${escape(title)}</div>
+                <div style="color:#94a3b8;font-size:0.78rem;margin-top:2px;">${escape(cam.ip)} — ${escape(cam.xaddrs[0] || '')}</div>
+            `;
+            card.onclick = () => promptOnvifCreds(idx);
+            listEl.appendChild(card);
+        });
+    } catch (e) {
+        msgEl.textContent = `Network error: ${e.message}`;
+        msgEl.className = 'cam-msg err';
+    }
+}
+
+async function promptOnvifCreds(idx) {
+    const cam = _camTabDiscovered[idx];
+    if (!cam) return;
+    const username = prompt(`Username for ${cam.manufacturer || ''} ${cam.model || cam.hardware || cam.ip}:`, 'admin');
+    if (!username) return;
+    const password = prompt(`Password for ${username}@${cam.ip}:`);
+    if (password === null) return;
+
+    showMsg('⏳ Calling ONVIF GetStreamUri to fetch the RTSP URL...', 'ok');
+    try {
+        const resp = await fetch('/api/cameras/onvif-stream-uri', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_url: cam.xaddrs[0], username, password }),
+        });
+        const data = await resp.json();
+        if (!data.ok) {
+            showMsg(`✗ ONVIF auth failed: ${data.error}`, 'err');
+            return;
+        }
+        const urls = data.rtsp_urls || [];
+        let sub = urls.find(u => /sub|02|low/i.test(u)) || urls[urls.length - 1];
+        let main = urls.find(u => /main|01|high/i.test(u)) || urls[0];
+        if (sub === main && urls.length > 1) main = urls.find(u => u !== sub);
+
+        // Prefill the manual add-camera form
+        const idGuess = (cam.name || cam.ip).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+        $('camId').value = idGuess;
+        $('camName').value = `${cam.manufacturer || ''} ${cam.model || ''}`.trim() || cam.ip;
+        $('camRtspSub').value = sub || '';
+        $('camRtspMain').value = (main && main !== sub) ? main : '';
+        showMsg(`✓ Got RTSP URLs from ${cam.ip}. Review the form below + click Save.`, 'ok');
+        $('camName').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+        showMsg(`Network error: ${e.message}`, 'err');
+    }
+}
+
+
 async function handleTestRtsp() {
     const url = $('camRtspSub').value.trim();
     if (!url) {

@@ -565,21 +565,33 @@ Before committing development time:
 2. If we see the basement-Pi or any of the ringed phones/Reolinks: green light, build it.
 3. If we see nothing: drop the feature, document "auto-discovery not supported on WSL2 today; use manual entry."
 
-### Result — May 2026: gate failed, feature dropped for v1
+### Result — May 2026: multicast gate failed, but unicast scan works fine
 
-Tested both ONVIF WS-Discovery and SSDP/UPnP from a `--network host` container on the development WSL2 host (WSL 2.6.3.0, mirrored mode enabled). Both returned **0 responders** — including from SSDP, which any home router or smart-home device should answer.
+**First attempt: multicast — failed.** Tested ONVIF WS-Discovery and SSDP/UPnP from a `--network host` container on the dev WSL2 host (WSL 2.6.3.0, mirrored mode). Both returned 0 responders even after adding Hyper-V firewall allow rules for UDP 1900/3702 and using explicit `IP_ADD_MEMBERSHIP` with bind to the LAN interface. Eventually got SSDP to return a few responders but the Reolink (with ONVIF enabled) never replied to multicast — and many home networks block multicast at the router anyway. Multicast on WSL2 isn't reliable enough to ship.
 
-This means WSL2 host-networking containers can't reliably send/receive multicast packets to the LAN, regardless of whether the cameras themselves speak ONVIF. Since WSL2 is the primary deployment platform for Windows users, building auto-discovery on top of multicast would silently break for the majority of installs.
+**Second attempt: unicast subnet scan — green light.** Sent the same WS-Discovery Probe SOAP envelope as unicast UDP to every IP in the local /24. The Reolink at 192.168.1.14 responded with 1455 bytes of ONVIF metadata in 2 seconds. Worked on the first try, requires no firewall changes, no protocol assumptions about multicast.
 
-**Decision:** drop Phase D.5 from v1 entirely. Wizard ships with manual RTSP entry only.
+**Decision:** un-drop Phase D.5. Ship the unicast scanner instead of the multicast probe.
 
-### Possible non-multicast alternatives (not v1 scope)
+### Implementation that actually shipped
 
-A unicast-only "scan the subnet for hosts with port 554 open" approach would work in WSL2. It can't auto-extract RTSP URL paths or pull device names like ONVIF can, but it CAN surface "we see something speaking RTSP at 192.168.1.14, here's the IP" as a helpful starting point. Worth considering as a Phase F enhancement if user feedback asks for less typing.
+- `helpers/onvif_discovery.py` — given a CIDR, fan out WS-Discovery probes as unicast UDP to every host in parallel (semaphore=50, per-IP timeout 2s, total ~5-10s for a /24). Parses XAddrs + Scopes from SOAP response.
+- `routes/cameras.py` — new `POST /api/cameras/discover` runs the scan, `POST /api/cameras/onvif-stream-uri` does the SOAP GetProfiles + GetStreamUri dance with WSSE auth to retrieve RTSP URLs.
+- `routes/setup.py` — `POST /api/setup/discover-cameras` thin wrapper that reuses the same endpoint inside the wizard's exempt path list.
+- `setup.html / setup.js / setup.css` — wizard step 3 now has a "Scan my network" button + result cards + credential modal. Manual RTSP entry collapsed into a `<details>` block as the fallback.
+- `cameras.html / cameras.js` — same scan UI added to the cameras tab so users can re-discover after adding more devices.
+- Auto-CIDR detection: tries CAMERA_IP env, then parses RTSP_SUB/RTSP_MAIN env, then `connect(8.8.8.8)` socket trick (rejected if it returns a Docker bridge range like 172.17/16).
 
-### Effort estimate
+### What it won't find (worth documenting in the wizard hint text)
 
-**~0 days** (feature dropped). Documented as a known WSL2 limitation in README.
+- DIY RTSP setups (Pi + mediamtx, Pi + ffmpeg, go2rtc, OBS server) — these speak RTSP but not ONVIF.
+- Cameras with ONVIF disabled in firmware (Reolink default state, some Hikvision OEMs). User has to enable it in the camera's app before scanning.
+- Cameras on a different subnet — the wizard accepts a custom CIDR input for that.
+- Cloud-only cameras (Ring, Nest, Arlo) — no LAN protocol at all.
+
+### Effort estimate (actual)
+
+**~1 day** as estimated, modulo the multicast detour. Empirical multicast testing actually took longer than the build itself; the unicast switch was straightforward once the test gate flipped.
 
 ---
 

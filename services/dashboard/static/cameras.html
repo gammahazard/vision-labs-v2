@@ -90,6 +90,22 @@
             </div>
         </div>
 
+        <!-- Discover ONVIF cameras -->
+        <div class="cam-card">
+            <div class="cam-card-header">
+                <div class="cam-card-title">Scan for ONVIF cameras</div>
+            </div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;">
+                <div style="flex:1;min-width:200px;">
+                    <label for="discoverCidr">Subnet to scan</label>
+                    <input type="text" id="discoverCidr" placeholder="192.168.1.0/24 (auto-detected if blank)" style="width:100%;">
+                </div>
+                <button type="button" class="cam-btn cam-btn-secondary" onclick="handleDiscover()">🔍 Scan network</button>
+            </div>
+            <div class="cam-msg" id="discoverMsg" style="margin-top:0.75rem;"></div>
+            <div id="discoverList" style="margin-top:0.75rem;display:flex;flex-direction:column;gap:0.5rem;"></div>
+        </div>
+
         <!-- Add camera form -->
         <div class="cam-card">
             <div class="cam-card-header">

@@ -216,6 +216,18 @@ async def detect_hardware(request: Request, _=Depends(validate_session)):
     return {"gpus": [], "error": f"orchestrator probe timed out after {PROBE_TIMEOUT_SECONDS}s"}
 
 
+@router.post("/discover-cameras")
+async def discover_cameras_in_setup(request: Request, _=Depends(validate_session)):
+    """Setup-wizard wrapper that reuses the same scanner the cameras tab uses.
+
+    The wizard calls this from /setup.html step 3 to populate the "Scan my
+    network" picker. The actual scanning logic lives in routes/cameras.py
+    so the cameras tab can reuse the exact same response shape.
+    """
+    from routes.cameras import discover_cameras
+    return await discover_cameras(request)
+
+
 @router.post("/complete")
 async def complete_setup(request: Request, _=Depends(validate_session)):
     """
