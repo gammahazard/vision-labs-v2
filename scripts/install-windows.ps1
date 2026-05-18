@@ -106,26 +106,50 @@ if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
 Write-Heading "Step 1/3 -- WSL2"
 
 $wslOk = $false
+# `wsl --status` exits 0 when WSL is installed and running, non-zero
+# otherwise. We check exit code instead of parsing output because wsl.exe
+# prints UTF-16 LE on stock Windows and PowerShell string-matching against
+# that comes out garbled.
 try {
-    $wslVersion = (wsl --version 2>$null | Out-String).Trim()
-    if ($wslVersion -match "WSL version") {
+    $null = & wsl --status 2>$null
+    if ($LASTEXITCODE -eq 0) {
         Write-Ok "WSL2 already installed"
-        Write-Host "$wslVersion" -ForegroundColor DarkGray
         $wslOk = $true
     }
 } catch {
-    # wsl.exe not found or errored
+    # wsl.exe not in PATH
+}
+
+# Also check whether a default distro is registered. `wsl -l -q` lists
+# installed distros; if empty, we still need to install a distribution
+# even if WSL itself is set up.
+$hasDistro = $false
+if ($wslOk) {
+    try {
+        $distros = & wsl -l -q 2>$null | Where-Object { $_.Trim() -ne "" }
+        if ($distros) { $hasDistro = $true }
+    } catch {}
 }
 
 if (-not $wslOk) {
     Write-Step "Installing WSL2 + Ubuntu (this will take 2-5 minutes + REQUIRE A REBOOT)..."
-    try {
-        & wsl --install --no-launch
+    $null = & wsl --install --no-launch 2>&1
+    if ($LASTEXITCODE -eq 0) {
         Write-Ok "WSL2 + Ubuntu installation queued"
         $needsReboot = $true
-    } catch {
-        Write-Err "wsl --install failed: $_"
+    } else {
+        Write-Err "wsl --install returned exit code $LASTEXITCODE"
         Write-Host "  Try manually: wsl --install --no-launch" -ForegroundColor Yellow
+        exit 1
+    }
+} elseif (-not $hasDistro) {
+    Write-Step "WSL2 is installed but no distro is registered. Installing Ubuntu..."
+    $null = & wsl --install --no-launch -d Ubuntu 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "Ubuntu installation queued"
+        $needsReboot = $true
+    } else {
+        Write-Err "wsl --install -d Ubuntu returned exit code $LASTEXITCODE"
         exit 1
     }
 }
@@ -193,7 +217,7 @@ if ($SkipFirewallRules) {
             New-NetFirewallHyperVRule -Name $Name -DisplayName $Description `
                 -VMCreatorId $wslVMId -Direction Inbound -Action Allow `
                 -Protocol UDP -LocalPorts $Port | Out-Null
-            Write-Ok "Added: $Description (UDP $Port)"
+            Write-Ok "Added: $Description"
         }
 
         Add-HyperVRule -Name "VL-SSDP-Inbound" -Port 1900 -Description "Vision Labs SSDP (UDP 1900)"
