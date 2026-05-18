@@ -8,7 +8,7 @@
 #
 # Requires .env to have QNAP_IP, QNAP_USER, QNAP_PASSWORD set, and the QNAP
 # itself to have a "vision-labs" share with these subfolders:
-#   snapshots/  recordings/  events/  telegram/  generations/  videos/  clips/
+#   snapshots/  recordings/  events/  telegram/  videos/  clips/
 #
 # When this overlay is active, --profile nas also brings up the recorder
 # service which depends on qnap-recordings.
@@ -37,12 +37,6 @@ volumes:
     driver_opts:
       type: cifs
       device: //${QNAP_IP}/vision-labs/telegram
-      o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
-  qnap-generations:
-    driver: local
-    driver_opts:
-      type: cifs
-      device: //${QNAP_IP}/vision-labs/generations
       o: "addr=${QNAP_IP},username=${QNAP_USER},password=${QNAP_PASSWORD},file_mode=0777,dir_mode=0777"
   qnap-videos:
     driver: local

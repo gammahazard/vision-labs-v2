@@ -687,18 +687,13 @@
           "mode": "multi"
         }
       },
-      "title": "GPU Pause & Power",
+      "title": "GPU Power",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "vl_gpu_pause_active",
-          "legendFormat": "GPU Pause Active",
-          "refId": "A"
-        },
-        {
           "expr": "DCGM_FI_DEV_POWER_USAGE",
-          "legendFormat": "Power (W)",
-          "refId": "B"
+          "legendFormat": "Power (W) GPU{{gpu}}",
+          "refId": "A"
         }
       ]
     },
