@@ -14,20 +14,20 @@ If you're picking this up cold, read this section first.
 
 ### Live system topology
 
-**Hardware:**
+**Hardware (dev environment, for reference only — yours will differ):**
 - Dashboard host: WSL2 Ubuntu 24.04 on Windows, 5070 Ti (GPU 0) + 3090 (GPU 1)
-- Camera 1: Reolink RLC-1240A (`front_door` / `Wheatley`), at `192.168.1.14`
-- Camera 2: Raspberry Pi 5 + Logitech C922 USB webcam (`cam2` / `basement`), at `192.168.5.45` (cross-VLAN — main LAN can still reach it on port 8554)
+- Camera 1: Reolink RLC-1240A on the main LAN (slot `front_door`)
+- Camera 2: Raspberry Pi 5 + Logitech C922 USB webcam on a side subnet (slot `cam2`)
 
-**Pi 5 setup:**
-- mediamtx publishes `rtsp://192.168.5.45:8554/basement` at 1280×720 @ 10 FPS
+**Pi 5 setup (one possible cam2 source):**
+- mediamtx publishes `rtsp://<pi-ip>:8554/<stream-name>` at 1280×720 @ 10 FPS
 - Auto-starts on boot via `/etc/systemd/system/mediamtx.service`
-- Config at `/home/raj/mediamtx.yml`
+- Config at `/home/<user>/mediamtx.yml`
 
 **Camera registry** (Redis `cameras:registry` hash) — two entries:
 ```
-front_door  → Wheatley,  rtsp://admin:.../h264Preview_01_sub,  all 3 detectors on
-cam2        → basement,  rtsp://192.168.5.45:8554/basement,    pose + face only (no vehicle)
+front_door  → <camera-name>,  rtsp://admin:.../h264Preview_01_sub,  all 3 detectors on
+cam2        → basement,        rtsp://<pi-ip>:8554/basement,         pose + face only (no vehicle)
 ```
 
 **Disk layout (current — all per-camera):**
@@ -814,6 +814,4 @@ Two viable approaches to "make the camera actually start detecting after Save":
 
 ## Rollback strategy
 
-Each phase is one or more commits (we haven't initialized git yet — should do that as a pre-step to the refactor so we have a rollback net). If anything goes wrong, `git reset --hard` to the previous good state.
-
-**TODO before starting Phase 1:** `git init` and commit the current working state as the baseline.
+Each phase is one or more commits. If anything goes wrong, `git reset --hard <previous-good-sha>` to the previous good state. The full Phase 1-8 refactor is reflected in this repo's commit history; commit SHAs are immutable so historical rollback points remain valid.

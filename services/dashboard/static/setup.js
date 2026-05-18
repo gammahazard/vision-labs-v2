@@ -85,10 +85,13 @@ function renderHardwareResult(data) {
     const slots = estimateSlots(maxVram, tier);
     state.tier = tier;
 
+    // Concrete model names per tier so users with weak GPUs know what to set
+    // in CHAT_MODEL if they want chat at all (tiers/small.env disables it
+    // by default but offers commented options).
     const tierBlurbs = {
-        small: 'Small tier (6 GB GPU) — nano YOLO models, AI chat disabled. Saves ~5-9 GB VRAM. To apply: <code>cat tiers/small.env >> .env</code>.',
-        mid: 'Mid tier (8-12 GB GPU) — standard "s" YOLO models, Qwen 3 7B chat. This is the default tuned in <code>.env.example</code>.',
-        full: 'Full tier (16+ GB) — Qwen 3 14B chat + vision LLM. To apply: <code>cat tiers/full.env >> .env</code>.',
+        small: 'Small tier (6 GB GPU) — nano YOLO models, AI chat disabled by default. To enable a tiny chat model, set <code>CHAT_MODEL=qwen3:1.7b</code> in .env (~1.5 GB VRAM). Apply with <code>cat tiers/small.env >> .env</code>.',
+        mid: 'Mid tier (8-12 GB GPU) — standard "s" YOLO models. Chat options: <code>qwen3:3b</code> (~2 GB) or <code>qwen3:7b</code> (~5 GB). Defaults to qwen3:7b via <code>cat tiers/mid.env >> .env</code>.',
+        full: 'Full tier (16+ GB) — Qwen 3 14B chat (~9 GB) + MiniCPM-V vision LLM (~5 GB). Apply with <code>cat tiers/full.env >> .env</code>.',
     };
 
     resultEl.innerHTML = `

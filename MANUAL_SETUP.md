@@ -142,7 +142,7 @@ This is the chunkiest manual piece. Plan ~30 minutes. Already complete on this m
 
 ## 8. Move the project off `/mnt/c` into WSL ext4 — **DONE on current host**
 
-- [ ] In WSL: `mkdir -p ~/projects && mv /mnt/c/Users/adhaliwal/python-projects/vision-labs-v1-main ~/projects/vision-labs`
+- [ ] In WSL: `mkdir -p ~/projects && mv /mnt/c/Users/<YourWindowsUsername>/path/to/vision-labs ~/projects/vision-labs`
 - [ ] Confirm: `cd ~/projects/vision-labs && df -T .` — last column should say `ext4`, not `9p`.
 - [ ] `git init` if not already a repo (this folder isn't currently a git repo) — so we can track the changes we're about to make:
   ```

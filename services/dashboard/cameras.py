@@ -12,8 +12,8 @@ DATA SHAPE per entry:
         "name": "Front Door",             # human-readable
         "rtsp_sub": "rtsp://.../sub",     # SD stream used for detection
         "rtsp_main": "rtsp://.../main",   # HD stream for viewing (optional)
-        "location_lat": 42.0974,          # optional
-        "location_lon": -82.4540,         # optional
+        "location_lat": 43.6532,          # optional (Toronto, matches .env.example default)
+        "location_lon": -79.3832,         # optional
         "gpu_id": 0,                       # which GPU detectors should run on
         "enabled": true,                   # if false, services skip it
         # Per-camera detector selection — saves GPU time when a camera doesn't

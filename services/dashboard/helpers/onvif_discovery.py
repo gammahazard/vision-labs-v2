@@ -7,8 +7,8 @@ WHY UNICAST, NOT MULTICAST:
     - SSDP from WSL with default code: 0
     - SSDP from WSL with explicit IGMP_ADD_MEMBERSHIP + bind to LAN IF: 5
     - WS-Discovery from WSL with same explicit setup: only WSL itself echoed
-    - The Reolink at 192.168.1.14 doesn't answer multicast probes even with
-      ONVIF enabled, but DOES answer unicast WS-Discovery (1455 bytes back).
+    - A real Reolink with ONVIF enabled doesn't answer multicast probes from
+      the dev WSL2 host, but DOES answer unicast WS-Discovery (1455 bytes back).
 
     Unicast subnet scanning is strictly more reliable: it works on WSL2,
     on networks where the router blocks multicast, on cameras with quirky

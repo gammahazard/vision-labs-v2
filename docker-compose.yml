@@ -351,7 +351,7 @@ services:
       - ./data/recordings:/recordings
     environment:
       - CAMERA_ID=cam2
-      - RTSP_URL=${CAM2_RTSP_URL:-rtsp://192.168.5.45:8554/basement}
+      - RTSP_URL=${CAM2_RTSP_URL:-}
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
       - RETENTION_DAYS=3
@@ -1005,7 +1005,7 @@ services:
       # Docker-in-Docker quirk: when compose runs `build`/`up` inside this
       # container, the CLI verifies the build context path EXISTS at the
       # absolute path it sends to the daemon (otherwise: "unable to prepare
-      # context: path /home/mongo/... not found"). The path needs to exist
+      # context: path /your/checkout/... not found"). The path needs to exist
       # inside this container at the same string the host daemon uses too.
       # Mounting the project dir at its host path satisfies both.
       - ${PWD}:${PWD}:ro

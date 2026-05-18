@@ -134,11 +134,11 @@ async def discover_cameras(request: Request):
 
     Returns:
       {"cidr": "192.168.1.0/24",
-       "cameras": [{"ip": "192.168.1.14",
+       "cameras": [{"ip": "<camera-ip>",
                     "manufacturer": "Reolink",
                     "model": "RLC-810A",
                     "name": "...",
-                    "xaddrs": ["http://192.168.1.14:8000/onvif/device_service"]}],
+                    "xaddrs": ["http://<camera-ip>:8000/onvif/device_service"]}],
        "error": null}
 
     Implementation: unicast WS-Discovery probes to every host in the CIDR.
@@ -243,11 +243,11 @@ async def onvif_stream_uri(request: Request):
     """Fetch a camera's RTSP URL via ONVIF SOAP given device URL + credentials.
 
     Body:
-      {"device_url": "http://192.168.1.14:8000/onvif/device_service",
+      {"device_url": "http://<camera-ip>:8000/onvif/device_service",
        "username": "admin", "password": "..."}
 
     Returns:
-      {"ok": true, "rtsp_urls": ["rtsp://192.168.1.14:554/...", ...],
+      {"ok": true, "rtsp_urls": ["rtsp://<camera-ip>:554/...", ...],
        "profiles": ["MainStream", "SubStream", ...]}
     Or:
       {"ok": false, "error": "..."}
@@ -270,7 +270,7 @@ async def onvif_stream_uri(request: Request):
 
     def _do_call() -> dict:
         # The media-service URL usually has the same host:port as the device
-        # service but path differs. For Reolink: device=/onvif/device_service,
+        # service but a different path. For Reolink: device=/onvif/device_service,
         # media=/onvif/Media. We derive media_url from device_url by swapping.
         parsed = urllib.parse.urlparse(device_url)
         media_url = parsed._replace(path="/onvif/Media").geturl()

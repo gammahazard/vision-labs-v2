@@ -56,7 +56,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 # Security — seed users from env var (migrated to Redis at startup)
-# Comma-separated in .env, e.g. TELEGRAM_ALLOWED_USERS=1004507388,123456789
+# Comma-separated in .env, e.g. TELEGRAM_ALLOWED_USERS=987654321,123456789
 TELEGRAM_ALLOWED_USERS: set[int] = {
     int(uid.strip())
     for uid in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",")

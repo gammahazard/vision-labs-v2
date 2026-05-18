@@ -149,8 +149,10 @@ def auto_mark_complete_if_preexisting() -> bool:
 @router.get("/status")
 async def get_status():
     """
-    Reports whether setup has completed. Unauthenticated so the wizard
-    can render before login if needed.
+    Reports whether setup has completed. Reached through the global
+    auth middleware, which means callers need a valid session cookie —
+    not a problem for the actual wizard (it runs post-login), but worth
+    knowing if you're testing this endpoint directly.
     """
     state = _load_state()
     if state is None:

@@ -80,7 +80,7 @@ If the camera only has one stream, point `rtsp_sub` at it and leave `rtsp_main` 
 
 ### Cameras that need a transcoding bridge
 
-Some cameras only output H.265 at high bitrates, or use proprietary codecs. For those, run **mediamtx** or **go2rtc** on the host or a tiny Pi to re-publish a downsized H.264 RTSP that Vision Labs consumes. This is the pattern `cam2` uses (Pi5 + Logitech C922 + mediamtx → `rtsp://192.168.5.45:8554/basement`).
+Some cameras only output H.265 at high bitrates, or use proprietary codecs. For those, run **mediamtx** or **go2rtc** on the host or a tiny Pi to re-publish a downsized H.264 RTSP that Vision Labs consumes. The author's `cam2` slot uses this pattern (Pi5 + Logitech C922 + mediamtx → `rtsp://<pi-ip>:8554/<stream-name>`).
 
 ---
 
@@ -593,7 +593,7 @@ Before committing development time:
 
 **First attempt: multicast — failed.** Tested ONVIF WS-Discovery and SSDP/UPnP from a `--network host` container on the dev WSL2 host (WSL 2.6.3.0, mirrored mode). Both returned 0 responders even after adding Hyper-V firewall allow rules for UDP 1900/3702 and using explicit `IP_ADD_MEMBERSHIP` with bind to the LAN interface. Eventually got SSDP to return a few responders but the Reolink (with ONVIF enabled) never replied to multicast — and many home networks block multicast at the router anyway. Multicast on WSL2 isn't reliable enough to ship.
 
-**Second attempt: unicast subnet scan — green light.** Sent the same WS-Discovery Probe SOAP envelope as unicast UDP to every IP in the local /24. The Reolink at 192.168.1.14 responded with 1455 bytes of ONVIF metadata in 2 seconds. Worked on the first try, requires no firewall changes, no protocol assumptions about multicast.
+**Second attempt: unicast subnet scan — green light.** Sent the same WS-Discovery Probe SOAP envelope as unicast UDP to every IP in the local /24. The Reolink on the dev LAN responded with 1455 bytes of ONVIF metadata in 2 seconds. Worked on the first try, requires no firewall changes, no protocol assumptions about multicast.
 
 **Decision:** un-drop Phase D.5. Ship the unicast scanner instead of the multicast probe.
 
