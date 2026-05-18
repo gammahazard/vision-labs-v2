@@ -1,0 +1,150 @@
+# .github/workflows/publish-images.yml
+#
+# Builds + publishes every Vision Labs service image to GHCR
+# (ghcr.io/<owner>/vision-labs/<service>) on tag push.
+#
+# WHY ON TAGS, NOT EVERY PUSH:
+#   Image builds are slow (CUDA + PyTorch each ~3 GB). We don't want
+#   GitHub Actions burning compute on every dev commit. Tag a release
+#   when you want fresh images:
+#     git tag v1.0.0
+#     git push origin v1.0.0
+#
+# WHAT GETS PUBLISHED:
+#   ghcr.io/<owner>/vision-labs/base:<tag>             (shared CUDA layer)
+#   ghcr.io/<owner>/vision-labs/pose-detector:<tag>
+#   ghcr.io/<owner>/vision-labs/vehicle-detector:<tag>
+#   ghcr.io/<owner>/vision-labs/face-recognizer:<tag>
+#   ghcr.io/<owner>/vision-labs/dashboard:<tag>
+#   ghcr.io/<owner>/vision-labs/camera-ingester:<tag>
+#   ghcr.io/<owner>/vision-labs/recorder:<tag>
+#   ghcr.io/<owner>/vision-labs/tracker:<tag>
+#   ghcr.io/<owner>/vision-labs/orchestrator:<tag>
+#
+#   Two tags per image: the literal version tag (e.g. v1.0.0) and `latest`.
+#
+# WHY BUILD BASE FIRST:
+#   Detector services reference `FROM vision-labs-base` — they need the
+#   base image to exist in the local Docker daemon before they build.
+#   We push the base image to GHCR AND `docker tag` it locally as
+#   `vision-labs-base:cuda12.8` so the later builds can find it.
+#
+# AUTHENTICATION:
+#   Uses GITHUB_TOKEN with packages:write permission (set in the perms
+#   block below). No PAT or repo secret needed.
+
+name: Publish images to GHCR
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag (e.g. v1.0.0 or dev-snapshot)'
+        required: true
+        default: 'manual'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Step 1: build + push the shared base image first.
+  # Subsequent service builds will pull this from GHCR via `FROM`.
+  # ---------------------------------------------------------------------
+  publish-base:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: meta
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "image_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using image tag: ${TAG}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push base
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/base
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/vision-labs/base:${{ steps.meta.outputs.image_tag }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/vision-labs/base:latest
+
+  # ---------------------------------------------------------------------
+  # Step 2: build + push each service image in parallel.
+  # The detector services have `FROM vision-labs-base:cuda12.8` in their
+  # Dockerfile, which we rewrite at build-time to pull from GHCR.
+  # ---------------------------------------------------------------------
+  publish-services:
+    needs: publish-base
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - camera-ingester
+          - pose-detector
+          - vehicle-detector
+          - tracker
+          - face-recognizer
+          - dashboard
+          - recorder
+          - orchestrator
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The detector Dockerfiles reference `FROM vision-labs-base:cuda12.8`,
+      # which is local-only. For CI builds, rewrite that to point at GHCR.
+      - name: Patch FROM in service Dockerfile to GHCR base
+        run: |
+          DOCKERFILE="services/${{ matrix.service }}/Dockerfile"
+          if grep -q "^FROM vision-labs-base:" "$DOCKERFILE"; then
+            sed -i "s|^FROM vision-labs-base:cuda12.8|FROM ${{ env.REGISTRY }}/${{ env.OWNER }}/vision-labs/base:${{ needs.publish-base.outputs.image_tag }}|" "$DOCKERFILE"
+            echo "Patched $DOCKERFILE:"
+            head -3 "$DOCKERFILE"
+          fi
+
+      - name: Build + push ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/vision-labs/${{ matrix.service }}:${{ needs.publish-base.outputs.image_tag }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/vision-labs/${{ matrix.service }}:latest

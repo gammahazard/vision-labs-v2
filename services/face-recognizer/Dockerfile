@@ -1,48 +1,32 @@
 # services/face-recognizer/Dockerfile
 #
 # PURPOSE:
-#   Face recognition service — uses InsightFace to generate face embeddings
-#   and matches against a SQLite database of known faces.
+#   Face recognition — InsightFace embeddings + SQLite DB.
 #
-# RELATIONSHIPS:
-#   - Built and run by docker-compose.yml
-#   - Reads from: frames + detections streams (Redis)
-#   - Writes to: identities stream + identity_state hash (Redis)
-#   - Stores data in: /data/faces.db (SQLite, volume-mounted)
-#   - GPU required: ONNX Runtime with CUDA for InsightFace
+# INHERITS FROM `vision-labs-base:cuda12.8` (cuDNN variant — required by
+#   onnxruntime-gpu's CUDA execution provider).
+#
+# WHY NO PYTORCH HERE:
+#   InsightFace uses ONNX Runtime, not PyTorch. Saves ~5 GB vs the
+#   pose/vehicle detector images.
 #
 # PORTS:
-#   8081 — Enrollment REST API (used by dashboard)
+#   8081 — Enrollment REST API (used by dashboard). Not exposed to host;
+#   dashboard reaches it via the Docker bridge network.
 
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
-
-# Prevent interactive prompts during apt install
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install Python 3.11 and system deps for OpenCV + InsightFace
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3-pip \
-    libgl1 \
-    libglib2.0-0 \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python
+FROM vision-labs-base:cuda12.8
 
 WORKDIR /app
 
-# Install Python dependencies (cached layer)
-COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir \
+      "insightface==0.7.3" \
+      "onnxruntime-gpu>=1.20.0,<1.23" \
+      "fastapi==0.115.0" \
+      "uvicorn[standard]==0.32.0" \
+      "Cython>=0.29.0"
 
-# Copy application code
-COPY face_db.py .
-COPY recognizer.py .
+COPY face_db.py recognizer.py ./
 
-# Create data directory for SQLite
 RUN mkdir -p /data
 
 EXPOSE 8081

@@ -99,11 +99,14 @@ docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
 # Should list all your GPUs
 
 # 5. Build and run
-docker compose build               # ~10-20 min on first build
-docker compose up                  # without NAS
-# OR
+#    OPTION A: build locally (~10-15 min, requires building 9 images)
+bash scripts/build.sh              # builds base image first, then everything else
+docker compose up -d
+#    OPTION B: pull pre-built images from GitHub Container Registry (fast)
+docker compose -f docker-compose.yml -f docker-compose.registry.yml pull
+docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+#    With NAS (overlay also works in both options above):
 docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
-                                   # with NAS (enables the recorder service)
 
 # 6. Browse
 # Dashboard:   http://localhost:8080   (admin/admin on first run — you'll be forced to set a new password)
@@ -111,6 +114,17 @@ docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
 # Grafana:     http://localhost:3000
 # Prometheus:  http://localhost:9090
 ```
+
+### Build vs pre-built images
+
+Two paths from cloned repo to running stack:
+
+| Path | Time | When to use |
+|---|---|---|
+| `bash scripts/build.sh` then `docker compose up -d` | ~10-15 min first time | You're developing; you want to modify a service and rebuild |
+| `docker compose -f docker-compose.yml -f docker-compose.registry.yml pull && up -d` | ~3-5 min (mostly pull bandwidth) | You just want to run it. Pulls pre-built images from GHCR |
+
+Pre-built images are published by a GitHub Actions workflow on every tagged release. Pin a specific version with `IMAGE_TAG=v1.0.0 docker compose -f ... up -d` for reproducibility.
 
 ### Hardware tiers + GPU configuration
 

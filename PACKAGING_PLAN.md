@@ -385,6 +385,28 @@ So Phase C as originally scoped just trades "build time" for "download time" wit
 
 **1 day** to set up the workflow + push the first images. **+1 day** for base-image dedup + dependency strip. ONNX migration (Phase C.2) is another 2-3 days if we go there.
 
+### Phase C — actually shipped (post-implementation notes)
+
+Measured savings after layer dedup (from `docker image inspect`, May 2026):
+
+| Image | Before Phase C | After Phase C | Saved |
+|---|---|---|---|
+| pose-detector | 18.3 GB | **7.4 GB** | 11 GB |
+| vehicle-detector | 18.3 GB | **7.4 GB** | 11 GB |
+| face-recognizer | 10.2 GB | **3.6 GB** | 6.5 GB |
+| Slot copies (cam2/cam3 per service) | 18.3 GB each | **6.5 GB each** | 12 GB each |
+| **Total stack disk** | ~140 GB | **~55 GB** | **~85 GB** |
+
+Fresh `docker pull` from GHCR after Phase C completion: ~14 GB total (one base + per-service deltas). Earlier draft promised "8 GB" — that would require Phase C.2 (ONNX migration) on top to hit. 14 GB is still a 6× reduction from the unsplit baseline; honestly call this "fast enough for v1."
+
+What landed:
+- `services/base/Dockerfile` — shared CUDA 12.8 + cuDNN + Python 3.11 + system deps + numpy/opencv/redis (~3.2 GB)
+- Pose / vehicle / face detector Dockerfiles rewritten as `FROM vision-labs-base` thin layers
+- Obsolete `requirements.txt` files deleted (deps moved inline in Dockerfiles)
+- `scripts/build.sh` — builds base first, then `docker compose build` finds it
+- `docker-compose.registry.yml` overlay — `pull` mode, swaps every build directive for `image: ghcr.io/...`
+- `.github/workflows/publish-images.yml` — tag-push triggers parallel build + GHCR publish for all 8 services + base
+
 ---
 
 ## 6a. Phase C.2 — ONNX migration for detectors (optional, post-C)

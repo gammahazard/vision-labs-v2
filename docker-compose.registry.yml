@@ -1,0 +1,148 @@
+# docker-compose.registry.yml — overlay that pulls pre-built images from
+# GitHub Container Registry instead of building locally.
+#
+# WHY:
+#   Local builds take 10-30 minutes on first run. Once a release is
+#   published to GHCR (by Phase C.7's GitHub Actions workflow), users
+#   can layer in this overlay and skip the build entirely:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+#
+# WHAT IT DOES:
+#   For each service that has a `build:` block in the base compose file,
+#   this overlay sets an `image:` pointing at GHCR + nulls the build
+#   block so compose doesn't try to rebuild.
+#
+# VERSION PINNING:
+#   The IMAGE_TAG env var picks which release to pull. Defaults to
+#   `latest`. Pin to a specific release for reproducibility:
+#     IMAGE_TAG=v0.9 docker compose -f ... up -d
+#
+# WHAT'S NOT OVERRIDDEN:
+#   - Volumes, env vars, networks, healthchecks — all inherited from
+#     docker-compose.yml. Only the image source changes.
+#   - Slot services (pose-detector-cam2 etc.) ARE overridden so they
+#     pull the same image as the primary service — they're functionally
+#     identical, just different env vars for camera ID.
+#   - redis, ollama, dcgm-exporter, prometheus, grafana, portainer:
+#     not built locally, so no override needed (already pulled from
+#     Docker Hub / nvcr).
+
+services:
+  base:
+    # The base image is a build-only dependency for the other services;
+    # in registry mode it's not needed because each service image already
+    # bundles the base layers via Docker's layer-sharing protocol.
+    # We declare it here as a no-op so any reference doesn't break.
+    image: ghcr.io/gammahazard/vision-labs/base:${IMAGE_TAG:-latest}
+
+  camera-ingester:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  pose-detector:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  vehicle-detector:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  tracker:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  face-recognizer:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  dashboard:
+    image: ghcr.io/gammahazard/vision-labs/dashboard:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  recorder:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  orchestrator:
+    image: ghcr.io/gammahazard/vision-labs/orchestrator:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  # Slot copies (cam2-cam5) — each uses the same image as its primary
+  # counterpart. Compose's profile mechanism gates which ones actually start.
+
+  camera-ingester-cam2:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam2:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam2:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam2:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam2:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam2:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam3:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam3:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam3:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam3:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam3:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam3:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam4:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam4:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam4:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam4:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam4:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam4:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam5:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam5:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam5:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam5:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam5:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam5:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null

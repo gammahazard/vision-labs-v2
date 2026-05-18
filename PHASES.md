@@ -193,8 +193,8 @@ These four were applied during the WSL/Windows migration since they prevent disk
 See [PACKAGING_PLAN.md](PACKAGING_PLAN.md) for the full plan. Summary:
 
 - [x] **Phase A**: Remove the Generate tab + ComfyUI service. Service block dropped from compose, `routes/image_gen.py` + `static/generate.{js,css}` + `pollers/comfyui_cleanup.py` + the GPU-pause hooks in all three detectors + the `gpu:generation_active` metric all removed. `models/comfyui/` left on disk (80 GB of user-downloaded checkpoints) — user can delete it manually if/when desired.
-- **Phase B**: Hardware profiles (`small` / `mid` / `full`) + single-GPU default
-- **Phase C**: Pre-built images pushed to GHCR + shared base image + dependency strip — drops first-install pull from ~25-40 GB → ~8 GB
+- [x] **Phase B**: Hardware profiles + single-GPU default. `DETECTOR_GPU` / `CHAT_GPU` env vars parameterize every GPU service's device_ids + NVIDIA_VISIBLE_DEVICES + CUDA_VISIBLE_DEVICES. CUDA_DEVICE_ORDER=PCI_BUS_ID set so indexes match `nvidia-smi -L`. Three tier presets in `tiers/{small,mid,full}.env`. Dashboard handles empty CHAT_MODEL gracefully ("AI chat disabled on this tier").
+- [x] **Phase C**: Shared base image (`services/base/`) + GHCR pre-built image publishing + skip-build overlay. Total stack disk dropped from ~140 GB to ~55 GB after layer dedup. Fresh `docker pull` from registry ~14 GB (vs ~85 GB without dedup).
 - **Phase C.2** *(optional)*: ONNX migration for pose + vehicle detectors — ~3 GB lighter per image, ~200 MB less VRAM per detector
 - **Phase D**: First-run setup wizard — GPU auto-detect, per-camera detector flags from a "is this indoor or outdoor?" question
 - **Phase D.5** *(gated on a WSL2 multicast test)*: ONVIF network camera discovery, in both wizard and cameras tab

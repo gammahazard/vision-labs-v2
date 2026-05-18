@@ -1,47 +1,32 @@
 # services/pose-detector/Dockerfile
 #
 # PURPOSE:
-#   GPU-enabled container for YOLO pose detection. Uses NVIDIA CUDA base image
-#   so PyTorch can access the RTX 3090 for inference.
+#   GPU-enabled container for YOLO pose detection.
 #
-# RELATIONSHIPS:
-#   - Built and run by docker-compose.yml
-#   - Requires NVIDIA Container Toolkit (for --gpus flag)
-#   - Reads frames from Redis, publishes detections to Redis
+# INHERITS FROM `vision-labs-base:cuda12.8` (services/base/Dockerfile).
+#   The base already has: CUDA 12.8 runtime, Python 3.11, system libs for
+#   OpenCV, and the common pip deps (numpy, opencv, redis, async-timeout).
+#   This file only adds the pose-specific framework layer.
+#
+# IF YOU SEE "FROM vision-labs-base: pull access denied":
+#   The base image isn't built locally yet. Run:
+#     docker build -t vision-labs-base:cuda12.8 services/base
+#   (Or `bash scripts/build.sh` to build base + all services in order.)
 
-FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
-
-# Prevent interactive prompts during apt install
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install Python 3.11 and system deps for OpenCV
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-venv \
-    python3-pip \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python
+FROM vision-labs-base:cuda12.8
 
 WORKDIR /app
 
-# Install PyTorch with CUDA 12.8 BEFORE other deps so ultralytics doesn't pull in
-# the default CPU/cu121 wheel from PyPI. Required for Blackwell (5070 Ti, sm_120).
+# Install PyTorch with CUDA 12.8 BEFORE ultralytics so we don't end up
+# with the default cu121 wheel from PyPI. Required for Blackwell (sm_120).
 RUN python -m pip install --no-cache-dir \
-    torch torchvision \
-    --index-url https://download.pytorch.org/whl/cu128
+      torch torchvision \
+      --index-url https://download.pytorch.org/whl/cu128
 
-# Install Python dependencies (cached layer)
-COPY requirements.txt .
-RUN python -m pip install --no-cache-dir -r requirements.txt
+# Service-specific deps (ultralytics pulls torch as a dep, but we already
+# installed our CUDA-pinned version above so pip just verifies the constraint)
+RUN python -m pip install --no-cache-dir "ultralytics>=8.3.0"
 
-# Copy application code
 COPY detector.py .
 
-# Run the detector — unbuffered output for real-time Docker logs
 CMD ["python", "-u", "detector.py"]
