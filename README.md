@@ -131,7 +131,7 @@ docker exec vision-labs-dashboard-1 rm /data/setup-state/setup.json
 docker compose restart dashboard
 ```
 
-Network camera discovery (ONVIF) and Telegram-bot setup are not in the v1 wizard — set those in the Cameras tab and `.env` respectively. (Discovery is gated on Phase D.5 of the packaging plan; see `PACKAGING_PLAN.md`.)
+Network camera discovery (ONVIF) and Telegram-bot setup are not in the v1 wizard — add cameras via manual RTSP URL entry, configure Telegram via `.env`. Auto-discovery was tested and **dropped** because WSL2 host-networking containers can't reliably do LAN multicast (verified empirically — both WS-Discovery and SSDP returned zero responders). See `PACKAGING_PLAN.md` § 7a for the detailed test results.
 
 ### Build vs pre-built images
 

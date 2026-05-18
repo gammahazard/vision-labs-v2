@@ -565,9 +565,21 @@ Before committing development time:
 2. If we see the basement-Pi or any of the ringed phones/Reolinks: green light, build it.
 3. If we see nothing: drop the feature, document "auto-discovery not supported on WSL2 today; use manual entry."
 
+### Result — May 2026: gate failed, feature dropped for v1
+
+Tested both ONVIF WS-Discovery and SSDP/UPnP from a `--network host` container on the development WSL2 host (WSL 2.6.3.0, mirrored mode enabled). Both returned **0 responders** — including from SSDP, which any home router or smart-home device should answer.
+
+This means WSL2 host-networking containers can't reliably send/receive multicast packets to the LAN, regardless of whether the cameras themselves speak ONVIF. Since WSL2 is the primary deployment platform for Windows users, building auto-discovery on top of multicast would silently break for the majority of installs.
+
+**Decision:** drop Phase D.5 from v1 entirely. Wizard ships with manual RTSP entry only.
+
+### Possible non-multicast alternatives (not v1 scope)
+
+A unicast-only "scan the subnet for hosts with port 554 open" approach would work in WSL2. It can't auto-extract RTSP URL paths or pull device names like ONVIF can, but it CAN surface "we see something speaking RTSP at 192.168.1.14, here's the IP" as a helpful starting point. Worth considering as a Phase F enhancement if user feedback asks for less typing.
+
 ### Effort estimate
 
-**~1 day** if the multicast test passes. ~0 days if it fails (cut the feature).
+**~0 days** (feature dropped). Documented as a known WSL2 limitation in README.
 
 ---
 
