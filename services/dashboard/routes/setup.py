@@ -229,6 +229,103 @@ async def discover_cameras_in_setup(request: Request):
     return await discover_cameras(request)
 
 
+@router.post("/apply-config")
+async def apply_config(request: Request):
+    """Persist the user's hardware-tier / GPU-mode / model choices to .env
+    and signal the orchestrator to restart the affected services.
+
+    Body (every field is optional — only present fields get written):
+      {
+        "detector_gpu": "0" | "1",
+        "chat_gpu":     "0" | "1",
+        "chat_model":   "qwen3:14b" | "qwen3:7b" | "qwen3:3b" | "" (disable),
+        "vision_model": "minicpm-v" | "" (disable),
+        "pose_model":   "/models/yolov8s-pose.pt" | "/models/yolov8n-pose.pt",
+        "vehicle_model":"/models/yolov8s.pt" | "/models/yolov8n.pt",
+        "target_fps":   "5" | "10" | "15"
+      }
+
+    Returns:
+      { ok: bool, written: [..keys..], affected_services: [..], error: ... }
+
+    Side effects:
+      1. /app/.env is updated in place (bind-mounted to host's .env)
+      2. A message is published on Redis pub/sub channel "config:apply"
+         with the set of services that need to be recreated to pick up
+         the new env. The orchestrator (which has the Docker socket)
+         handles the actual `docker compose up -d --force-recreate`.
+    """
+    from helpers.env_writer import update_env, ALLOWED_KEYS
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+
+    # Map body's lowercase keys -> .env UPPER_SNAKE_CASE
+    key_map = {
+        "detector_gpu":  "DETECTOR_GPU",
+        "chat_gpu":      "CHAT_GPU",
+        "chat_model":    "CHAT_MODEL",
+        "vision_model":  "VISION_MODEL",
+        "pose_model":    "POSE_MODEL",
+        "vehicle_model": "VEHICLE_MODEL",
+        "target_fps":    "TARGET_FPS",
+    }
+    updates = {key_map[k]: str(body[k]) for k in body if k in key_map}
+
+    if not updates:
+        return {"ok": True, "written": [], "affected_services": [], "error": None}
+
+    # Validate
+    if "DETECTOR_GPU" in updates and updates["DETECTOR_GPU"] not in ("0", "1", "2", "3"):
+        return JSONResponse({"ok": False, "error": "detector_gpu must be 0/1/2/3"}, status_code=400)
+    if "CHAT_GPU" in updates and updates["CHAT_GPU"] not in ("0", "1", "2", "3"):
+        return JSONResponse({"ok": False, "error": "chat_gpu must be 0/1/2/3"}, status_code=400)
+
+    result = update_env(updates)
+    if not result["ok"]:
+        return JSONResponse({"ok": False, "error": result["error"]}, status_code=500)
+
+    # Figure out which services need to restart so the orchestrator knows
+    # what to recreate. Detectors picking up DETECTOR_GPU + POSE/VEHICLE_MODEL
+    # changes; ollama for CHAT_GPU; dashboard for CHAT_MODEL/VISION_MODEL
+    # (env-var reads happen at process startup).
+    affected: set[str] = set()
+    if any(k in updates for k in ("DETECTOR_GPU", "POSE_MODEL", "VEHICLE_MODEL", "TARGET_FPS")):
+        affected.update(["pose-detector", "vehicle-detector", "face-recognizer", "camera-ingester"])
+    if "CHAT_GPU" in updates:
+        affected.add("ollama")
+    if any(k in updates for k in ("CHAT_MODEL", "VISION_MODEL")):
+        affected.add("dashboard")
+
+    # Tell the orchestrator
+    try:
+        r = _redis_client()
+        r.publish("config:apply", json.dumps({
+            "request_id": f"cfg-{int(time.time() * 1000)}",
+            "services": sorted(affected),
+            "keys_changed": result["written"],
+        }))
+    except redis.ConnectionError as e:
+        logger.warning(f"Couldn't notify orchestrator about config change: {e}")
+        # The write happened; just inform the user that auto-restart won't fire
+        return {
+            "ok": True,
+            "written": result["written"],
+            "affected_services": sorted(affected),
+            "error": "config written but orchestrator notification failed — restart affected services manually",
+        }
+
+    return {
+        "ok": True,
+        "written": result["written"],
+        "ignored": result["ignored"],
+        "affected_services": sorted(affected),
+        "error": None,
+    }
+
+
 @router.post("/complete")
 async def complete_setup(request: Request):
     """

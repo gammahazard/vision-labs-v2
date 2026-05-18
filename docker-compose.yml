@@ -270,6 +270,11 @@ services:
       - ./services/dashboard/ai_db.py:/app/ai_db.py:ro
       - ./services/dashboard/constants.py:/app/constants.py:ro
       - ./services/dashboard/event_renderer.py:/app/event_renderer.py:ro
+      # .env is bind-mounted RW so the setup wizard can persist the user's
+      # chosen GPU/tier/model selections without the user having to edit
+      # the file by hand. The dashboard only writes known keys (see
+      # helpers/env_writer.py); it never reads arbitrary host files.
+      - ./.env:/app/.env:rw
       - auth-data:/data
       - qnap-snapshots:/data/snapshots
       - qnap-events:/data/events

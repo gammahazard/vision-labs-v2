@@ -75,6 +75,10 @@ async function detectHardware() {
         nextBtn.disabled = false;
         statusEl.style.display = 'none';
         resultEl.hidden = false;
+        // Show "Apply this configuration" once we have something to apply
+        if (data.gpus.length > 0) {
+            document.getElementById('btnApplyConfig').hidden = false;
+        }
     } catch (e) {
         statusEl.innerHTML = `<span class="probing" style="color:#ef4444">Probe failed: ${escapeHtml(e.message || String(e))}. You can still continue — set DETECTOR_GPU / CHAT_GPU manually in .env later.</span>`;
         nextBtn.disabled = false;  // let the user proceed regardless
@@ -180,6 +184,84 @@ function renderHardwareResult(data) {
     });
     state.gpuMode = (data.gpus.length >= 2) ? 'single' : 'single';
 }
+
+// ---------------------------------------------------------------------------
+// Step 2 — Apply config
+// ---------------------------------------------------------------------------
+// Builds a {detector_gpu, chat_gpu, chat_model, ...} payload from the
+// current wizard state (probe + radio selection + tier defaults) and
+// POSTs it to /api/setup/apply-config. That endpoint writes .env and
+// asks the orchestrator to recreate the affected services.
+async function applyConfig() {
+    const btn = document.getElementById('btnApplyConfig');
+    const statusEl = document.getElementById('applyStatus');
+    if (!state.detected || !state.detected.gpus.length) return;
+
+    // Figure out what to send based on selected GPU mode.
+    const sorted = [...state.detected.gpus].sort((a, b) => b.vram_mb - a.vram_mb);
+    const biggest = sorted[0];
+    const second = sorted[1] || biggest;
+
+    // Default to single-GPU on the biggest card if mode wasn't picked yet
+    const mode = state.gpuMode || 'single';
+    const detectorGpu = (mode === 'dual') ? second.index : biggest.index;
+    const chatGpu = biggest.index;
+
+    // Model recommendations per tier — same logic as the blurb
+    const tier = state.tier || recommendTier(biggest.vram_mb);
+    const modelsForTier = {
+        small: { chat: '',           vision: '', pose: '/models/yolov8n-pose.pt', vehicle: '/models/yolov8n.pt', fps: '5'  },
+        mid:   { chat: 'qwen3:7b',   vision: '', pose: '/models/yolov8s-pose.pt', vehicle: '/models/yolov8s.pt', fps: '10' },
+        full:  { chat: 'qwen3:14b',  vision: 'minicpm-v', pose: '/models/yolov8s-pose.pt', vehicle: '/models/yolov8s.pt', fps: '15' },
+    };
+    const m = modelsForTier[tier] || modelsForTier.mid;
+
+    const payload = {
+        detector_gpu: String(detectorGpu),
+        chat_gpu: String(chatGpu),
+        chat_model: m.chat,
+        vision_model: m.vision,
+        pose_model: m.pose,
+        vehicle_model: m.vehicle,
+        target_fps: m.fps,
+    };
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Writing .env + restarting services...';
+    statusEl.hidden = false;
+    statusEl.className = 'rtsp-test-result';
+    statusEl.textContent = '⏳ Writing your configuration to .env. The dashboard and detectors will restart automatically — this can take 30-60 seconds.';
+
+    try {
+        const resp = await fetch('/api/setup/apply-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+            statusEl.className = 'rtsp-test-result err';
+            statusEl.textContent = `✗ ${data.error || ('HTTP ' + resp.status)}`;
+            btn.disabled = false;
+            btn.textContent = 'Apply this configuration';
+            return;
+        }
+        statusEl.className = 'rtsp-test-result ok';
+        const aff = data.affected_services || [];
+        statusEl.innerHTML = `
+            ✓ Wrote ${data.written.length} value${data.written.length === 1 ? '' : 's'} to .env: <code>${data.written.join(', ')}</code>.<br>
+            Orchestrator is restarting: <code>${aff.join(', ') || '(none)'}</code>. New AI models will download automatically on the next dashboard boot if needed.
+        `;
+        btn.textContent = '✓ Applied';
+        // Leave the button disabled to prevent double-apply
+    } catch (e) {
+        statusEl.className = 'rtsp-test-result err';
+        statusEl.textContent = `✗ Network error: ${escapeHtml(e.message || String(e))}`;
+        btn.disabled = false;
+        btn.textContent = 'Apply this configuration';
+    }
+}
+
 
 function recommendTier(vramMb) {
     if (vramMb < 7000) return 'small';
@@ -479,6 +561,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnBack3').addEventListener('click', () => showStep('hardware'));
 
     document.getElementById('btnDetect').addEventListener('click', detectHardware);
+    document.getElementById('btnApplyConfig').addEventListener('click', applyConfig);
     document.getElementById('btnTestRtsp').addEventListener('click', testRtsp);
     document.getElementById('btnAddCamera').addEventListener('click', addCamera);
     document.getElementById('btnSkipCamera').addEventListener('click', skipCamera);

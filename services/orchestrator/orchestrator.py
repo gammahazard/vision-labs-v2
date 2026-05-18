@@ -93,6 +93,17 @@ PROBE_RESULT_MAXLEN = 50  # tiny — probe payloads are small + only consumed on
 PROBE_IMAGE = os.getenv("HW_PROBE_IMAGE", "nvidia/cuda:12.4.0-base-ubuntu22.04")
 PROBE_TIMEOUT = int(os.getenv("HW_PROBE_TIMEOUT", "120"))  # incl. first-time image pull
 
+# Config-apply (Phase F). When the setup wizard writes new tier/GPU values
+# to .env, the dashboard pubs a list of services that need recreating. We
+# handle that by `compose up -d --force-recreate <svcs>`.
+CONFIG_APPLY_CHANNEL = "config:apply"
+# Only services in this allowlist may be force-recreated by the wizard.
+# Anything outside is silently ignored to bound blast radius.
+CONFIG_APPLY_ALLOWED_SERVICES = {
+    "pose-detector", "vehicle-detector", "face-recognizer",
+    "camera-ingester", "ollama", "dashboard",
+}
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -403,6 +414,60 @@ def probe_listen_loop(r: redis.Redis) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Config-apply listener — recreate services on .env changes
+# ---------------------------------------------------------------------------
+def apply_config(r: redis.Redis, services: list, request_id: str) -> None:
+    """Force-recreate the specified services so they pick up new env values.
+
+    Filters against CONFIG_APPLY_ALLOWED_SERVICES so a malformed/malicious
+    message can't try to recreate arbitrary services.
+    """
+    valid = [s for s in services if s in CONFIG_APPLY_ALLOWED_SERVICES]
+    rejected = [s for s in services if s not in CONFIG_APPLY_ALLOWED_SERVICES]
+    if rejected:
+        logger.warning(f"config:apply ignoring {rejected} (not in allowlist)")
+
+    if not valid:
+        logger.info(f"config:apply {request_id}: no valid services to restart")
+        _audit(r, "apply", "config", True, "no services")
+        return
+
+    logger.info(f"config:apply {request_id}: recreating {valid}")
+    # `up -d --force-recreate <services>` recreates the named services
+    # with their current env vars from compose+.env. Other services stay put.
+    ok, err = _run_compose(
+        ["up", "-d", "--force-recreate", "--no-deps"] + valid,
+        timeout=240,
+    )
+    _audit(r, "apply", "config", ok, f"{','.join(valid)}" + (f" — {err}" if err else ""))
+
+
+def config_apply_listen_loop(r: redis.Redis) -> None:
+    """Subscribe to config:apply and recreate listed services per message."""
+    while True:
+        try:
+            pubsub = r.pubsub(ignore_subscribe_messages=True)
+            pubsub.subscribe(CONFIG_APPLY_CHANNEL)
+            logger.info(f"Subscribed to {CONFIG_APPLY_CHANNEL}")
+            for msg in pubsub.listen():
+                if msg.get("type") != "message":
+                    continue
+                try:
+                    payload = json.loads(msg.get("data") or "{}")
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                services = payload.get("services", []) or []
+                request_id = payload.get("request_id", "")
+                if not isinstance(services, list):
+                    logger.warning(f"config:apply: services field must be list, got {type(services)}")
+                    continue
+                apply_config(r, services, request_id)
+        except redis.RedisError as e:
+            logger.warning(f"config:apply pubsub disconnected ({e}); reconnecting in 5s")
+            time.sleep(5)
+
+
+# ---------------------------------------------------------------------------
 # Event listener (pub/sub) — kicks reconcile immediately on dashboard CRUD
 # ---------------------------------------------------------------------------
 def listen_loop(r: redis.Redis) -> None:
@@ -462,6 +527,11 @@ def main() -> None:
     probe_r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     probe_t = threading.Thread(target=probe_listen_loop, args=(probe_r,), daemon=True)
     probe_t.start()
+
+    # Config-apply listener — recreates services when .env changes (Phase F)
+    cfg_r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    cfg_t = threading.Thread(target=config_apply_listen_loop, args=(cfg_r,), daemon=True)
+    cfg_t.start()
 
     # Safety-net reconcile loop
     while True:
