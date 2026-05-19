@@ -223,7 +223,12 @@
         <!-- Tab: DVR Recordings -->
         <div id="tabRecordings" class="tab-panel" style="display: none;">
             <div class="video-section">
-                <h3 style="margin:0 0 12px; color:var(--text-primary,#e0e0e0); font-size:1.1em;">📹 DVR Recordings</h3>
+                <h3 style="margin:0 0 4px; color:var(--text-primary,#e0e0e0); font-size:1.1em;">📹 DVR Recordings</h3>
+                <div id="dvrRetentionNote"
+                     style="margin:0 0 12px; color:var(--text-secondary,#888); font-size:0.85em;"
+                     title="How long recordings, snapshots, and clips are kept on disk before automatic cleanup.">
+                    Loading retention…
+                </div>
                 <div class="video-controls" style="margin-bottom:12px;">
                     <div class="video-control-group">
                         <label>Camera</label>
@@ -305,7 +310,7 @@
         </div>
     </div>
 
-    <script src="ai.js?v=5"></script>
+    <script src="ai.js?v=6"></script>
 
     <script src="nav.js?v=3"></script>
 </body>

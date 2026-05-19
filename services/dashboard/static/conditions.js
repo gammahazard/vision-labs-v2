@@ -18,6 +18,7 @@
 const conditionsPeriod = document.getElementById("conditionsPeriod");
 const nightWatchIcon = document.getElementById("nightWatchIcon");
 const condDate = document.getElementById("condDate");
+const condTimezone = document.getElementById("condTimezone");
 const condSunrise = document.getElementById("condSunrise");
 const condSunset = document.getElementById("condSunset");
 const condDayLength = document.getElementById("condDayLength");
@@ -107,6 +108,15 @@ async function loadConditions() {
             }
         } catch {
             condDate.textContent = data.date;
+        }
+
+        // Timezone — show "America/Toronto (EDT, -0400)" so operator sees the
+        // resolved zone the system is using for all date queries.
+        if (condTimezone && data.timezone) {
+            const abbr = data.tz_abbr || "";
+            const offset = data.tz_offset ? `, ${data.tz_offset}` : "";
+            const suffix = abbr ? ` (${abbr}${offset})` : "";
+            condTimezone.textContent = `${data.timezone}${suffix}`;
         }
 
         // Weather data (only shown if API key is configured)

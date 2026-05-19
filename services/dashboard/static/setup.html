@@ -20,6 +20,7 @@
         <ol id="stepIndicator">
             <li data-step="welcome" class="active">Welcome</li>
             <li data-step="hardware">Hardware</li>
+            <li data-step="location">Location</li>
             <li data-step="camera">First camera</li>
             <li data-step="finish">Finish</li>
         </ol>
@@ -74,7 +75,63 @@
             </div>
         </section>
 
-        <!-- Step 3: First camera -->
+        <!-- Step 3: Location + retention -->
+        <section class="wizard-step" data-step="location">
+            <h2>Location &amp; storage.</h2>
+            <p>
+                Pick the timezone the system should use for "today" and
+                "yesterday" queries, and decide how long to keep recordings,
+                snapshots, and AI clips on disk.
+            </p>
+
+            <div style="display:grid; gap:16px; max-width:560px; margin-top:16px;">
+                <div>
+                    <label for="setupTimezone" style="display:block; font-weight:600; margin-bottom:4px;">Timezone</label>
+                    <select id="setupTimezone" style="width:100%; padding:8px; border-radius:4px;">
+                        <option value="">Loading…</option>
+                    </select>
+                    <small style="color:var(--text-secondary,#888);">
+                        Used for all date queries (AI chat, event journals, retention cutoffs).
+                        Default <code>America/Toronto</code>. Pick the IANA zone that matches your physical location.
+                    </small>
+                </div>
+
+                <div>
+                    <label style="display:block; font-weight:600; margin-bottom:4px;">Retention (days)</label>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+                        <div>
+                            <label for="setupRetentionRecordings" style="font-size:0.9em;">DVR recordings</label>
+                            <input id="setupRetentionRecordings" type="number" min="1" max="365" value="28"
+                                   style="width:100%; padding:6px; border-radius:4px;">
+                        </div>
+                        <div>
+                            <label for="setupRetentionSnapshots" style="font-size:0.9em;">Event snapshots</label>
+                            <input id="setupRetentionSnapshots" type="number" min="0" max="90" value="4"
+                                   style="width:100%; padding:6px; border-radius:4px;">
+                        </div>
+                        <div>
+                            <label for="setupRetentionClips" style="font-size:0.9em;">AI/Telegram clips</label>
+                            <input id="setupRetentionClips" type="number" min="1" max="30" value="3"
+                                   style="width:100%; padding:6px; border-radius:4px;">
+                        </div>
+                    </div>
+                    <small style="color:var(--text-secondary,#888);">
+                        Reducing retention immediately purges older data on the next prune cycle.
+                        Increasing it has no effect on already-deleted files.
+                    </small>
+                </div>
+
+                <div id="setupLocationStatus" style="display:none; padding:8px; border-radius:4px;"></div>
+            </div>
+
+            <div class="wizard-actions">
+                <button id="btnBackLocation" class="btn-secondary">← Back</button>
+                <button id="btnSaveLocation" class="btn-primary">Save &amp; continue →</button>
+                <button id="btnSkipLocation" class="btn-secondary">Skip</button>
+            </div>
+        </section>
+
+        <!-- Step 4: First camera -->
         <section class="wizard-step" data-step="camera">
             <h2>Add your first camera.</h2>
             <p>
@@ -169,6 +226,6 @@
     </main>
 </div>
 
-<script src="setup.js?v=6"></script>
+<script src="setup.js?v=7"></script>
 </body>
 </html>

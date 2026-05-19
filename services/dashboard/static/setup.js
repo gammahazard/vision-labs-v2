@@ -19,7 +19,7 @@ const state = {
     cameraSkipped: false,
 };
 
-const STEPS = ['welcome', 'hardware', 'camera', 'finish'];
+const STEPS = ['welcome', 'hardware', 'location', 'camera', 'finish'];
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -530,6 +530,103 @@ function renderFinishSummary() {
     el.innerHTML = parts.join(' ');
 }
 
+// ---------------------------------------------------------------------------
+// Location step
+// ---------------------------------------------------------------------------
+async function populateLocationStep() {
+    const tzSelect = document.getElementById('setupTimezone');
+    if (!tzSelect) return;
+
+    // Fetch current conditions to learn the active timezone + retention defaults
+    let currentTz = 'America/Toronto';
+    try {
+        const r = await fetch('/api/conditions');
+        if (r.ok) {
+            const d = await r.json();
+            if (d.timezone) currentTz = d.timezone;
+            const ret = d.retention || {};
+            if (typeof ret.recordings_days === 'number') {
+                document.getElementById('setupRetentionRecordings').value = ret.recordings_days;
+            }
+            if (typeof ret.snapshots_days === 'number') {
+                document.getElementById('setupRetentionSnapshots').value = ret.snapshots_days;
+            }
+            if (typeof ret.clips_days === 'number') {
+                document.getElementById('setupRetentionClips').value = ret.clips_days;
+            }
+        }
+    } catch (e) { /* fall back to default */ }
+
+    // Fetch the full IANA timezone list (~600 zones) grouped by region
+    tzSelect.innerHTML = '<option value="">Loading…</option>';
+    try {
+        const r = await fetch('/api/setup/timezones');
+        if (!r.ok) throw new Error('failed to load timezones');
+        const data = await r.json();
+        tzSelect.innerHTML = '';
+        for (const region of data.regions || []) {
+            const group = document.createElement('optgroup');
+            group.label = region;
+            for (const zone of data.zones[region] || []) {
+                const opt = document.createElement('option');
+                opt.value = zone;
+                opt.textContent = zone;
+                if (zone === currentTz) opt.selected = true;
+                group.appendChild(opt);
+            }
+            tzSelect.appendChild(group);
+        }
+    } catch (e) {
+        tzSelect.innerHTML = `<option value="${currentTz}">${currentTz} (only — backend list unavailable)</option>`;
+    }
+}
+
+async function saveLocation() {
+    const tz = document.getElementById('setupTimezone').value;
+    const recordings = parseInt(document.getElementById('setupRetentionRecordings').value, 10);
+    const snapshots = parseInt(document.getElementById('setupRetentionSnapshots').value, 10);
+    const clips = parseInt(document.getElementById('setupRetentionClips').value, 10);
+    const status = document.getElementById('setupLocationStatus');
+    status.style.display = 'block';
+
+    if (!tz || isNaN(recordings) || isNaN(snapshots) || isNaN(clips)) {
+        status.style.background = '#3a1f1f';
+        status.style.color = '#ff9b9b';
+        status.textContent = 'Please pick a timezone and valid retention values.';
+        return;
+    }
+
+    status.style.background = '#1f2a3a';
+    status.style.color = '#9bbbff';
+    status.textContent = 'Saving to .env (requires a service restart to fully apply)…';
+
+    try {
+        const r = await fetch('/api/setup/apply-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                LOCATION_TIMEZONE: tz,
+                RETENTION_DAYS: recordings,
+                SNAPSHOT_RETENTION_DAYS: snapshots,
+                CLIP_RETENTION_DAYS: clips,
+            }),
+        });
+        if (!r.ok) {
+            const t = await r.text();
+            throw new Error(t || r.status);
+        }
+        status.style.background = '#1f3a1f';
+        status.style.color = '#9bff9b';
+        status.textContent = `Saved. Restart services (\`docker compose restart\`) for timezone changes to take full effect. Retention values apply on the next prune cycle.`;
+        state.locationSaved = true;
+        setTimeout(() => showStep('camera'), 1500);
+    } catch (e) {
+        status.style.background = '#3a1f1f';
+        status.style.color = '#ff9b9b';
+        status.textContent = `Save failed: ${e.message}. You can edit .env manually instead.`;
+    }
+}
+
 async function finishWizard() {
     const steps = [];
     if (state.detected) steps.push('hardware_detected');
@@ -568,8 +665,14 @@ function escapeHtml(s) {
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnNext1').addEventListener('click', () => showStep('hardware'));
     document.getElementById('btnBack2').addEventListener('click', () => showStep('welcome'));
-    document.getElementById('btnNext2').addEventListener('click', () => showStep('camera'));
-    document.getElementById('btnBack3').addEventListener('click', () => showStep('hardware'));
+    document.getElementById('btnNext2').addEventListener('click', () => {
+        populateLocationStep();
+        showStep('location');
+    });
+    document.getElementById('btnBackLocation').addEventListener('click', () => showStep('hardware'));
+    document.getElementById('btnSkipLocation').addEventListener('click', () => showStep('camera'));
+    document.getElementById('btnSaveLocation').addEventListener('click', saveLocation);
+    document.getElementById('btnBack3').addEventListener('click', () => showStep('location'));
 
     document.getElementById('btnDetect').addEventListener('click', detectHardware);
     document.getElementById('btnApplyConfig').addEventListener('click', applyConfig);

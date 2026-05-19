@@ -52,6 +52,15 @@ ALLOWED_KEYS = {
     "POSE_MODEL",
     "VEHICLE_MODEL",
     "TARGET_FPS",
+    # Location + retention — wizard-settable, validated by setup endpoint
+    "LOCATION_TIMEZONE",
+    "LOCATION_NAME",
+    "LOCATION_REGION",
+    "LOCATION_LAT",
+    "LOCATION_LON",
+    "SNAPSHOT_RETENTION_DAYS",
+    "CLIP_RETENTION_DAYS",
+    "RETENTION_DAYS",
 }
 
 

@@ -181,6 +181,28 @@ def auto_mark_complete_if_preexisting() -> bool:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@router.get("/timezones")
+async def list_timezones():
+    """Return the full IANA timezone list, sorted, grouped by region prefix.
+
+    Used by the setup wizard's location step. Region grouping keeps the
+    dropdown navigable (~600 entries otherwise) — UI puts an <optgroup>
+    per region (Africa, America, Asia, ...).
+    """
+    from zoneinfo import available_timezones
+    zones = sorted(available_timezones())
+    grouped: dict[str, list[str]] = {}
+    for z in zones:
+        # "America/Toronto" -> region="America"; "UTC" -> region="Other"
+        region = z.split("/", 1)[0] if "/" in z else "Other"
+        grouped.setdefault(region, []).append(z)
+    return {
+        "regions": sorted(grouped.keys()),
+        "zones": grouped,
+        "total": len(zones),
+    }
+
+
 @router.get("/status")
 async def get_status():
     """
@@ -309,6 +331,11 @@ async def apply_config(request: Request):
         "target_fps":    "TARGET_FPS",
     }
     updates = {key_map[k]: str(body[k]) for k in body if k in key_map}
+    # Also accept the canonical UPPER_SNAKE_CASE form directly (used by the
+    # location wizard step which has no lowercase aliases worth maintaining).
+    for k in body:
+        if k in ALLOWED_KEYS and k not in updates:
+            updates[k] = str(body[k])
 
     if not updates:
         return {"ok": True, "written": [], "affected_services": [], "error": None}
@@ -332,6 +359,35 @@ async def apply_config(request: Request):
             {"ok": False, "error": "vehicle_model must look like /models/<name>"},
             status_code=400,
         )
+    if "LOCATION_TIMEZONE" in updates:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(updates["LOCATION_TIMEZONE"])
+        except ZoneInfoNotFoundError:
+            return JSONResponse(
+                {"ok": False,
+                 "error": f"invalid timezone {updates['LOCATION_TIMEZONE']!r} — must be a valid IANA name"},
+                status_code=400,
+            )
+    for ret_key, lo, hi in (
+        ("RETENTION_DAYS", 1, 365),
+        ("SNAPSHOT_RETENTION_DAYS", 0, 90),
+        ("CLIP_RETENTION_DAYS", 1, 30),
+    ):
+        if ret_key in updates:
+            try:
+                v = int(updates[ret_key])
+            except (TypeError, ValueError):
+                return JSONResponse(
+                    {"ok": False, "error": f"{ret_key} must be an integer"},
+                    status_code=400,
+                )
+            if not (lo <= v <= hi):
+                return JSONResponse(
+                    {"ok": False, "error": f"{ret_key} must be between {lo} and {hi}"},
+                    status_code=400,
+                )
+            updates[ret_key] = str(v)  # normalize
 
     result = update_env(updates)
     if not result["ok"]:
@@ -348,6 +404,16 @@ async def apply_config(request: Request):
         affected.add("ollama")
     if any(k in updates for k in ("CHAT_MODEL", "VISION_MODEL")):
         affected.add("dashboard")
+    if any(k in updates for k in (
+        "LOCATION_TIMEZONE", "LOCATION_NAME", "LOCATION_REGION",
+        "LOCATION_LAT", "LOCATION_LON",
+        "SNAPSHOT_RETENTION_DAYS", "CLIP_RETENTION_DAYS",
+    )):
+        # Dashboard re-reads TZ_LOCAL + retention env on startup.
+        # Recorder restart is needed for RETENTION_DAYS (recordings).
+        affected.add("dashboard")
+    if "RETENTION_DAYS" in updates:
+        affected.add("recorder")
 
     # Tell the orchestrator
     try:

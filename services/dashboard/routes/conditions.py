@@ -59,8 +59,12 @@ async def get_conditions():
 
     current_period = get_time_period(now)
 
+    import os as _os
     result = {
         "location": LOCATION["name"] + ", " + LOCATION["region"],
+        "timezone": LOCATION["timezone"],  # e.g. "America/Toronto"
+        "tz_offset": now.strftime("%z"),    # e.g. "-0400"
+        "tz_abbr": now.tzname() or "",       # e.g. "EDT"
         "date": now.strftime("%A, %B %d, %Y"),
         "time": now.strftime("%I:%M %p"),
         "current_period": current_period,
@@ -68,6 +72,12 @@ async def get_conditions():
         "sunset": sunset.strftime("%I:%M %p"),
         "day_length": f"{day_h}h {day_m}m",
         "periods": periods,
+        # Retention settings — surfaced so DVR tab + dashboard can show them.
+        "retention": {
+            "snapshots_days": int(_os.getenv("SNAPSHOT_RETENTION_DAYS", "4")),
+            "clips_days": int(_os.getenv("CLIP_RETENTION_DAYS", "3")),
+            "recordings_days": int(_os.getenv("RETENTION_DAYS", "28")),
+        },
         "weather": None,
     }
 

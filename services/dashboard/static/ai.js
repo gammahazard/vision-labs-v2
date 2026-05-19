@@ -970,7 +970,31 @@ async function _ensureRecCameraList() {
     }
 }
 
+// Populate the DVR retention note. Reads /api/conditions which already
+// exposes the three retention settings (recordings, snapshots, clips).
+async function _refreshDvrRetentionNote() {
+    const note = document.getElementById('dvrRetentionNote');
+    if (!note) return;
+    try {
+        const resp = await fetch('/api/conditions');
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        const r = data.retention || {};
+        const rec = r.recordings_days, snap = r.snapshots_days, clip = r.clips_days;
+        const parts = [];
+        if (typeof rec === 'number') parts.push(`recordings kept <strong>${rec} days</strong>`);
+        if (typeof snap === 'number') parts.push(`event snapshots <strong>${snap} days</strong>`);
+        if (typeof clip === 'number') parts.push(`AI/Telegram clips <strong>${clip} days</strong>`);
+        note.innerHTML = parts.length
+            ? `🗑️ Retention: ${parts.join(' · ')}. <span style="opacity:0.7;">Configure in .env (RETENTION_DAYS / SNAPSHOT_RETENTION_DAYS / CLIP_RETENTION_DAYS).</span>`
+            : '';
+    } catch (e) {
+        note.textContent = '';
+    }
+}
+
 window._initRecordingsTab = async function () {
+    _refreshDvrRetentionNote();  // fire-and-forget, doesn't block tab init
     await _ensureRecCameraList();
 
     // Always re-fetch dates so new recordings appear
