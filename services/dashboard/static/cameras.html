@@ -170,8 +170,9 @@
                 <div class="cam-card-title">What happens after I save?</div>
             </div>
             <div style="font-size: 0.85rem; color: #94a3b8; line-height: 1.5;">
-                <p>Saving registers the camera in vision-labs's registry. To <strong>actually start detection</strong> on it, we still need per-camera detector / tracker / ingester services running.</p>
-                <p style="margin-top: 0.5rem;">For your existing camera (<code>cam1</code>), those services are already running from <code>docker-compose.yml</code>. For additional cameras, see <code>REFACTOR_PLAN.md</code> Phase 7b — slot-based service spawning coming next.</p>
+                <p>Saving writes the camera to the <code>cameras:registry</code> hash in Redis. The <strong>orchestrator</strong> service notices and brings up that slot's containers — camera-ingester, pose-detector, vehicle-detector, face-recognizer, tracker, recorder — via <code>docker compose --profile &lt;slot&gt; up -d</code>. No terminal needed.</p>
+                <p style="margin-top: 0.5rem;">The status pill on the camera row updates from <span style="color:#facc15;">pending</span> → <span style="color:#10b981;">running</span> once Docker reports the services healthy (usually 5–15 s). If something fails the pill shows <span style="color:#ef4444;">&lt;action&gt; failed</span> with the last orchestrator error — check <code>docker logs vision-labs-orchestrator-1</code> for detail.</p>
+                <p style="margin-top: 0.5rem;">Pausing flips <code>enabled:false</code> in the registry — the orchestrator tears down that slot's services but keeps the registration so you can re-enable later. Deleting removes both. Available slots: <code>cam1</code>–<code>cam5</code>; the next free one is auto-suggested above.</p>
             </div>
         </div>
     </div>

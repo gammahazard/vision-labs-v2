@@ -297,6 +297,25 @@ async def start_metrics_collector():
                 evt_s = stream_key(_EVT_TMPL, camera_id=cam_id)
                 state_k = stream_key(_STATE_TMPL, camera_id=cam_id)
 
+                # First time we see this camera in the loop, seed all its
+                # cursors to the CURRENT stream tip so we don't retroactively
+                # count the entire history. Without this, adding a camera
+                # at runtime double-counts every event already on the stream.
+                if cam_id not in _last_det_id_by_cam:
+                    try:
+                        for stream, dct in (
+                            (det_s, _last_det_id_by_cam),
+                            (veh_s, _last_veh_id_by_cam),
+                            (evt_s, _last_event_id_by_cam),
+                        ):
+                            tip = r.xrevrange(stream, count=1)
+                            dct[cam_id] = tip[0][0] if tip else "0-0"
+                        logger.info(
+                            f"Metrics collector: seeded cursors for new camera {cam_id}"
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to seed cursors for {cam_id}: {e}")
+
                 # ------ Stream lengths ------
                 try:
                     vl_stream_length.labels(camera=cam_id, stream="frames").set(r.xlen(frame_s))

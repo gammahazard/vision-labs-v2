@@ -2,9 +2,9 @@
 services/dashboard/constants.py — central place for hardcoded config values.
 
 PURPOSE:
-    Single source of truth for Ollama model names, ComfyUI defaults, and
-    other values that previously appeared as literals scattered across 4+
-    files. Override any of these via env vars in docker-compose.yml.
+    Single source of truth for Ollama model names + other values that
+    previously appeared as literals scattered across 4+ files. Override
+    any of these via env vars in docker-compose.yml.
 
 USAGE:
     from constants import CHAT_MODEL, OLLAMA_KEEP_ALIVE

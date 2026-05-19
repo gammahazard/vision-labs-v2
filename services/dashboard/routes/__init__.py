@@ -42,17 +42,20 @@ IDENTITY_KEY: str = ""               # Identity state Redis key (set by server.p
 TELEGRAM_USERS_KEY: str = ""         # Telegram authorized users hash (set by server.py)
 TELEGRAM_ACCESS_LOG: str = ""        # Telegram access log stream (set by server.py)
 
-# Default config values (must match server.py DEFAULT_CONFIG)
+# Default config values seeded into config:{cam_id} when a fresh camera
+# is registered. Single source of truth — server.py imports from here so
+# the two copies can't drift. (We had a 5 vs 10 target_fps mismatch
+# previously; the wrong one would fire whichever module loaded first.)
 DEFAULT_CONFIG = {
     "confidence_thresh": "0.5",
     "iou_threshold": "0.3",
     "lost_timeout": "5.0",
-    "target_fps": "5",
-    "notify_person": "1",
-    "notify_vehicle": "1",
-    "suppress_known": "0",
-    "notify_cooldown": "60",
-    "vehicle_cooldown": "60",
-    "vehicle_confidence_thresh": "0.35",
-    "vehicle_idle_timeout": "90",
+    "target_fps": "10",
+    "notify_person": "1",          # Send Telegram alerts for person detections
+    "notify_vehicle": "1",         # Send Telegram alerts for vehicle events
+    "suppress_known": "0",         # Auto-suppress alerts for known/identified people
+    "notify_cooldown": "60",       # Seconds between person notifications
+    "vehicle_cooldown": "60",      # Seconds between vehicle notifications
+    "vehicle_confidence_thresh": "0.35",  # Vehicle detector YOLO confidence
+    "vehicle_idle_timeout": "90",  # Seconds before vehicle_idle alert
 }

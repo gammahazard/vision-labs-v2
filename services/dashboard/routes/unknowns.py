@@ -101,13 +101,22 @@ async def label_unknown(uid: int, data: dict):
                         except Exception:
                             pass
 
+                # Camera attribution: which camera saw this unknown?
+                # Today the face-recognizer doesn't store camera_id on
+                # unknown rows, so the caller can pass `camera_id` in
+                # the label POST body to attribute the resulting event
+                # correctly. Without it, we fall back to the dashboard's
+                # primary CAMERA_ID — which is wrong for unknowns captured
+                # on cam2+, but matches the historic (buggy) behavior.
+                event_cam_id = (data.get("camera_id") or "").strip() or ctx.CAMERA_ID
+
                 # Store the face crop in Redis so the event poller
                 # sends it as the Telegram notification photo
                 snapshot_key = ""
                 if face_photo:
                     try:
                         ts = int(time.time())
-                        snapshot_key = f"person_snapshot:{ctx.CAMERA_ID}:{ts}"
+                        snapshot_key = f"person_snapshot:{event_cam_id}:{ts}"
                         ctx.r_bin.setex(snapshot_key, 7200, face_photo)  # 2h TTL
                         ctx.logger.info(f"Saved face crop snapshot: {snapshot_key}")
                     except Exception as e:
@@ -115,18 +124,22 @@ async def label_unknown(uid: int, data: dict):
                         snapshot_key = ""
 
                 try:
+                    event_stream = ctx.EVENT_STREAM.replace(ctx.CAMERA_ID, event_cam_id)
                     event = {
                         "event_type": "person_identified",
                         "person_id": f"unknown_{uid}",
                         "identity_name": name,
-                        "camera_id": ctx.CAMERA_ID,
+                        "camera_id": event_cam_id,
                         "action": "labeled",
                         "timestamp": str(time.time()),
                     }
                     if snapshot_key:
                         event["snapshot_key"] = snapshot_key
-                    ctx.r.xadd(ctx.EVENT_STREAM, event)
-                    ctx.logger.info(f"Unknown {uid} labeled as '{name}' — event emitted (snapshot_key={snapshot_key or 'none'})")
+                    ctx.r.xadd(event_stream, event)
+                    ctx.logger.info(
+                        f"Unknown {uid} labeled as '{name}' on {event_cam_id} "
+                        f"— event emitted (snapshot_key={snapshot_key or 'none'})"
+                    )
                 except Exception as e:
                     ctx.logger.warning(f"Failed to emit label event: {e}")
 

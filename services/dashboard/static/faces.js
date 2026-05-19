@@ -368,17 +368,64 @@ async function loadFaces() {
                 ? `${group.faces.length} angles`
                 : "1 angle";
 
+            // Demographics chip: prefer per-name override, else mode-vote
+            // on model output across angles. Same fallback for age (mean).
+            const firstOverride = group.faces.find(f =>
+                f.sex_override != null || f.age_override != null
+            );
+            const overrideSex = firstOverride ? firstOverride.sex_override : null;
+            const overrideAge = firstOverride ? firstOverride.age_override : null;
+
+            let sexCounts = {};
+            let ageSum = 0, ageN = 0;
+            for (const f of group.faces) {
+                if (f.sex) sexCounts[f.sex] = (sexCounts[f.sex] || 0) + 1;
+                if (typeof f.age === "number") { ageSum += f.age; ageN++; }
+            }
+            let bestSex = null, bestCount = 0;
+            for (const [k, v] of Object.entries(sexCounts)) {
+                if (v > bestCount) { bestSex = k; bestCount = v; }
+            }
+            const effectiveSex = overrideSex || bestSex;
+            const effectiveAge = (overrideAge != null) ? overrideAge :
+                (ageN ? (ageSum / ageN) : null);
+            const sexLabel = effectiveSex === "M" ? "M"
+                : effectiveSex === "F" ? "F" : "";
+            const ageBand = (effectiveAge != null)
+                ? `~${Math.round(effectiveAge / 10) * 10}s` : "";
+            const demoLabel = [sexLabel, ageBand].filter(Boolean).join(" · ");
+            const isOverridden = (overrideSex != null || overrideAge != null);
+            const demoTitle = isOverridden
+                ? "Manual override (click edit to change)"
+                : "Estimated from face — model has ~7yr age MAE and weak on kids/seniors";
+            const demoClass = isOverridden ? "face-demo face-demo-pinned" : "face-demo";
+            const demoChip = demoLabel
+                ? `<div class="${demoClass}" title="${demoTitle}">${demoLabel}${isOverridden ? " 📌" : ""}</div>`
+                : "";
+
+            // Stash current override state on the card so the edit modal
+            // can preload it without an extra fetch.
+            card.dataset.name = name;
+            card.dataset.overrideSex = overrideSex || "";
+            card.dataset.overrideAge = (overrideAge != null) ? overrideAge : "";
+
             card.innerHTML = `
-                <img src="/api/faces/${group.latestId}/photo" 
-                     alt="${name}" 
+                <img src="/api/faces/${group.latestId}/photo"
+                     alt="${name}"
                      onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgdmlld0JveD0iMCAwIDQwIDQwIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIGZpbGw9IiMyZDM3NDgiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzk0YTNiOCIgZm9udC1zaXplPSIxOCI+8J+RpDwvdGV4dD48L3N2Zz4='">
                 <div class="face-info">
                     <div class="face-name">${name}</div>
                     <div class="face-date">${angleLabel} · ${dateStr}</div>
+                    ${demoChip}
                 </div>
-                <button class="face-delete" onclick="deleteAllFaces('${name}')" title="Remove all angles">
-                    🗑️
-                </button>
+                <div class="face-actions">
+                    <button class="face-edit" onclick='editDemographics(${JSON.stringify(name)})' title="Edit gender / age">
+                        ✏️
+                    </button>
+                    <button class="face-delete" onclick='deleteAllFaces(${JSON.stringify(name)})' title="Remove all angles">
+                        🗑️
+                    </button>
+                </div>
             `;
 
             _faceEls.gallery.appendChild(card);
@@ -429,3 +476,95 @@ if (_enrollInput) {
         if (e.key === "Enter") startEnrollWizard();
     });
 }
+
+// ---------------------------------------------------------------------------
+// Manual gender/age override modal
+// ---------------------------------------------------------------------------
+// Built lazily on first use, reused thereafter. Lives on the document so it
+// survives gallery re-renders.
+function _ensureDemoModal() {
+    let overlay = document.getElementById("demoEditOverlay");
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = "demoEditOverlay";
+    overlay.className = "modal-overlay";
+    overlay.hidden = true;
+    overlay.innerHTML = `
+        <div class="modal-content" style="max-width: 340px;">
+            <h3>Edit demographics</h3>
+            <p id="demoEditTarget" class="hint"></p>
+            <label>Gender
+                <select id="demoEditSex">
+                    <option value="">Auto (use model)</option>
+                    <option value="M">Male</option>
+                    <option value="F">Female</option>
+                </select>
+            </label>
+            <label>Age
+                <input type="number" id="demoEditAge" min="0" max="120" step="1"
+                       placeholder="Auto (use model)">
+            </label>
+            <p class="wizard-hint" style="font-size: 11px;">
+                Set explicitly when the auto-estimate is wrong (kids / seniors).
+                Leave blank for "use the model's value."
+            </p>
+            <div class="modal-actions">
+                <button id="demoEditCancel" class="btn-tertiary">Cancel</button>
+                <button id="demoEditSave" class="btn-primary">Save</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector("#demoEditCancel").addEventListener("click", () => {
+        overlay.hidden = true;
+    });
+    overlay.querySelector("#demoEditSave").addEventListener("click", async () => {
+        const name = overlay.dataset.name;
+        const sexEl = overlay.querySelector("#demoEditSex");
+        const ageEl = overlay.querySelector("#demoEditAge");
+        const sex = sexEl.value || null;
+        const ageRaw = ageEl.value.trim();
+        const age = ageRaw === "" ? null : Number(ageRaw);
+        if (age !== null && (Number.isNaN(age) || age < 0 || age > 120)) {
+            alert("Age must be a number between 0 and 120.");
+            return;
+        }
+        try {
+            const resp = await fetch(
+                `/api/faces/by_name/${encodeURIComponent(name)}/demographics`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sex, age }),
+                },
+            );
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                alert(`Save failed: ${err.error || resp.status}`);
+                return;
+            }
+            overlay.hidden = true;
+            loadFaces();
+        } catch (e) {
+            console.error("Demographics save error:", e);
+            alert("Save failed — see console.");
+        }
+    });
+    return overlay;
+}
+
+function editDemographics(name) {
+    const overlay = _ensureDemoModal();
+    overlay.dataset.name = name;
+    overlay.querySelector("#demoEditTarget").textContent = `For: ${name}`;
+    // Preload current override from the matching card
+    const card = document.querySelector(`.face-card[data-name="${CSS.escape(name)}"]`);
+    const sex = card ? card.dataset.overrideSex : "";
+    const age = card ? card.dataset.overrideAge : "";
+    overlay.querySelector("#demoEditSex").value = sex || "";
+    overlay.querySelector("#demoEditAge").value = age || "";
+    overlay.hidden = false;
+}
+
+// Expose so the inline onclick handler can call it.
+window.editDemographics = editDemographics;

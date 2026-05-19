@@ -332,3 +332,105 @@
         height: 400px;
     }
 }
+
+/* ─── Tab bar (Grafana / Containers) ─── */
+.mon-tab-bar {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 12px;
+    border-bottom: 1px solid #1f2937;
+}
+
+.mon-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    color: #94a3b8;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 6px 6px 0 0;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mon-tab:hover {
+    background: rgba(96, 165, 250, 0.08);
+    color: #cbd5e1;
+}
+
+.mon-tab--active {
+    background: rgba(96, 165, 250, 0.12);
+    color: #60a5fa;
+    border-color: #1f2937;
+    border-bottom: 1px solid rgba(96, 165, 250, 0.12);
+    margin-bottom: -1px;
+}
+
+/* ─── Containers tab ─── */
+.mon-containers-wrapper {
+    background: #0f172a;
+    border-radius: 0 0 8px 8px;
+    overflow: auto;
+    max-height: 70vh;
+}
+
+.mon-containers-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    color: #cbd5e1;
+}
+
+.mon-containers-table thead th {
+    text-align: left;
+    background: #111827;
+    color: #94a3b8;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 8px 14px;
+    border-bottom: 1px solid #1f2937;
+    position: sticky;
+    top: 0;
+}
+
+.mon-containers-table tbody tr {
+    border-bottom: 1px solid #1a2233;
+}
+
+.mon-containers-table tbody tr:hover {
+    background: rgba(96, 165, 250, 0.04);
+}
+
+.mon-containers-table td {
+    padding: 8px 14px;
+    vertical-align: middle;
+}
+
+.mon-containers-table code {
+    color: #e5e7eb;
+    background: transparent;
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    font-size: 11px;
+}
+
+.mon-containers-table .container-status {
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.container-state {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: lowercase;
+}
+
+.container-state--ok   { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+.container-state--warn { background: rgba(250, 204, 21, 0.15); color: #facc15; border: 1px solid rgba(250, 204, 21, 0.3); }
+.container-state--err  { background: rgba(239, 68, 68, 0.15);  color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+.container-state--muted{ background: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.2); }

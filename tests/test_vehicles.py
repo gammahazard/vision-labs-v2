@@ -410,7 +410,7 @@ class TestTrackerVehicleEvent:
     def _get_events(self, r):
         """Helper to get all events from the fake Redis stream."""
         from streams import EVENT_STREAM, stream_key
-        event_key = stream_key(EVENT_STREAM, camera_id="front_door")
+        event_key = stream_key(EVENT_STREAM, camera_id="cam1")
         return r._streams.get(event_key, [])
 
     def test_vehicle_event_fields_complete(self, tracker_instance):
@@ -434,23 +434,27 @@ class TestTrackerVehicleEvent:
         assert data["vehicle_class"] == "car"
         assert data["vehicle_confidence"] == "0.92"
         assert data["snapshot_key"] != ""  # Should have a snapshot key
-        assert data["camera_id"] == "front_door"
+        assert data["camera_id"] == "cam1"
 
-    def test_vehicle_event_rate_limiting(self, tracker_instance):
-        """Only one vehicle_detected event emitted per VEHICLE_RATE_LIMIT_SEC."""
+    def test_vehicle_event_per_arrival(self, tracker_instance):
+        """Each newly-arriving vehicle emits its own vehicle_detected event.
+
+        The old global rate-limit dropped legitimate events when two
+        vehicles arrived within VEHICLE_RATE_LIMIT_SEC of each other.
+        IoU matching already prevents same-vehicle duplicates, so we
+        now emit per arrival.
+        """
         tracker, r = tracker_instance
 
         # Two different vehicles at different positions (won't IoU match)
         det1 = [{"bbox": [100, 200, 300, 400], "class_name": "truck", "confidence": 0.85}]
         det2 = [{"bbox": [500, 200, 700, 400], "class_name": "car", "confidence": 0.70}]
 
-        # First call — should emit vehicle_detected
         tracker._process_vehicle_detections(det1, 1708000000.0)
-        # Second call immediately with different vehicle — rate-limited
         tracker._process_vehicle_detections(det2, 1708000001.0)
 
         detected_events = [e for _, e in self._get_events(r) if e["event_type"] == "vehicle_detected"]
-        assert len(detected_events) == 1  # Only one, second was rate-limited
+        assert len(detected_events) == 2  # Both arrivals emit
 
     def test_vehicle_snapshot_stored_in_redis(self, tracker_instance):
         """Vehicle snapshot bytes are stored in Redis with snapshot key."""
@@ -466,7 +470,7 @@ class TestTrackerVehicleEvent:
         tracker._process_vehicle_detections(detections, 1708000000.0, jpeg)
 
         # Snapshot should be stored
-        snap_key = "vehicle_snapshot:front_door:1708000000"
+        snap_key = "vehicle_snapshot:cam1:1708000000"
         assert r._keys.get(snap_key) == jpeg
 
     def test_vehicle_event_no_snapshot_without_frame_bytes(self, tracker_instance):
@@ -697,7 +701,7 @@ class TestTrackedVehicleStationary:
         tracker._process_vehicle_detections(det_final, 1708000091.0)
 
         from streams import EVENT_STREAM, stream_key
-        event_key = stream_key(EVENT_STREAM, camera_id="front_door")
+        event_key = stream_key(EVENT_STREAM, camera_id="cam1")
         events = bfr._streams.get(event_key, [])
         event_types = [e["event_type"] for _, e in events]
         assert "vehicle_idle" not in event_types  # Moving → no idle

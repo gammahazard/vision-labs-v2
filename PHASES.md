@@ -8,6 +8,23 @@ Each phase has an **exit criterion** — don't move forward until it's met. Tick
 > - 7a/7c: registry, per-camera detector flags (`detect_persons` / `detect_vehicles` / `detect_faces`), event feed fan-out, AI tool multi-camera, slot-based service definitions in `docker-compose.yml`.
 > - **7b: orchestrator service** that watches `cameras:registry` via the `cameras:events` pub/sub channel and reconciles compose profiles automatically. Adding a camera in the UI now spawns its services without any terminal command. Enable/disable toggle in the cameras page; status badges driven by the new `orchestrator:audit` stream. Slot pool expanded from 1 → 4 (cam2–cam5). The dashboard does NOT have the Docker socket; only the orchestrator does.
 > - The earlier A1 audit finding (vehicle stream key drift in `routes/metrics.py`) is fixed via `ctx.VEHICLE_DET_STREAM`. The B3 tuning constants (`VEHICLE_RATE_LIMIT_SEC`, `ACTION_DEBOUNCE_FRAMES`, `MAX_DETECTION_STREAM_LEN`, etc.) are now env-overridable; see `.env.example`.
+>
+> **Phase G–H (2026-05-18)** — symmetric multi-camera refactor (`front_door` → cam1, 104 Redis keys renamed, 718 events + 1012 identities rewritten, recordings/snapshots moved). Camera-add form locks ID to next-slot. See AUDIT_QUEUE.md for the full audit record.
+>
+> **Phase I — AI overhaul (2026-05-19)** — large accuracy + capability pass on the AI assistant. See CONTEXT.md §9 for the full updated tool catalog. Key changes:
+> - Tool count **18 → 19** (added `find_dvr_segment` — resolves camera+date+time to a `.ts` segment + deep-link URL to the DVR tab).
+> - `capture_snapshot` now auto-runs MiniCPM-V and returns `vision_analysis` field (chat model no longer describes blindly from tracker metadata).
+> - All analytical tools (`query_events`, `query_events_by_date`, `query_event_patterns`, `query_activity_heatmap`, `get_live_scene`, `get_system_status`, `query_notification_history`) gained aggregations: `by_type`, `by_identity`, `top_hours`, `per_camera_hourly`, `by_identity_per_hour`, etc. + `truncated` flags. Eliminates LLM hallucinated breakdowns.
+> - `query_events_by_date` and `query_event_patterns` accept new `category` arg (people / vehicles / faces / actions / security / all) so "only people, no vehicles" questions work.
+> - Default `camera` arg for analytical tools changed `"primary"` → `"all"`.
+> - Tool descriptions list all 10 known event types (was 4).
+> - System prompt rewritten with explicit `⚠️ ABSOLUTE RULE` tool-use banner; chat history window 20 → 6 messages.
+> - Fixed long-standing bug where `build_system_context()` queried unformatted template strings (was reporting "Active zones: 0, Events in stream: 0" always) and showed 117 face entries instead of 8 deduped names.
+> - Pose action classifier (`contracts/actions.py`): removed the "torso-only → sitting" branch that produced false sitting labels on standing people whenever ankles weren't visible.
+> - `ACTION_STICKY_MULTIPLIER` default `2` → `1` (no stickiness).
+> - Vehicle `is_stationary` (`tracker.py`) uses median of rolling window as reference (was using `center_history[0]`, vulnerable to YOLO bbox jitter on parked cars).
+> - `ai.js` markdown renderer now produces clickable links; DVR tab supports deep-link URL params for find_dvr_segment integration.
+> - `VISION_MODEL` env var consolidated (was defined in both `constants.py` and `ai.py`).
 
 ---
 

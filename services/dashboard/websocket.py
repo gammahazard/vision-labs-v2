@@ -146,7 +146,10 @@ def register(app: FastAPI):
         # These used to be function attributes shared across all WebSocket
         # connections, which corrupted labels when two browser tabs were open.
         # Local variables = each connection has its own.
-        sticky_identities = {}  # person_id → name
+        # person_id → {"name": str, "sex": "M"|"F"|None, "age": float|None}
+        # sex/age come from InsightFace's genderage head — ~7yr MAE on age,
+        # ~90-95% on gender. Display only, not used for matching.
+        sticky_identities = {}
         zone_cache = {}
         zone_cache_time = 0.0
 
@@ -266,8 +269,10 @@ def register(app: FastAPI):
                     for ident in identity_names:
                         id_bbox = ident.get("bbox", [])
                         id_name = ident.get("name", "Unknown")
-                        if id_name == "Unknown" or len(id_bbox) != 4:
+                        if len(id_bbox) != 4:
                             continue
+                        id_sex = ident.get("sex")
+                        id_age = ident.get("age")
                         # Match identity bbox to a tracker person via IoU
                         for tp in tracker_persons:
                             tp_bbox = tp.get("bbox", [])
@@ -275,7 +280,16 @@ def register(app: FastAPI):
                             if len(tp_bbox) == 4 and tp_pid:
                                 iou = bbox_iou(id_bbox, tp_bbox)
                                 if iou > 0.2:
-                                    sticky_identities[tp_pid] = id_name
+                                    # Always update demographics; only overwrite
+                                    # name when we have a real match (don't let
+                                    # an "Unknown" stomp a previously matched name)
+                                    prev = sticky_identities.get(tp_pid, {})
+                                    new_name = id_name if id_name != "Unknown" else prev.get("name")
+                                    sticky_identities[tp_pid] = {
+                                        "name": new_name,
+                                        "sex": id_sex if id_sex is not None else prev.get("sex"),
+                                        "age": id_age if id_age is not None else prev.get("age"),
+                                    }
                                     break
 
                     # Prune sticky identities for persons no longer tracked
@@ -308,6 +322,8 @@ def register(app: FastAPI):
 
                             # Match detection bbox to a tracker person for ID + action
                             person_name = None
+                            person_sex = None
+                            person_age = None
                             action = ""
                             for tp in tracker_persons:
                                 tp_bbox = tp.get("bbox", [])
@@ -320,8 +336,11 @@ def register(app: FastAPI):
                                         action = tp.get("action", "")
                                         tp_pid = tp.get("person_id", "")
                                         # Check sticky identity cache
-                                        if tp_pid in sticky_identities:
-                                            person_name = sticky_identities[tp_pid]
+                                        sticky = sticky_identities.get(tp_pid)
+                                        if sticky:
+                                            person_name = sticky.get("name")
+                                            person_sex = sticky.get("sex")
+                                            person_age = sticky.get("age")
                                         break
 
                             # If no sticky identity, check live identity this frame
@@ -335,6 +354,10 @@ def register(app: FastAPI):
                                         )
                                         if iou > 0.3:
                                             person_name = ident.get("name", "Unknown")
+                                            if person_sex is None:
+                                                person_sex = ident.get("sex")
+                                            if person_age is None:
+                                                person_age = ident.get("age")
                                             break
 
                             # Color: cyan for identified, green for unknown
@@ -349,14 +372,29 @@ def register(app: FastAPI):
                             if action and action not in ("unknown", ""):
                                 label += f" · {action}"
 
+                            # Sub-label: gender + age band when we have demographics
+                            sub_label = ""
+                            if person_sex in ("M", "F"):
+                                sub_label = "M" if person_sex == "M" else "F"
+                            if person_age is not None:
+                                try:
+                                    age_int = int(round(float(person_age) / 10.0)) * 10
+                                    band = f"~{age_int}s"
+                                    sub_label = f"{sub_label} {band}".strip()
+                                except (TypeError, ValueError):
+                                    pass
+
                             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                             label_size = cv2.getTextSize(
                                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
                             )[0]
-                            # Background rectangle for label
+                            # Background rectangle for label (above bbox top).
+                            # Clamp label_top to 0 so labels stay visible when
+                            # the person is at the top edge of the frame.
+                            label_top = max(0, y1 - label_size[1] - 10)
                             cv2.rectangle(
                                 frame,
-                                (x1, y1 - label_size[1] - 10),
+                                (x1, label_top),
                                 (x1 + label_size[0] + 4, y1),
                                 color,
                                 -1,
@@ -370,6 +408,31 @@ def register(app: FastAPI):
                                 (0, 0, 0),
                                 2,
                             )
+
+                            # Demographics chip stacked ABOVE the name label
+                            # so it never covers the person's face inside the
+                            # bbox. Smaller font, same color family.
+                            if sub_label and label_top > 0:
+                                sub_size = cv2.getTextSize(
+                                    sub_label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
+                                )[0]
+                                sub_top = max(0, label_top - sub_size[1] - 8)
+                                cv2.rectangle(
+                                    frame,
+                                    (x1, sub_top),
+                                    (x1 + sub_size[0] + 6, label_top),
+                                    color,
+                                    -1,
+                                )
+                                cv2.putText(
+                                    frame,
+                                    sub_label,
+                                    (x1 + 3, label_top - 4),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.45,
+                                    (0, 0, 0),
+                                    1,
+                                )
 
                             # Draw keypoints if available
                             keypoints = det.get("keypoints", [])

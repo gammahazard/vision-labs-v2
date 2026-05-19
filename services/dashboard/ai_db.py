@@ -165,6 +165,22 @@ class AIDB:
         finally:
             conn.close()
 
+    def count_pending_reminders(self) -> int:
+        """How many reminders are queued but not yet sent.
+
+        Used by the AI schedule_reminder tool to refuse new schedules
+        once a threshold is reached (defense against prompt-injection
+        flooding the queue).
+        """
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM reminders WHERE sent = 0"
+            ).fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+
     def mark_reminder_sent(self, reminder_id: int):
         """Mark a reminder as sent."""
         conn = self._get_conn()

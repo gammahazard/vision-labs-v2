@@ -353,6 +353,11 @@ services:
       - CAMERA_ID=cam1
       # RTSP URL comes from cameras:registry. Power users override via env.
       - RTSP_URL=${CAM1_RTSP_URL:-}
+      # Host-network container — must use 127.0.0.1 to reach Redis on
+      # the published host port. Without this the registry-fallback for
+      # RTSP_URL fails and the recorder crash-loops with "RTSP_URL not set".
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
       - RETENTION_DAYS=3
@@ -372,6 +377,9 @@ services:
     environment:
       - CAMERA_ID=cam2
       - RTSP_URL=${CAM2_RTSP_URL:-}
+      # Host-network container — must use 127.0.0.1 to reach Redis.
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
       - RETENTION_DAYS=3
@@ -389,10 +397,18 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
-      - "--web.listen-address=:9090"
+      # Storage size cap as a belt-and-braces alongside retention.time —
+      # series cardinality x time can blow up disk faster than 30d
+      # implies. 5 GB is plenty for our ~500 active series.
+      - "--storage.tsdb.retention.size=5GB"
+      # Bind explicitly to 127.0.0.1. Without this, on `network_mode: host`
+      # we'd listen on every interface (including the LAN), and combined
+      # with `--web.enable-admin-api` below, anyone on the local network
+      # could `DELETE /api/v1/admin/tsdb/delete_series` and wipe metrics.
+      - "--web.listen-address=127.0.0.1:9090"
       # Admin API enables the tombstone/delete endpoints used by
-      # scripts/prometheus-clean-stale-cameras.sh. Listens on localhost only;
-      # not exposed beyond the host.
+      # scripts/prometheus-clean-stale-cameras.sh. Safe to enable now
+      # that we're bound to localhost only.
       - "--web.enable-admin-api"
     restart: unless-stopped
 
@@ -436,6 +452,31 @@ services:
               capabilities: [ gpu ]
     cap_add:
       - SYS_ADMIN
+    restart: unless-stopped
+
+  # Host-level metrics: disk usage, memory, CPU, load, network. The
+  # recordings directory grows quickly with active cameras; this is how
+  # we'll see disk-full coming before it bites. Bound to 127.0.0.1 so
+  # the LAN can't enumerate filesystems / mountpoints.
+  node-exporter:
+    image: prom/node-exporter:latest
+    network_mode: host
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # WSL2 doesn't mark / as shared/slave by default, so we can't use
+      # rslave propagation here. Plain `:ro` works — for our use case
+      # (watching the recordings dir which lives on the same FS as /)
+      # it's enough; we don't need new mounts to propagate in.
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/credentials|var/lib/docker)($$|/)"
+      - "--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$$"
+      - "--web.listen-address=127.0.0.1:9100"
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------

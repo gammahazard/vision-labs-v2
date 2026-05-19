@@ -81,21 +81,9 @@ HD_FRAME_KEY = stream_key(_HD_TMPL, camera_id=CAMERA_ID)
 VEHICLE_DET_STREAM = stream_key(_VEH_DET_TMPL, camera_id=CAMERA_ID)
 DETECTION_FRAME_POSE = stream_key(_DET_FRAME_TMPL, detector_type="pose", camera_id=CAMERA_ID)
 
-# Default config values (written to Redis on first startup if not present)
-DEFAULT_CONFIG = {
-    "confidence_thresh": "0.5",
-    "iou_threshold": "0.3",
-    "lost_timeout": "5.0",
-    "target_fps": "10",
-    # Notification preferences (Phase 6.5)
-    "notify_person": "1",          # Send Telegram alerts for person detections
-    "notify_vehicle": "1",         # Send Telegram alerts for vehicle events
-    "suppress_known": "0",         # Auto-suppress alerts for known/identified people
-    "notify_cooldown": "60",       # Seconds between person notifications
-    "vehicle_cooldown": "60",      # Seconds between vehicle notifications
-    "vehicle_confidence_thresh": "0.35",  # Vehicle detector YOLO confidence
-    "vehicle_idle_timeout": "90",  # Seconds before vehicle_idle alert
-}
+# Default config values are owned by `routes/__init__.py` so server.py and
+# the routers can't drift. Imported here for the startup seed below.
+from routes import DEFAULT_CONFIG  # noqa: E402  (intentional late import)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -170,6 +158,7 @@ from routes.telegram_access import router as telegram_access_router
 from routes.metrics import router as metrics_router, start_metrics_collector
 from routes.recordings import router as recordings_router
 from routes.cameras import router as cameras_router
+from routes.containers import router as containers_router
 from routes.setup import router as setup_router, is_setup_complete, auto_mark_complete_if_preexisting
 
 app.include_router(events_router)
@@ -186,6 +175,7 @@ app.include_router(telegram_access_router)
 app.include_router(metrics_router)
 app.include_router(recordings_router)
 app.include_router(cameras_router)
+app.include_router(containers_router)
 app.include_router(setup_router)
 
 
@@ -242,9 +232,21 @@ async def auth_middleware(request: Request, call_next):
 
 
 # Paths that bypass the setup-gate (so the wizard itself + its assets work).
-_SETUP_GATE_EXEMPT_EXACT = {"/setup.html", "/setup.js", "/setup.css"}
-_SETUP_GATE_EXEMPT_PREFIXES = ("/api/setup/", "/api/auth/", "/static/", "/api/cameras",
-                               "/api/cameras/test-rtsp")
+# Camera endpoints are listed explicitly — the wizard needs `discover`,
+# `test-rtsp`, `onvif-stream-uri`, `next-slot`, plus POST/GET to register
+# the first camera. We do NOT exempt a bare `/api/cameras` prefix because
+# that would also leak the registry listing before setup completes.
+_SETUP_GATE_EXEMPT_EXACT = {
+    "/setup.html",
+    "/setup.js",
+    "/setup.css",
+    "/api/cameras",            # bare list/POST (next-slot upsert during wizard)
+    "/api/cameras/next-slot",  # which slot the wizard should fill next
+    "/api/cameras/discover",   # ONVIF scan
+    "/api/cameras/test-rtsp",  # ffprobe check before saving
+    "/api/cameras/onvif-stream-uri",  # SOAP to a discovered cam
+}
+_SETUP_GATE_EXEMPT_PREFIXES = ("/api/setup/", "/api/auth/", "/static/")
 
 
 def _setup_exempt(path: str) -> bool:

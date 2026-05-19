@@ -349,10 +349,10 @@ async function handleAddCamera(event) {
         const data = await res.json();
         if (data.ok) {
             if (data.activation_cmd) {
-                // Phase 7b: orchestrator service automatically brings up the
-                // matching profile when we publish to cameras:events (which
-                // happens inside the registry upsert). Show provisioning
-                // status and let the badge in the list reflect live state.
+                // Orchestrator service automatically brings up the matching
+                // profile when we publish to cameras:events (which happens
+                // inside the registry upsert). Show provisioning status and
+                // let the badge in the list reflect live state.
                 showMsg(`✓ Saved "${name}" as slot ${id}. Provisioning services — watch the status badge in the list (can take ~30-60s for the first start).`, 'ok');
                 // Poll the status badge aggressively while the orchestrator
                 // brings services up. Container startup can take 30-60s on

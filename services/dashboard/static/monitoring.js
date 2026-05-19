@@ -156,6 +156,103 @@
         }, 8000);
     }
 
+    // ─── Tab switching (Grafana / Containers) ───
+    let _containersTimer = null;
+    const CONTAINERS_POLL_INTERVAL = 5000;
+
+    function showTab(name) {
+        const tabs = {
+            grafana: document.getElementById("tabGrafana"),
+            containers: document.getElementById("tabContainers"),
+        };
+        const panels = {
+            grafana: document.getElementById("panelGrafana"),
+            containers: document.getElementById("panelContainers"),
+        };
+        for (const k of Object.keys(tabs)) {
+            const active = (k === name);
+            if (tabs[k]) {
+                tabs[k].classList.toggle("mon-tab--active", active);
+                tabs[k].setAttribute("aria-selected", active ? "true" : "false");
+            }
+            if (panels[k]) panels[k].hidden = !active;
+        }
+        if (name === "containers") {
+            fetchContainers();
+            if (!_containersTimer) {
+                _containersTimer = setInterval(fetchContainers, CONTAINERS_POLL_INTERVAL);
+            }
+        } else if (_containersTimer) {
+            clearInterval(_containersTimer);
+            _containersTimer = null;
+        }
+    }
+    window._monShowTab = showTab;
+    window._monRefreshContainers = function () { fetchContainers(); };
+
+    function _escHtml(s) {
+        return String(s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    async function fetchContainers() {
+        const wrapper = document.getElementById("monContainersWrapper");
+        const ageEl = document.getElementById("containersAge");
+        if (!wrapper) return;
+        try {
+            const resp = await fetch("/api/containers");
+            const data = await resp.json();
+            if (!data.ok) {
+                wrapper.innerHTML = `<div class="mon-iframe-loading"><span>${_escHtml(data.error || "No data")}</span><p class="mon-iframe-hint">Containers panel needs the orchestrator running.</p></div>`;
+                if (ageEl) ageEl.textContent = "";
+                return;
+            }
+            if (ageEl) {
+                ageEl.textContent = data.stale
+                    ? `(${data.age_seconds.toFixed(0)}s old — stale)`
+                    : `(${data.age_seconds.toFixed(0)}s ago)`;
+            }
+            renderContainers(wrapper, data.containers || []);
+        } catch (e) {
+            wrapper.innerHTML = `<div class="mon-iframe-loading"><span>Network error</span><p class="mon-iframe-hint">${_escHtml(e.message || String(e))}</p></div>`;
+        }
+    }
+
+    function renderContainers(wrapper, containers) {
+        if (!containers.length) {
+            wrapper.innerHTML = `<div class="mon-iframe-loading"><span>No containers reported.</span></div>`;
+            return;
+        }
+        const stateClass = (s) => {
+            const v = (s || "").toLowerCase();
+            if (v === "running") return "ok";
+            if (v === "exited") return "err";
+            if (v === "restarting" || v === "created") return "warn";
+            return "muted";
+        };
+        const rows = containers.map(c => {
+            const sc = stateClass(c.state);
+            const health = c.health ? ` · ${_escHtml(c.health)}` : "";
+            return `<tr>
+                <td><code>${_escHtml(c.name)}</code></td>
+                <td>${_escHtml(c.service)}</td>
+                <td><span class="container-state container-state--${sc}">${_escHtml(c.state || "?")}</span></td>
+                <td class="container-status">${_escHtml(c.status || "")}${health}</td>
+            </tr>`;
+        }).join("");
+        wrapper.innerHTML = `
+            <table class="mon-containers-table">
+                <thead><tr><th>Name</th><th>Service</th><th>State</th><th>Status</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+            <p class="mon-iframe-hint" style="padding: 8px 14px;">
+                Read-only view from the orchestrator. For start/stop/exec/logs, use the
+                <a href="https://localhost:9443" target="_blank" rel="noopener" style="color:#60a5fa;">Portainer</a>
+                button above.
+            </p>`;
+    }
+
     // ─── Init ───
     function init() {
         fetchHealth();

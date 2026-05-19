@@ -5,7 +5,9 @@
 #   Scrapes the dashboard app, Redis exporter, and DCGM GPU exporter.
 #
 # NOTE:
-#   All services use network_mode: host, so we use localhost addresses.
+#   Prometheus + redis-exporter + dcgm-exporter run on network_mode: host
+#   so localhost reaches them directly. The dashboard is on bridge net but
+#   publishes port 8080 on the host, so localhost:8080 also works.
 #
 # USAGE:
 #   Mounted into the Prometheus container by docker-compose.yml.
@@ -30,3 +32,9 @@ scrape_configs:
   - job_name: "gpu"
     static_configs:
       - targets: ["localhost:9400"]
+
+  # Host-level metrics — disk usage (recordings dir!), memory, CPU,
+  # load avg, network throughput.
+  - job_name: "node"
+    static_configs:
+      - targets: ["localhost:9100"]

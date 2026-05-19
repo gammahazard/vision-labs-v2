@@ -136,7 +136,16 @@ def load_face_model():
     return _face_analyzer
 
 
-def get_face_embedding(frame: np.ndarray, bbox: list) -> tuple[np.ndarray, bytes] | None:
+def get_face_embedding(
+    frame: np.ndarray, bbox: list
+) -> tuple[np.ndarray, bytes, list, float, str | None, float | None] | None:
+    """Crop a person bbox and run InsightFace.
+
+    Returns (embedding, jpeg_thumbnail, face_bbox, det_score, sex, age)
+    or None if no face was detected. `sex` is 'M'/'F' from buffalo_l's
+    genderage head (None if attribute missing); `age` is a float year
+    estimate with ~7-year MAE.
+    """
     """
     Extract face embedding from a person's bounding box region.
 
@@ -188,6 +197,15 @@ def get_face_embedding(frame: np.ndarray, bbox: list) -> tuple[np.ndarray, bytes
     # Get the 512-dim embedding
     embedding = face.embedding
 
+    # buffalo_l's genderage head populates these for free during recognition.
+    # Wrap in getattr so a future model swap that lacks the head doesn't crash.
+    raw_sex = getattr(face, "sex", None)
+    if raw_sex is not None:
+        raw_sex = str(raw_sex)  # InsightFace returns 'M'/'F' as plain strings
+    raw_age = getattr(face, "age", None)
+    if raw_age is not None:
+        raw_age = float(raw_age)
+
     # Calculate face bbox in full-frame coordinates (for dashboard overlay)
     fb = face.bbox.astype(int)
     face_bbox = [
@@ -221,7 +239,7 @@ def get_face_embedding(frame: np.ndarray, bbox: list) -> tuple[np.ndarray, bytes
     _, jpg_buf = cv2.imencode(".jpg", face_thumb, [cv2.IMWRITE_JPEG_QUALITY, 90])
     jpeg_bytes = jpg_buf.tobytes()
 
-    return embedding, jpeg_bytes, face_bbox, det_score
+    return embedding, jpeg_bytes, face_bbox, det_score, raw_sex, raw_age
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +262,9 @@ def setup_consumer_group(r: redis.Redis):
 # ---------------------------------------------------------------------------
 face_db: FaceDB = None
 r_global: redis.Redis = None
+# Module-level binary client reused by the enrollment + preview routes.
+# Avoids constructing a fresh connection pool per HTTP request.
+r_bin_global: redis.Redis = None
 
 api = FastAPI(title="Face Recognizer API")
 
@@ -271,8 +292,7 @@ async def preview_face():
     Returns a base64 JPEG thumbnail of the detected face WITHOUT enrolling.
     The dashboard shows this to the user for confirmation before enrolling.
     """
-    # Use binary Redis client for frame data
-    r_bin = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+    r_bin = r_bin_global
 
     # Get the latest frame
     frames = r_bin.xrevrange(FRAME_STREAM, count=1)
@@ -316,7 +336,7 @@ async def preview_face():
             content={"error": "No face detected — try facing the camera directly"},
         )
 
-    _, photo, _, _ = result
+    _, photo, _, _, sex, age = result
     photo_b64 = base64.b64encode(photo).decode("ascii")
 
     return {
@@ -324,6 +344,8 @@ async def preview_face():
         "preview": photo_b64,
         "bbox": largest["bbox"],
         "num_people": len(detections),
+        "sex": sex,
+        "age": age,
     }
 
 
@@ -342,8 +364,7 @@ async def enroll_face(data: dict):
     if not name:
         return JSONResponse(status_code=400, content={"error": "Name is required"})
 
-    # Use binary Redis client for frame data
-    r_bin = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+    r_bin = r_bin_global
 
     # Get the latest frame
     frames = r_bin.xrevrange(FRAME_STREAM, count=1)
@@ -387,8 +408,8 @@ async def enroll_face(data: dict):
             content={"error": "No face detected — try facing the camera directly"},
         )
 
-    embedding, photo, _, _ = result
-    face_id = face_db.enroll(name, embedding, photo)
+    embedding, photo, _, _, sex, age = result
+    face_id = face_db.enroll(name, embedding, photo, sex=sex, age=age)
 
     # Retroactively clear unknowns that match this newly enrolled face
     absorb_result = face_db.match_and_clear_unknowns(name, embedding)
@@ -440,6 +461,40 @@ async def delete_face(face_id: int):
     if deleted:
         return {"success": True, "message": f"Face {face_id} deleted"}
     return JSONResponse(status_code=404, content={"error": "Face not found"})
+
+
+@api.post("/api/faces/by_name/{name}/demographics")
+async def set_face_demographics(name: str, data: dict):
+    """Pin gender + age for every angle of `name`.
+
+    Overrides the model's genderage estimate when it whiffs (common at
+    the extremes — kids and seniors). Pass `null`/missing for either
+    field to revert to the model's value.
+    """
+    sex = data.get("sex")
+    age = data.get("age")
+    if sex is not None and sex not in ("M", "F"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "sex must be 'M', 'F', or null"},
+        )
+    if age is not None:
+        try:
+            age = float(age)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                status_code=400, content={"error": "age must be a number"}
+            )
+        if age < 0 or age > 150:
+            return JSONResponse(
+                status_code=400, content={"error": "age must be 0-150"}
+            )
+    count = face_db.set_demographics_override(name, sex, age)
+    if count == 0:
+        return JSONResponse(
+            status_code=404, content={"error": f"No faces enrolled under '{name}'"}
+        )
+    return {"success": True, "updated": count, "sex": sex, "age": age}
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +712,7 @@ def run():
     4. Compare against all known faces in SQLite
     5. If match found → publish enriched detection with person's name
     """
-    global face_db, r_global
+    global face_db, r_global, r_bin_global
 
     # Initialize face database
     face_db = FaceDB(db_path=DB_PATH, match_threshold=MATCH_THRESHOLD)
@@ -670,6 +725,8 @@ def run():
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
     r.ping()
     r_global = r
+    # Shared binary client for the REST handlers (preview/enroll).
+    r_bin_global = r
     logger.info("Redis connection verified")
 
     # Phase 7c: skip this service if the camera registry says faces aren't wanted.
@@ -796,15 +853,24 @@ def run():
                             })
                             continue
 
-                        embedding, photo, face_bbox, det_score = result
+                        embedding, photo, face_bbox, det_score, sex, age = result
                         match = face_db.match(embedding)
 
                         if match:
+                            # Manual override (if set) wins over the live
+                            # model output — kids and seniors are the usual
+                            # cases where users pin a value.
+                            disp_sex = match.get("sex_override") or sex
+                            disp_age = (match.get("age_override")
+                                        if match.get("age_override") is not None
+                                        else age)
                             identities.append({
                                 "bbox": bbox,
                                 "face_bbox": face_bbox,
                                 "name": match["name"],
                                 "similarity": match["similarity"],
+                                "sex": disp_sex,
+                                "age": disp_age,
                             })
                             faces_matched += 1
                         else:
@@ -813,10 +879,12 @@ def run():
                                 "face_bbox": face_bbox,
                                 "name": "Unknown",
                                 "similarity": 0,
+                                "sex": sex,
+                                "age": age,
                             })
                             # Only save unknowns if face detection is decent quality
                             if det_score >= 0.75:
-                                face_db.save_unknown(embedding, photo)
+                                face_db.save_unknown(embedding, photo, sex=sex, age=age)
                     except Exception as e:
                         logger.warning(f"Error processing detection {det}: {e}")
                         continue

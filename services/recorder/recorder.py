@@ -134,7 +134,20 @@ def cleanup_old_recordings():
         if not os.path.isdir(day_path):
             continue
 
-        # Day folder name is YYYY-MM-DD
+        # Validate the folder name is actually YYYY-MM-DD before considering
+        # it for deletion. A stray non-date folder (operator backup dir,
+        # tmp scratch, etc.) would otherwise sort and silently match the
+        # cutoff comparison — a pure string compare is too dangerous on a
+        # user-visible recordings dir.
+        try:
+            datetime.strptime(day_folder, "%Y-%m-%d")
+        except ValueError:
+            logger.warning(
+                f"Skipping non-date folder in {camera_dir}: '{day_folder}' "
+                f"(retention only touches YYYY-MM-DD directories)"
+            )
+            continue
+
         if day_folder < cutoff_str:
             try:
                 shutil.rmtree(day_path)
@@ -211,10 +224,16 @@ def record_segments() -> bool:
     ]
 
     try:
+        # stderr=DEVNULL: we set -loglevel warning above, and there is no
+        # reader thread draining the stderr pipe. On a long-running recorder
+        # the ~64 KB pipe buffer fills with warnings (RTSP reconnect notices,
+        # decoder hints) and blocks ffmpeg's write() — silently stalling the
+        # whole recording. We don't surface ffmpeg's stderr anywhere, so
+        # discard it cleanly.
         _ffmpeg_proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
         logger.info(f"ffmpeg started (PID {_ffmpeg_proc.pid})")

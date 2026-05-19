@@ -41,6 +41,16 @@ async function loadUnknowns() {
             const lastSeen = u.last_seen ?
                 new Date(u.last_seen + "Z").toLocaleString() : "Unknown";
 
+            // Demographics chip from buffalo_l genderage head.
+            const sexLabel = u.sex === "M" ? "M" : u.sex === "F" ? "F" : "";
+            const ageBand = (typeof u.age === "number")
+                ? `~${Math.round(u.age / 10) * 10}s`
+                : "";
+            const demoLabel = [sexLabel, ageBand].filter(Boolean).join(" · ");
+            const demoChip = demoLabel
+                ? `<div class="face-demo" title="Estimated from face — ~7yr age MAE, ~95% gender">${demoLabel}</div>`
+                : "";
+
             card.innerHTML = `
                 <img src="/api/unknowns/${u.id}/photo"
                      alt="Unknown person"
@@ -48,6 +58,7 @@ async function loadUnknowns() {
                 <div class="face-info">
                     <div class="face-name unknown-label">Unknown #${u.id}</div>
                     <div class="face-date">Seen ${u.sighting_count}× · Last ${lastSeen}</div>
+                    ${demoChip}
                 </div>
                 <div class="unknown-actions">
                     <button class="label-btn" onclick="labelUnknown(${u.id})" title="Assign name">

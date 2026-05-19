@@ -56,20 +56,85 @@ async def get_config(camera: str = ""):
         return JSONResponse(status_code=503, content={"error": "Redis unavailable"})
 
 
+# Per-key validation: type + range. Reject anything out of range BEFORE
+# writing to Redis so a misclick in the UI doesn't crash a detector with
+# `float("abc")` or `iou_threshold=999`. Keys not in this dict were
+# already filtered out of the allowlist above.
+_CONFIG_VALIDATORS = {
+    "confidence_thresh": ("float", 0.0, 1.0),
+    "iou_threshold": ("float", 0.0, 1.0),
+    "lost_timeout": ("float", 0.5, 600.0),
+    "target_fps": ("float", 1.0, 60.0),
+    "notify_person": ("bool", None, None),
+    "notify_vehicle": ("bool", None, None),
+    "suppress_known": ("bool", None, None),
+    "notify_cooldown": ("float", 0.0, 86400.0),
+    "vehicle_cooldown": ("float", 0.0, 86400.0),
+    "min_keypoints": ("int", 0, 17),
+    "kp_confidence_thresh": ("float", 0.0, 1.0),
+    "vehicle_confidence_thresh": ("float", 0.0, 1.0),
+    "vehicle_idle_timeout": ("float", 1.0, 86400.0),
+}
+
+
+def _validate_config_value(key: str, raw) -> tuple[bool, str]:
+    """Validate + coerce a single config value.
+
+    Returns `(ok, stringified_value_or_error_message)`. Strings (the
+    Redis-native storage type) are produced for the success path so the
+    caller can HSET them directly.
+    """
+    rule = _CONFIG_VALIDATORS.get(key)
+    if rule is None:
+        return False, f"unknown key: {key}"
+    kind, lo, hi = rule
+    try:
+        if kind == "bool":
+            # Accept 0/1, "0"/"1", "true"/"false", bool.
+            s = str(raw).strip().lower()
+            if s in ("1", "true", "yes", "on"):
+                return True, "1"
+            if s in ("0", "false", "no", "off"):
+                return True, "0"
+            return False, f"{key}: expected boolean"
+        if kind == "int":
+            v = int(float(raw))
+            if v < lo or v > hi:
+                return False, f"{key}: must be {lo}-{hi}"
+            return True, str(v)
+        if kind == "float":
+            v = float(raw)
+            if v < lo or v > hi:
+                return False, f"{key}: must be {lo}-{hi}"
+            return True, str(v)
+    except (TypeError, ValueError):
+        return False, f"{key}: invalid value {raw!r}"
+    return False, f"{key}: validator error"
+
+
 @router.post("/config")
 async def update_config(config: dict, camera: str = ""):
     """Update per-camera detector/tracker config. Detectors poll the hash and
-    apply changes without a restart."""
+    apply changes without a restart. Values are type-checked + range-checked
+    before being written so a bad input can't crash a detector."""
     try:
         config_key, _, _, _, _ = _resolve_keys(camera)
-        allowed_keys = {
-            "confidence_thresh", "iou_threshold", "lost_timeout", "target_fps",
-            "notify_person", "notify_vehicle", "suppress_known",
-            "notify_cooldown", "vehicle_cooldown",
-            "min_keypoints", "kp_confidence_thresh",
-            "vehicle_confidence_thresh", "vehicle_idle_timeout",
-        }
-        filtered = {k: str(v) for k, v in config.items() if k in allowed_keys}
+        filtered: dict[str, str] = {}
+        errors: list[str] = []
+        for k, v in config.items():
+            if k not in _CONFIG_VALIDATORS:
+                continue  # silently drop unknown keys (existing behavior)
+            ok, result = _validate_config_value(k, v)
+            if ok:
+                filtered[k] = result
+            else:
+                errors.append(result)
+
+        if errors:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "validation failed", "details": errors},
+            )
 
         if filtered:
             ctx.r.hset(config_key, mapping=filtered)

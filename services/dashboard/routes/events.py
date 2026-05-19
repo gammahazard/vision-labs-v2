@@ -10,6 +10,7 @@ PURPOSE:
 
 import os
 import json
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -228,8 +229,21 @@ def resolve_event_snapshot_path(event_id: str, camera_id: str = "") -> str | Non
       3. {SNAPSHOT_DIR}/{event_id}.jpg (legacy flat layout, pre-fan-out)
 
     Returns the first path that exists, or None.
+
+    The `event_id` comes from a URL path parameter, so we MUST refuse
+    anything that isn't a real Redis stream id (`<unix-ms>-<seq>`) — a
+    crafted id like `../../etc/foo` would otherwise let the caller read
+    any `*.jpg` on the dashboard container's filesystem.
     """
+    # Redis stream ids are always `<digits>-<digits>`. Old/manual events
+    # in the journal may use `<digits>.<digits>` — accept both shapes.
+    if not re.fullmatch(r"\d+[-.]\d+", event_id or ""):
+        return None
     safe_id = event_id.replace(":", "-")
+    # Also defence-in-depth: even after the regex check, ensure no path
+    # separators slipped through (e.g. via decoded URL chars).
+    if "/" in safe_id or "\\" in safe_id or ".." in safe_id:
+        return None
 
     if camera_id:
         p = os.path.join(SNAPSHOT_DIR, camera_id, f"{safe_id}.jpg")

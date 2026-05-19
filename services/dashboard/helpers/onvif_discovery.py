@@ -38,6 +38,7 @@ import logging
 import re
 import socket
 import time
+import urllib.parse
 import uuid
 from typing import Optional
 
@@ -94,11 +95,14 @@ def _parse_match(body: str) -> dict:
     scopes = " ".join(scope_tags)
 
     # Standard ONVIF scope URIs: onvif://www.onvif.org/<category>/<value>
+    # Per ONVIF spec the <value> is URL-encoded (spaces become %20), so
+    # decode it so the UI shows "Logitech G-Series Webcam" instead of
+    # "Logitech%20G-Series%20Webcam".
     def _scope(category: str) -> Optional[str]:
         m = re.search(
             rf"onvif://www\.onvif\.org/{category}/([^\s]+)", scopes
         )
-        return m.group(1) if m else None
+        return urllib.parse.unquote(m.group(1)) if m else None
 
     out["name"] = _scope("name")
     out["hardware"] = _scope("hardware")

@@ -16,9 +16,12 @@ TOOLS (18):
     show_faces, analyze_image
 """
 
+import collections
 import os
 import json
 import logging
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -27,6 +30,44 @@ import routes.ai_state as ai_state
 
 logger = logging.getLogger("dashboard.ai")
 TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+
+# Every event_type string emitted somewhere in the pipeline. Used so type-aggregating
+# tools can pre-populate zero counts — the LLM should never have to guess whether
+# "no entry for vehicle_idle" means "zero occurred" vs "type doesn't exist."
+KNOWN_EVENT_TYPES = (
+    "person_appeared",
+    "person_left",
+    "person_identified",
+    "vehicle_detected",
+    "vehicle_left",
+    "vehicle_idle",
+    "face_enrolled",
+    "face_reconciled",
+    "action_changed",
+    "unauthorized_access",
+)
+KNOWN_EVENT_TYPES_DOC = ", ".join(KNOWN_EVENT_TYPES)
+
+# Event categories — semantic buckets the LLM can filter by without needing
+# to know every event_type string.
+EVENT_CATEGORIES = {
+    "people": ("person_appeared", "person_left", "person_identified"),
+    "vehicles": ("vehicle_detected", "vehicle_left", "vehicle_idle"),
+    "faces": ("face_enrolled", "face_reconciled", "person_identified"),
+    "actions": ("action_changed",),
+    "security": ("unauthorized_access",),
+    "all": KNOWN_EVENT_TYPES,
+}
+
+
+def _category_matches(event_type: str, category: str) -> bool:
+    """Check if an event_type belongs to a category. Empty/all => match everything."""
+    if not category or category == "all":
+        return True
+    allowed = EVENT_CATEGORIES.get(category)
+    if allowed is None:
+        return True  # unknown category — don't filter (fail-open)
+    return event_type in allowed
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +107,32 @@ def _camera_name(camera_id: str) -> str:
     return _camreg.camera_friendly_name(camera_id)
 
 
+# Hash keys that should never end up in an LLM tool result. Anything
+# matching one of these substrings (case-insensitive) gets replaced with
+# "[redacted]" before the dict is JSON-serialized.
+_REDACT_KEY_FRAGMENTS = ("password", "token", "secret", "rtsp", "url",
+                          "api_key", "credential")
+
+
+def _redact_sensitive(d: dict | None) -> dict:
+    """Strip sensitive values from a Redis hash before showing to the LLM.
+
+    The LLM's tool context flows into its reply, and the reply flows to
+    Telegram, the browser, and chat history. We don't want RTSP URLs
+    with `user:pass@` baked into any of those surfaces.
+    """
+    if not d:
+        return {}
+    out: dict = {}
+    for k, v in d.items():
+        kl = str(k).lower()
+        if any(frag in kl for frag in _REDACT_KEY_FRAGMENTS):
+            out[k] = "[redacted]"
+        else:
+            out[k] = v
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Tool definitions for the LLM
 # ---------------------------------------------------------------------------
@@ -74,7 +141,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "query_events",
-            "description": "Search recent security events (person detected, person identified, vehicle idle). Returns the most recent events. Pass `camera` to filter to one camera, or 'all' for every camera (default = primary).",
+            "description": "Search the most recent security events (newest first, max 50). **Defaults to camera='all' if not specified.** Returns events plus by_type and by_identity aggregations so you don't have to count manually. NOTE: only shows the latest events — use query_events_by_date for a full day's totals.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -84,7 +151,7 @@ TOOLS = [
                     },
                     "event_type": {
                         "type": "string",
-                        "description": "Filter by event type: person_appeared, person_identified, person_left, vehicle_idle. Leave empty for all.",
+                        "description": f"Filter by event type. Known types: {KNOWN_EVENT_TYPES_DOC}. Leave empty for all.",
                     },
                     "camera": {
                         "type": "string",
@@ -112,7 +179,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "send_telegram",
-            "description": "Send a message to the user via Telegram right now. Can include a live camera snapshot or a 5-second video clip.",
+            "description": "Send a message to the user via Telegram right now. Can include a live camera snapshot or a 5-second video clip. When the user asks for media from a specific camera, pass `camera`; otherwise defaults to primary.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -127,6 +194,10 @@ TOOLS = [
                     "include_clip": {
                         "type": "boolean",
                         "description": "If true, capture and attach a 5-second video clip from the camera.",
+                    },
+                    "camera": {
+                        "type": "string",
+                        "description": "Camera id (e.g. 'cam1') for the snapshot/clip. Default = primary. Ignored for text-only messages.",
                     },
                 },
                 "required": ["message"],
@@ -205,7 +276,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "query_events_by_date",
-            "description": "Query events filtered by date. Use this to answer questions like 'how many events today' or 'what happened yesterday'. Pass `camera` to filter to one camera, or 'all' for every camera (default = primary).",
+            "description": "Query events filtered by date. **Defaults to camera='all', category='all'.** Use 'category' to filter — when user says 'only people / no vehicles / just faces', pass category='people'. Use 'event_type' to filter to ONE specific event type. Returns: total_events, by_type, by_identity, unique_people_identified, latest_events, per_camera with each camera's own by_type and by_identity. Use total_events for 'how many detections', by_identity for 'who was seen', per_camera.<cam>.by_identity for 'which camera saw which person'. NEVER invent identity counts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -215,7 +286,12 @@ TOOLS = [
                     },
                     "event_type": {
                         "type": "string",
-                        "description": "Optional: filter by event type (person_appeared, person_identified, person_left, vehicle_idle)",
+                        "description": f"Optional: filter by ONE event type. Known types: {KNOWN_EVENT_TYPES_DOC}. Use 'category' instead if user said 'people' or 'vehicles' generally.",
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["people", "vehicles", "faces", "actions", "security", "all"],
+                        "description": "Filter by category. 'people' = person events only. 'vehicles' = vehicle events only. 'faces' = face events + person_identified. Default 'all'.",
                     },
                     "camera": {
                         "type": "string",
@@ -284,7 +360,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "query_event_patterns",
-            "description": "Analyze event patterns and trends. Groups events by hour of day, by type, or calculates daily averages. Use for questions like 'what's the busiest time of day' or 'how many people per day this week'. Pass `camera` to scope to one camera, or 'all' to aggregate across every camera (default = primary).",
+            "description": "Analyze event patterns and trends. **Defaults to camera='all', category='all'.** Use 'category' to filter — when user says 'only people / no vehicles / just faces', pass category='people' (person_appeared, person_left, person_identified) NOT category='all'. Hourly analysis returns: busiest_hour, top_hours (top 5 with full breakdown), active_window (first→last non-zero hour), hourly_breakdown (all 24 hrs), by_type_per_hour, by_identity_per_hour, per_camera_hourly. Use 'date' arg to scope to ONE day (today/yesterday/YYYY-MM-DD); use 'days_back' for rolling window. The 'scope' field in the response echoes the active filters back to you.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -293,13 +369,22 @@ TOOLS = [
                         "enum": ["hourly", "daily", "type_breakdown"],
                         "description": "Type of analysis: 'hourly' (by hour of day), 'daily' (by day), 'type_breakdown' (events by type)",
                     },
+                    "date": {
+                        "type": "string",
+                        "description": "Optional: scope to ONE day — 'today', 'yesterday', or YYYY-MM-DD. Overrides days_back if set.",
+                    },
                     "days_back": {
                         "type": "integer",
-                        "description": "How many days of history to analyze (default 7, max 30)",
+                        "description": "How many days of history to analyze when 'date' is not set (default 7, max 30)",
                     },
                     "camera": {
                         "type": "string",
-                        "description": "Camera id to analyze (e.g. 'cam1', 'cam2'), or 'all' for every camera. Default = primary camera.",
+                        "description": "Camera id (e.g. 'cam1') or 'all' for every camera. Default = 'all'.",
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["people", "vehicles", "faces", "actions", "security", "all"],
+                        "description": "Filter events by category. 'people' = person events only (appearances/identifications/departures, NO faces or vehicles). 'vehicles' = vehicle events only. 'faces' = face enrollments + reconciliations + identifications. Default = 'all'.",
                     },
                 },
                 "required": ["analysis_type"],
@@ -310,13 +395,17 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "capture_snapshot",
-            "description": "Capture the current camera frame and show it in the chat. Returns context data (weather, scene) for you to describe. Pass `camera` to pick one (default = primary).",
+            "description": "Capture the current camera frame, show it in the chat, AND run the MiniCPM-V vision model on it to get a real visual description. Use this for ANY 'what do you see / what's happening / who is there / what are they doing' question — it both displays the image and tells you what's actually visible. Returns vision_analysis (visual description), context (weather + tracker state), source_camera. Pass `camera` to pick one (default = primary). Pass describe=false to skip vision (~3s faster) only if you just need the picture without a description.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "camera": {
                         "type": "string",
                         "description": "Camera id to capture (e.g. 'cam1', 'cam2'). Omit for the primary camera.",
+                    },
+                    "describe": {
+                        "type": "boolean",
+                        "description": "If true (default), also run MiniCPM-V on the frame and return its description in vision_analysis. Set false to skip for ~3s faster response when you only need the image.",
                     },
                 },
                 "required": [],
@@ -327,7 +416,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "capture_clip",
-            "description": "Record a 5-second video clip from a live camera and show it in the chat. Use when the user asks to see a clip, video, or recording of what's happening now. Pass `camera` to pick one (default = primary).",
+            "description": "Record a 5-second LIVE video clip from a camera and show it in the chat. Use for 'show me what's happening right now'. For OLDER footage from past events (DVR), use find_dvr_segment instead — it returns a link to the right recording. Pass `camera` to pick one (default = primary).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -343,14 +432,43 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "find_dvr_segment",
+            "description": "Find the DVR (.ts) recording segment that covers a given camera + date + time, and return a deep-link URL so the user can open it in the DVR tab. Use this when the user asks to see/review past footage (e.g. 'show me yesterday's busiest hour', 'I want to see the clip from 1pm'). DOES NOT extract or send video — returns a clickable URL to the existing DVR tab. Recommended workflow: (1) call query_event_patterns to find the busy hour, (2) call this with that hour as `time`, (3) format the response's deep_link as a markdown link for the user to click.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "camera": {
+                        "type": "string",
+                        "description": "Camera id (e.g. 'cam1'). Omit for primary camera. Must be a SINGLE camera, not 'all'.",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Date — 'today', 'yesterday', or YYYY-MM-DD. Default 'today'.",
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "Hour or time to find (e.g. '13:00', '1:00 PM', '17'). Omit to list all segments for that day.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "query_notification_history",
-            "description": "Get recent Telegram notifications that were sent by the system. Shows what alerts the user has received.",
+            "description": "Get recent Telegram notifications that were sent by the system. Returns notifications plus by_type and by_identity aggregations. Pass `camera` to scope to one camera or 'all' (default = 'all').",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "count": {
                         "type": "integer",
                         "description": "Number of recent notifications to return (default 20, max 50)",
+                    },
+                    "camera": {
+                        "type": "string",
+                        "description": "Camera id (e.g. 'cam1') or 'all'. Default = 'all'.",
                     },
                 },
                 "required": [],
@@ -361,7 +479,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "query_activity_heatmap",
-            "description": "Get a day-of-week × hour-of-day activity heatmap. Shows which days and hours are busiest, weekend vs weekday comparison, and peak activity windows. Pass `camera` to scope to one camera, or 'all' to aggregate across every camera (default = primary).",
+            "description": "Get a day-of-week × hour-of-day activity heatmap. Shows which days and hours are busiest, weekend vs weekday comparison, and peak activity windows. **Defaults to camera='all' if not specified.**",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -458,6 +576,8 @@ async def execute_tool(name: str, args: dict) -> str:
             return await _tool_show_faces(args)
         elif name == "analyze_image":
             return await _tool_analyze_image(args)
+        elif name == "find_dvr_segment":
+            return _tool_find_dvr_segment(args)
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except Exception as e:
@@ -469,11 +589,12 @@ async def execute_tool(name: str, args: dict) -> str:
 # Tool implementations
 # ---------------------------------------------------------------------------
 def _tool_query_events(args: dict) -> str:
-    """Query recent events from Redis. Supports multi-camera via `camera` arg."""
+    """Query recent events from Redis. Defaults to ALL cameras when no camera arg
+    is passed (analytical tool — cross-camera is the useful answer)."""
     from contracts.streams import EVENT_STREAM as _EVT_TMPL
     count = min(int(args.get("count", 20)), 50)
     event_type = args.get("event_type", "")
-    camera_arg = args.get("camera", "")
+    camera_arg = args.get("camera", "all")
 
     cam_ids = _resolve_camera(camera_arg)
     if not cam_ids:
@@ -494,7 +615,26 @@ def _tool_query_events(args: dict) -> str:
                 all_events.append(evt)
         # Sort newest first across cameras, then cap to `count`
         all_events.sort(key=lambda e: e.get("event_id", ""), reverse=True)
-        return json.dumps({"events": all_events[:count], "total": len(all_events[:count]), "cameras_queried": cam_ids})
+        capped = all_events[:count]
+        # Aggregate so the LLM doesn't hallucinate breakdowns from the events list
+        by_type = {}
+        by_identity = {}
+        for evt in capped:
+            t = evt.get("event_type", "unknown")
+            by_type[t] = by_type.get(t, 0) + 1
+            if t == "person_identified":
+                name = evt.get("identity_name") or "<unknown>"
+                by_identity[name] = by_identity.get(name, 0) + 1
+        return json.dumps({
+            "events": capped,
+            "showing_count": len(capped),
+            "limit_requested": count,
+            "by_type": by_type,
+            "by_identity": by_identity,
+            "unique_people_identified": len(by_identity),
+            "cameras_queried": cam_ids,
+            "note": "This shows only the most recent events (max 50). Use query_events_by_date for a full day's totals.",
+        })
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -550,12 +690,25 @@ def _tool_get_live_scene() -> str:
     if not cameras_data:
         return json.dumps({"scene": "No camera data available — registry empty or tracker not running."})
 
+    # Aggregate identified people across every camera so the LLM can answer
+    # "who's here right now" without having to scan per-camera blocks itself.
+    identified_set = set()
+    for cb in cameras_data:
+        for ident in cb.get("identities", []) or []:
+            if isinstance(ident, dict):
+                name = ident.get("name") or ident.get("identity_name")
+                if name and name != "unknown":
+                    identified_set.add(name)
+    identified_people = sorted(identified_set)
+
     # Preserved single-camera shape for backward compat with prompts that may
     # assume `num_people`/`persons` at top level — populate from the primary cam.
     primary_block = next((c for c in cameras_data if c["id"] == ctx.CAMERA_ID), cameras_data[0])
     out = {
         "cameras": cameras_data,
         "total_people_across_cameras": total_people,
+        "identified_people_now": identified_people,
+        "identified_people_count": len(identified_people),
         "num_people": primary_block.get("num_people", 0),
     }
     if "persons" in primary_block:
@@ -587,23 +740,41 @@ async def _tool_query_unknowns() -> str:
             if isinstance(face_list, list):
                 enrolled_names = [f.get("name", "?") for f in face_list if isinstance(f, dict)]
 
+        # Dedupe enrolled names — face-recognizer returns one row per photo
+        unique_enrolled = sorted(set(enrolled_names))
+        SHOW_LIMIT = 20
+        shown = unknowns[:SHOW_LIMIT]
         return json.dumps({
-            "enrolled_count": len(enrolled_names),
-            "enrolled_names": enrolled_names,
+            "enrolled_people_count": len(unique_enrolled),
+            "enrolled_names": unique_enrolled,
+            "enrolled_photo_count": len(enrolled_names),
             "unknown_count": len(unknowns),
-            "unknowns": [{"id": f.get("id", "?"), "first_seen": f.get("first_seen", "?")} for f in unknowns[:20]],
+            "unknowns_shown": len(shown),
+            "truncated": len(unknowns) > SHOW_LIMIT,
+            "unknowns": [{"id": f.get("id", "?"), "first_seen": f.get("first_seen", "?")} for f in shown],
+            "note": (
+                f"Showing latest {len(shown)} of {len(unknowns)} unknown faces."
+                if len(unknowns) > SHOW_LIMIT
+                else f"All {len(unknowns)} unknown faces shown."
+            ),
         })
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
 def _tool_query_events_by_date(args: dict) -> str:
-    """Query events filtered by date. Multi-camera aware."""
+    """Query events filtered by date. Multi-camera aware — defaults to ALL cameras
+    when no camera is specified (analytical tool; cross-camera is the useful answer)."""
     from contracts.streams import EVENT_STREAM as _EVT_TMPL
 
     date_str = args.get("date", "today")
     event_type = args.get("event_type", "")
-    camera_arg = args.get("camera", "")
+    camera_arg = args.get("camera", "all")
+    category = (args.get("category") or "all").strip().lower()
+    if category not in EVENT_CATEGORIES:
+        return json.dumps({
+            "error": f"Unknown category '{category}'. Valid: {list(EVENT_CATEGORIES.keys())}",
+        })
 
     cam_ids = _resolve_camera(camera_arg)
     if not cam_ids:
@@ -643,29 +814,42 @@ def _tool_query_events_by_date(args: dict) -> str:
                 evt["camera"] = cid
                 if event_type and evt.get("event_type") != event_type:
                     continue
+                if not _category_matches(evt.get("event_type", ""), category):
+                    continue
                 cam_events.append(evt)
             type_counts = {}
+            identity_counts = {}
             for evt in cam_events:
                 t = evt.get("event_type", "unknown")
                 type_counts[t] = type_counts.get(t, 0) + 1
+                if t == "person_identified":
+                    name = evt.get("identity_name") or "<unknown>"
+                    identity_counts[name] = identity_counts.get(name, 0) + 1
             per_camera[cid] = {
                 "name": _camera_name(cid),
                 "total_events": len(cam_events),
                 "by_type": type_counts,
+                "by_identity": identity_counts,
             }
             all_events.extend(cam_events)
 
         # Aggregate totals
         agg_type_counts = {}
+        agg_identity_counts = {}
         for evt in all_events:
             t = evt.get("event_type", "unknown")
             agg_type_counts[t] = agg_type_counts.get(t, 0) + 1
+            if t == "person_identified":
+                name = evt.get("identity_name") or "<unknown>"
+                agg_identity_counts[name] = agg_identity_counts.get(name, 0) + 1
 
         result = {
             "date": str(target_date),
             "cameras_queried": cam_ids,
             "total_events": len(all_events),
             "by_type": agg_type_counts,
+            "by_identity": agg_identity_counts,
+            "unique_people_identified": len(agg_identity_counts),
             "latest_events": all_events[-10:] if len(all_events) > 10 else all_events,
         }
         if len(cam_ids) > 1:
@@ -778,6 +962,16 @@ def _tool_browse_vehicles(args: dict) -> str:
         target_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
     else:
         target_date = date_str
+
+    # Date arg is interpolated into filesystem paths (`{snapshot_dir}/
+    # {cam}/{date}`) and into URLs the chat UI renders. A prompt-injected
+    # `date="../../etc"` would otherwise let the LLM enumerate paths.
+    # Force the date to YYYY-MM-DD before any path operation.
+    import re as _re
+    if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", target_date):
+        return json.dumps({
+            "error": f"Invalid date format '{target_date}'. Use YYYY-MM-DD or 'today'/'yesterday'.",
+        })
 
     snapshot_dir = ctx.VEHICLE_SNAPSHOT_DIR or "/data/snapshots/vehicles"
 
@@ -892,7 +1086,16 @@ def _tool_query_event_patterns(args: dict) -> str:
 
     analysis_type = args.get("analysis_type", "hourly")
     days_back = min(int(args.get("days_back", 7)), 30)
-    camera_arg = args.get("camera", "")
+    # Analytical tool — default to all cameras when omitted
+    camera_arg = args.get("camera", "all")
+    # Optional: scope to a single calendar day (overrides days_back)
+    date_str = args.get("date", "").strip()
+    # Optional: filter to a category (people / vehicles / faces / actions / security / all)
+    category = (args.get("category") or "all").strip().lower()
+    if category not in EVENT_CATEGORIES:
+        return json.dumps({
+            "error": f"Unknown category '{category}'. Valid: {list(EVENT_CATEGORIES.keys())}",
+        })
 
     cam_ids = _resolve_camera(camera_arg)
     if not cam_ids:
@@ -903,50 +1106,129 @@ def _tool_query_event_patterns(args: dict) -> str:
 
     # Calculate time range (timezone-aware for correct local day boundaries)
     now = datetime.now(TZ_LOCAL)
-    start_date = now - timedelta(days=days_back)
-    start_ms = int(start_date.timestamp() * 1000)
-    end_ms = int(now.timestamp() * 1000)
+    if date_str:
+        # Single-day scope — use local midnight boundaries
+        if date_str == "today":
+            target_date = now.date()
+        elif date_str == "yesterday":
+            target_date = (now - timedelta(days=1)).date()
+        else:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                return json.dumps({"error": f"Invalid date '{date_str}'. Use YYYY-MM-DD, 'today', or 'yesterday'."})
+        day_start = datetime.combine(target_date, datetime.min.time(), tzinfo=TZ_LOCAL)
+        day_end = datetime.combine(target_date, datetime.max.time(), tzinfo=TZ_LOCAL)
+        start_ms = int(day_start.timestamp() * 1000)
+        end_ms = int(day_end.timestamp() * 1000)
+        scope_label = f"date={target_date}"
+    else:
+        start_date = now - timedelta(days=days_back)
+        start_ms = int(start_date.timestamp() * 1000)
+        end_ms = int(now.timestamp() * 1000)
+        scope_label = f"last {days_back} days"
+    if category != "all":
+        scope_label += f" · category={category} (event_types={list(EVENT_CATEGORIES[category])})"
 
     try:
-        # Aggregate events across all requested cameras
+        # Aggregate events across all requested cameras, but also keep per-camera
+        # buckets so we can return per_camera_hourly etc.
+        # Apply category filter at fetch time so all downstream aggregations
+        # automatically respect it.
         events_raw = []
+        events_per_cam: dict[str, list] = {}
         for cid in cam_ids:
             evt_key = _camera_key(_EVT_TMPL, cid)
-            events_raw.extend(
-                ctx.r.xrange(evt_key, min=f"{start_ms}-0", max=f"{end_ms}-0")
-            )
+            cam_evts_all = ctx.r.xrange(evt_key, min=f"{start_ms}-0", max=f"{end_ms}-0")
+            if category != "all":
+                cam_evts = [
+                    (mid, data) for mid, data in cam_evts_all
+                    if _category_matches(data.get("event_type", ""), category)
+                ]
+            else:
+                cam_evts = cam_evts_all
+            events_per_cam[cid] = cam_evts
+            events_raw.extend(cam_evts)
 
         if analysis_type == "hourly":
             hourly = defaultdict(int)
-            for msg_id, data in events_raw:
-                ts = data.get("timestamp") or data.get("first_seen", "")
+            hourly_by_type = defaultdict(lambda: defaultdict(int))
+            hourly_by_identity = defaultdict(lambda: defaultdict(int))
+            hourly_per_cam = {cid: defaultdict(int) for cid in cam_ids}
+
+            def _parse_hour(ts_raw):
+                ts_str = str(ts_raw)
                 try:
-                    if "." in str(ts):
-                        dt = datetime.fromtimestamp(float(ts), tz=TZ_LOCAL)
-                    else:
-                        dt = datetime.fromisoformat(str(ts))
-                    hourly[dt.hour] += 1
+                    if "." in ts_str:
+                        return datetime.fromtimestamp(float(ts_str), tz=TZ_LOCAL).hour
+                    return datetime.fromisoformat(ts_str).hour
                 except (ValueError, TypeError, OSError):
-                    continue
+                    return None
 
-            # Format as readable hours
-            result = {}
-            for h in range(24):
-                label = f"{h:02d}:00"
-                result[label] = hourly.get(h, 0)
+            for cid, cam_evts in events_per_cam.items():
+                for msg_id, data in cam_evts:
+                    hour = _parse_hour(data.get("timestamp") or data.get("first_seen", ""))
+                    if hour is None:
+                        continue
+                    hourly[hour] += 1
+                    hourly_per_cam[cid][hour] += 1
+                    etype = data.get("event_type", "unknown")
+                    hourly_by_type[hour][etype] += 1
+                    if etype == "person_identified":
+                        name = data.get("identity_name") or "<unknown>"
+                        hourly_by_identity[hour][name] += 1
 
-            busiest = max(hourly.items(), key=lambda x: x[1]) if hourly else (0, 0)
+            # Always emit all 24 hours so quiet hours are explicit (0 vs missing)
+            hourly_breakdown = {f"{h:02d}:00": hourly.get(h, 0) for h in range(24)}
+            by_type_per_hour = {f"{h:02d}:00": dict(hourly_by_type.get(h, {})) for h in range(24)}
+            by_identity_per_hour = {
+                f"{h:02d}:00": dict(hourly_by_identity.get(h, {})) for h in range(24)
+            }
+            per_camera_hourly = {
+                cid: {f"{h:02d}:00": hourly_per_cam[cid].get(h, 0) for h in range(24)}
+                for cid in cam_ids
+            }
+
+            # Top 5 busiest hours (sorted desc), plus active window
+            ranked = sorted(hourly.items(), key=lambda x: x[1], reverse=True)
+            top_hours = [
+                {
+                    "hour": f"{h:02d}:00",
+                    "count": cnt,
+                    "by_type": dict(hourly_by_type.get(h, {})),
+                    "by_identity": dict(hourly_by_identity.get(h, {})),
+                    "per_camera": {cid: hourly_per_cam[cid].get(h, 0) for cid in cam_ids},
+                }
+                for h, cnt in ranked[:5] if cnt > 0
+            ]
+            active_hours = sorted([h for h, c in hourly.items() if c > 0])
+            if active_hours:
+                active_window = f"{active_hours[0]:02d}:00–{active_hours[-1]:02d}:00"
+                quiet_hours = [f"{h:02d}:00" for h in range(24) if hourly.get(h, 0) == 0]
+            else:
+                active_window = "no activity"
+                quiet_hours = [f"{h:02d}:00" for h in range(24)]
+
+            busiest = ranked[0] if ranked and ranked[0][1] > 0 else (0, 0)
             return json.dumps({
                 "analysis": "hourly",
+                "scope": scope_label,
                 "cameras_queried": cam_ids,
-                "days_analyzed": days_back,
+                "days_analyzed": days_back if not date_str else 1,
                 "total_events": len(events_raw),
-                "hourly_breakdown": result,
                 "busiest_hour": f"{busiest[0]:02d}:00 ({busiest[1]} events)",
+                "top_hours": top_hours,
+                "active_window": active_window,
+                "quiet_hours_count": len(quiet_hours),
+                "hourly_breakdown": hourly_breakdown,
+                "by_type_per_hour": by_type_per_hour,
+                "by_identity_per_hour": by_identity_per_hour,
+                "per_camera_hourly": per_camera_hourly,
             })
 
         elif analysis_type == "daily":
             daily = defaultdict(int)
+            daily_by_type = defaultdict(lambda: defaultdict(int))
             for msg_id, data in events_raw:
                 ts = data.get("timestamp") or data.get("first_seen", "")
                 try:
@@ -954,7 +1236,9 @@ def _tool_query_event_patterns(args: dict) -> str:
                         dt = datetime.fromtimestamp(float(ts), tz=TZ_LOCAL)
                     else:
                         dt = datetime.fromisoformat(str(ts))
-                    daily[dt.strftime("%Y-%m-%d")] += 1
+                    day_key = dt.strftime("%Y-%m-%d")
+                    daily[day_key] += 1
+                    daily_by_type[day_key][data.get("event_type", "unknown")] += 1
                 except (ValueError, TypeError, OSError):
                     continue
 
@@ -965,15 +1249,17 @@ def _tool_query_event_patterns(args: dict) -> str:
                 "days_analyzed": days_back,
                 "total_events": len(events_raw),
                 "daily_breakdown": dict(sorted(daily.items())),
+                "by_type_per_day": {d: dict(daily_by_type[d]) for d in sorted(daily_by_type.keys())},
                 "daily_average": round(avg, 1),
                 "busiest_day": max(daily.items(), key=lambda x: x[1])[0] if daily else "none",
             })
 
         elif analysis_type == "type_breakdown":
-            types = defaultdict(int)
+            # Pre-seed all known types so the LLM sees "0" instead of missing keys
+            types = {t: 0 for t in KNOWN_EVENT_TYPES}
             for msg_id, data in events_raw:
                 evt_type = data.get("event_type", "unknown")
-                types[evt_type] += 1
+                types[evt_type] = types.get(evt_type, 0) + 1
 
             return json.dumps({
                 "analysis": "type_breakdown",
@@ -990,19 +1276,24 @@ def _tool_query_event_patterns(args: dict) -> str:
 
 
 async def _tool_capture_snapshot(args: dict = None) -> str:
-    """Capture camera frame with weather + scene context for AI to describe.
+    """Capture camera frame WITH automatic visual analysis from MiniCPM-V.
 
-    Phase 9a: accepts `camera` arg to pick a specific camera. Defaults to
-    primary (cam1) for back-compat with single-camera setups.
+    Returns: snapshot shown to user, tracker state context, AND a free-text
+    visual description from the vision model so the chat LLM doesn't have to
+    describe blindly. Vision pass runs by default — pass describe=false only
+    if you want a raw snapshot without the ~3s vision inference.
     """
     args = args or {}
     import base64
     import httpx
-    from routes.notifications import get_latest_frame
+    from routes.notifications import get_latest_frame, describe_scene
 
     cam_ids = _resolve_camera(args.get("camera", ""))
     if not cam_ids:
         return json.dumps({"error": f"Unknown camera id: '{args.get('camera')}'", "available": [c["id"] for c in _get_camera_list()]})
+    describe = args.get("describe", True)
+    if isinstance(describe, str):
+        describe = describe.lower() not in ("false", "0", "no")
     # capture_snapshot picks one camera at a time even if user said "all" —
     # snapshot is a single image. If "all" was passed, use primary.
     snap_camera = cam_ids[0] if len(cam_ids) == 1 else ctx.CAMERA_ID
@@ -1018,7 +1309,12 @@ async def _tool_capture_snapshot(args: dict = None) -> str:
         ai_state.stash_snapshot(b64)
 
         # Gather contextual data so the AI can describe the scene intelligently
-        context = {}
+        # Always record the source camera — when user said "all" we silently picked one,
+        # and the LLM needs to caption the response correctly.
+        context = {
+            "source_camera_id": snap_camera,
+            "source_camera_name": _camera_name(snap_camera),
+        }
 
         # Weather from conditions endpoint cache or direct fetch
         try:
@@ -1044,9 +1340,12 @@ async def _tool_capture_snapshot(args: dict = None) -> str:
         except Exception:
             pass
 
-        # Current scene state
+        # Current scene state — use the per-camera state key so a
+        # snapshot of cam2 returns cam2's scene, not the primary's.
         try:
-            state = ctx.r.hgetall(ctx.STATE_KEY)
+            from contracts.streams import STATE_KEY as _STATE_TMPL
+            state_key = _camera_key(_STATE_TMPL, snap_camera)
+            state = ctx.r.hgetall(state_key)
             if state:
                 context["scene"] = {
                     "people_in_frame": int(state.get("num_people", 0)),
@@ -1066,13 +1365,42 @@ async def _tool_capture_snapshot(args: dict = None) -> str:
         context["timestamp"] = now.strftime("%I:%M %p, %B %d %Y")
         context["time_period"] = "night" if now.hour < 6 or now.hour >= 21 else "day" if 8 <= now.hour < 18 else "twilight"
 
-        # Return ONLY the small metadata to the LLM — no base64!
-        return json.dumps({
+        # Run MiniCPM-V on the frame so the chat model gets a real visual
+        # description, not just tracker-state metadata. ~3s overhead on a
+        # cold model load; ~1s when warm. Caller can disable via describe=false.
+        visual_description = ""
+        if describe:
+            try:
+                visual_description = await describe_scene(
+                    frame,
+                    prompt=(
+                        "Describe what you see in this security camera image. "
+                        "Mention people, vehicles, activity, lighting, and anything notable. "
+                        "Be concise — 2-3 sentences."
+                    ),
+                    timeout=30.0,
+                ) or ""
+            except Exception as e:
+                logger.warning(f"capture_snapshot vision pass failed: {e}")
+
+        # Return ONLY the small metadata + description text to the LLM — no base64!
+        out = {
             "snapshot_captured": True,
             "size_kb": round(len(frame) / 1024, 1),
             "context": context,
-            "instruction": "A live camera snapshot has been captured and will be shown to the user automatically. Describe what you know from the context data: weather conditions, who is in frame, time of day. Do NOT try to include or reference the image data — it is handled for you.",
-        })
+            "instruction": (
+                "A live camera snapshot has been captured and will be shown to the user "
+                "automatically. The 'vision_analysis' field (if present) is a description "
+                "from the MiniCPM-V vision model of what the camera actually sees — use it "
+                "to answer the user's question instead of guessing from tracker state. "
+                "Do NOT output base64 or reference the image data directly."
+            ),
+        }
+        if visual_description:
+            out["vision_analysis"] = visual_description
+        elif describe:
+            out["vision_analysis"] = "(vision model unavailable or timed out)"
+        return json.dumps(out)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -1157,6 +1485,140 @@ def _tool_capture_clip(args: dict = None) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _tool_find_dvr_segment(args: dict) -> str:
+    """Find the DVR (.ts) segment that covers a given camera + date + time.
+    Returns the segment metadata and a deep-link URL that opens the DVR tab
+    on ai.html pre-loaded to that segment.
+
+    This tool does NOT extract or send video bytes — that's what the DVR tab
+    is for. The AI's job is to tell the user *which* segment to watch and
+    hand them a clickable link.
+    """
+    import re
+    from pathlib import Path
+
+    args = args or {}
+    camera_arg = args.get("camera", "")
+    date_str = (args.get("date") or "").strip() or "today"
+    time_str = (args.get("time") or "").strip()
+
+    # Resolve to a single camera (clip-style — one camera at a time)
+    cam_ids = _resolve_camera(camera_arg)
+    if not cam_ids:
+        return json.dumps({
+            "error": f"Unknown camera '{camera_arg}'. Use a registered camera id.",
+            "available": [c["id"] for c in _get_camera_list()],
+        })
+    cam = cam_ids[0]
+
+    # Resolve the date
+    now = datetime.now(TZ_LOCAL)
+    if date_str == "today":
+        target_date = now.date()
+    elif date_str == "yesterday":
+        target_date = (now - timedelta(days=1)).date()
+    else:
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return json.dumps({"error": f"Invalid date '{date_str}'. Use 'today', 'yesterday', or YYYY-MM-DD."})
+
+    # Parse time — accept "13:00", "1:00 PM", "13", or empty (= whole day)
+    target_minutes = None
+    if time_str:
+        t = time_str.strip().upper().replace(" ", "")
+        m = re.match(r"^(\d{1,2})(?::(\d{2}))?(AM|PM)?$", t)
+        if not m:
+            return json.dumps({"error": f"Invalid time '{time_str}'. Use HH:MM (24h) or H:MMam/pm."})
+        hh = int(m.group(1))
+        mm = int(m.group(2) or 0)
+        ampm = m.group(3)
+        if ampm == "AM" and hh == 12:
+            hh = 0
+        elif ampm == "PM" and hh < 12:
+            hh += 12
+        if not (0 <= hh < 24 and 0 <= mm < 60):
+            return json.dumps({"error": f"Time out of range: {time_str}"})
+        target_minutes = hh * 60 + mm
+
+    # Scan the per-camera/per-date recordings directory
+    day_dir = Path(f"/data/recordings/{cam}/{target_date}")
+    if not day_dir.is_dir():
+        return json.dumps({
+            "error": f"No recordings found for {cam} on {target_date}",
+            "hint": "Check /api/recordings/dates?camera=<id> for available dates.",
+        })
+
+    # Parse filenames: "HH-MM.ts" where HH-MM is the segment START time
+    seg_re = re.compile(r"^(\d{2})-(\d{2})\.ts$")
+    segments = []
+    for f in sorted(day_dir.iterdir()):
+        m = seg_re.match(f.name)
+        if not m or not f.is_file():
+            continue
+        h, mn = int(m.group(1)), int(m.group(2))
+        segments.append({
+            "filename": f.name,
+            "start_minutes": h * 60 + mn,
+            "start_label": f"{(h % 12 or 12)}:{mn:02d} {'PM' if h >= 12 else 'AM'}",
+            "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
+        })
+
+    if not segments:
+        return json.dumps({"error": f"No .ts segments in {day_dir}"})
+
+    deep_link_base = f"/ai.html?tab=recordings&camera={cam}&date={target_date}"
+
+    # If no specific time requested, return the segment list
+    if target_minutes is None:
+        return json.dumps({
+            "camera": cam,
+            "date": str(target_date),
+            "segments_available": len(segments),
+            "segments": [
+                {
+                    "filename": s["filename"],
+                    "starts_at": s["start_label"],
+                    "size_mb": s["size_mb"],
+                    "deep_link": f"{deep_link_base}&segment={s['filename']}",
+                }
+                for s in segments
+            ],
+            "note": "Pass `time` (e.g. '13:00') to pick a single best-match segment.",
+        })
+
+    # Find the segment whose start time is the largest start <= target_minutes
+    best = None
+    for s in segments:
+        if s["start_minutes"] <= target_minutes:
+            if best is None or s["start_minutes"] > best["start_minutes"]:
+                best = s
+    if best is None:
+        # Target time is before the first recording — return the earliest one
+        best = segments[0]
+        note = (
+            f"Requested time {time_str} is before the first recording of the day "
+            f"({best['start_label']}). Returning the earliest segment."
+        )
+    else:
+        note = (
+            f"Segment starts at {best['start_label']} and runs ~1 hour. "
+            f"Click the deep_link to open it in the DVR tab."
+        )
+
+    return json.dumps({
+        "camera": cam,
+        "camera_name": _camera_name(cam),
+        "date": str(target_date),
+        "requested_time": time_str,
+        "segment": best["filename"],
+        "segment_starts_at": best["start_label"],
+        "size_mb": best["size_mb"],
+        "deep_link": f"{deep_link_base}&segment={best['filename']}",
+        "note": note,
+    })
+
+
 async def _tool_analyze_image(args: dict) -> str:
     """Analyze the current camera frame with MiniCPM-V vision model."""
     from routes.notifications import get_latest_frame, describe_scene
@@ -1197,31 +1659,70 @@ async def _tool_analyze_image(args: dict) -> str:
 
 
 def _tool_query_notification_history(args: dict) -> str:
-    """Get recent notification records from the feedback database."""
+    """Get recent notification records (events that triggered Telegram alerts). Multi-camera aware."""
+    from contracts.streams import EVENT_STREAM as _EVT_TMPL
+
     count = min(int(args.get("count", 20)), 50)
+    camera_arg = args.get("camera", "")
+    cam_ids = _resolve_camera(camera_arg)
+    if not cam_ids:
+        return json.dumps({
+            "error": f"Unknown camera '{camera_arg}'. Use 'all' or a registered camera id.",
+            "available": [c["id"] for c in _get_camera_list()],
+        })
 
     try:
-        # Check for recent events that triggered notifications
-        events_raw = ctx.r.xrevrange(ctx.EVENT_STREAM, count=count * 3)  # Over-fetch to find notified ones
-        notified = []
-        for msg_id, data in events_raw:
-            if data.get("alert_triggered") == "true" or data.get("alert_triggered") == "1":
-                notified.append({
-                    "event_id": msg_id,
-                    "type": data.get("event_type", "unknown"),
-                    "person_id": data.get("person_id", ""),
-                    "identity": data.get("identity_name", ""),
-                    "zone": data.get("zone", ""),
-                    "timestamp": data.get("timestamp", ""),
-                    "alert_level": data.get("alert_level", ""),
-                })
-                if len(notified) >= count:
-                    break
+        # Sweep enough events across cameras to find alert_triggered ones.
+        # Over-fetch generously since most events don't trigger alerts.
+        SWEEP_PER_CAM = max(count * 10, 200)
+        all_alerts = []
+        scanned_total = 0
+        for cid in cam_ids:
+            evt_key = _camera_key(_EVT_TMPL, cid)
+            events_raw = ctx.r.xrevrange(evt_key, count=SWEEP_PER_CAM)
+            scanned_total += len(events_raw)
+            for msg_id, data in events_raw:
+                if data.get("alert_triggered") in ("true", "1"):
+                    all_alerts.append({
+                        "event_id": msg_id,
+                        "camera_id": cid,
+                        "camera_name": _camera_name(cid),
+                        "type": data.get("event_type", "unknown"),
+                        "person_id": data.get("person_id", ""),
+                        "identity": data.get("identity_name", ""),
+                        "zone": data.get("zone", ""),
+                        "timestamp": data.get("timestamp", ""),
+                        "alert_level": data.get("alert_level", ""),
+                    })
+
+        # Sort newest-first by event_id (which encodes ms timestamp)
+        all_alerts.sort(key=lambda a: a["event_id"], reverse=True)
+        capped = all_alerts[:count]
+
+        # Aggregate breakdowns
+        by_type = {}
+        by_identity = {}
+        for a in all_alerts:
+            t = a["type"]
+            by_type[t] = by_type.get(t, 0) + 1
+            if a["identity"]:
+                by_identity[a["identity"]] = by_identity.get(a["identity"], 0) + 1
 
         return json.dumps({
-            "notifications": notified,
-            "count": len(notified),
-            "note": "These events triggered Telegram notifications",
+            "notifications": capped,
+            "alerts_shown": len(capped),
+            "alerts_found_in_sweep": len(all_alerts),
+            "events_scanned_per_camera": SWEEP_PER_CAM,
+            "events_scanned_total": scanned_total,
+            "by_type": by_type,
+            "by_identity": by_identity,
+            "cameras_queried": cam_ids,
+            "truncated": len(all_alerts) > count,
+            "note": (
+                f"Showing newest {len(capped)} of {len(all_alerts)} alerts found in the most recent "
+                f"{SWEEP_PER_CAM} events per camera. For older alerts, the Redis stream may have "
+                f"trimmed them — use query_events_by_date for a specific date."
+            ),
         })
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -1259,6 +1760,32 @@ async def _tool_query_faces() -> str:
 
 
 
+# Rate-limiter for the send_telegram tool. A prompt-injected message in
+# the chat history could otherwise instruct the LLM to spam the user's
+# Telegram. Tracks the last N successful sends in a deque; refuses a new
+# call when the oldest send within the window is younger than the limit.
+_SEND_TG_WINDOW_SEC = 60.0
+_SEND_TG_MAX_PER_WINDOW = 5
+_send_tg_history: collections.deque[float] = collections.deque(
+    maxlen=_SEND_TG_MAX_PER_WINDOW
+)
+_send_tg_lock = threading.Lock()
+
+
+def _send_telegram_rate_check() -> tuple[bool, float]:
+    """Returns (allowed, seconds_to_wait). Records timestamp on allow."""
+    now = time.time()
+    with _send_tg_lock:
+        # Drop stale entries
+        while _send_tg_history and now - _send_tg_history[0] > _SEND_TG_WINDOW_SEC:
+            _send_tg_history.popleft()
+        if len(_send_tg_history) >= _SEND_TG_MAX_PER_WINDOW:
+            wait = _SEND_TG_WINDOW_SEC - (now - _send_tg_history[0])
+            return False, wait
+        _send_tg_history.append(now)
+        return True, 0.0
+
+
 async def _tool_send_telegram(args: dict) -> str:
     """Send a Telegram message, optionally with a live snapshot or video clip."""
     from routes.notifications import (
@@ -1269,35 +1796,72 @@ async def _tool_send_telegram(args: dict) -> str:
     message = args.get("message", "")
     if not message:
         return json.dumps({"error": "No message provided"})
+    # Cap message length so a misbehaving model can't dump multi-KB
+    # payloads at Telegram (which would 413 anyway, but cleaner to
+    # reject early). 4000 is well under Telegram's 4096 char limit.
+    if len(message) > 4000:
+        return json.dumps({"error": "Message too long (max 4000 chars)"})
     if not is_configured():
         return json.dumps({"error": "Telegram not configured"})
+
+    # Per-tool rate limit: prevents prompt-injection from spamming.
+    allowed, wait = _send_telegram_rate_check()
+    if not allowed:
+        return json.dumps({
+            "error": (
+                f"Telegram rate limit hit ({_SEND_TG_MAX_PER_WINDOW} sends per "
+                f"{int(_SEND_TG_WINDOW_SEC)}s). Retry in {wait:.0f}s."
+            )
+        })
+
+    # Resolve the source camera for media (snapshot/clip). For text-only, this is ignored.
+    cam_ids = _resolve_camera(args.get("camera", ""))
+    source_camera = cam_ids[0] if cam_ids else ctx.CAMERA_ID
+    source_camera_name = _camera_name(source_camera)
 
     try:
         include_clip = args.get("include_clip", False)
         include_snapshot = args.get("include_snapshot", False)
 
         if include_clip:
-            clip = build_clip(duration=5.0, fps=10)
+            clip = build_clip(duration=5.0, fps=10, camera_id=source_camera)
             if clip:
                 msg_id = await send_video(clip, f"🎬 {message}")
-                return json.dumps({"status": "sent_with_clip", "message": message, "message_id": msg_id})
+                return json.dumps({
+                    "status": "sent_with_clip", "message": message, "message_id": msg_id,
+                    "source_camera_id": source_camera, "source_camera_name": source_camera_name,
+                })
             else:
                 await send_text(f"{message}\n\n(Video clip unavailable — camera may be offline)")
-                return json.dumps({"status": "sent_text_only", "message": message, "note": "Clip capture failed"})
+                return json.dumps({
+                    "status": "sent_text_only", "message": message,
+                    "source_camera_id": source_camera, "note": "Clip capture failed",
+                })
 
         if include_snapshot:
-            frame = get_latest_frame()
+            frame = get_latest_frame(camera_id=source_camera)
             if frame:
                 msg_id = await send_photo(frame, message)
-                return json.dumps({"status": "sent_with_snapshot", "message": message, "message_id": msg_id})
+                return json.dumps({
+                    "status": "sent_with_snapshot", "message": message, "message_id": msg_id,
+                    "source_camera_id": source_camera, "source_camera_name": source_camera_name,
+                })
             else:
                 await send_text(f"{message}\n\n(Snapshot unavailable — camera may be offline)")
-                return json.dumps({"status": "sent_text_only", "message": message, "note": "No frame available"})
+                return json.dumps({
+                    "status": "sent_text_only", "message": message,
+                    "source_camera_id": source_camera, "note": "No frame available",
+                })
 
         await send_text(message)
         return json.dumps({"status": "sent", "message": message})
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+# Max pending reminders. Prevents prompt-injection from scheduling
+# thousands of pre-dated reminders that all fire at once.
+_MAX_PENDING_REMINDERS = 50
 
 
 def _tool_schedule_reminder(args: dict) -> str:
@@ -1312,6 +1876,23 @@ def _tool_schedule_reminder(args: dict) -> str:
         media_type = "text"
     if not message or not time_desc:
         return json.dumps({"error": "message and time_description required"})
+    if len(message) > 1000:
+        return json.dumps({"error": "Reminder message too long (max 1000 chars)"})
+
+    # Refuse to schedule more than _MAX_PENDING_REMINDERS unsent reminders.
+    try:
+        pending = ai_state._ai_db.count_pending_reminders()
+        if pending >= _MAX_PENDING_REMINDERS:
+            return json.dumps({
+                "error": (
+                    f"Too many pending reminders ({pending}). Delete or wait for some "
+                    f"to fire before scheduling more (max {_MAX_PENDING_REMINDERS})."
+                )
+            })
+    except AttributeError:
+        # ai_db may not expose count_pending_reminders on older versions —
+        # if so, skip the check (graceful degradation).
+        pass
 
     # Parse time — try ISO format first, then common patterns
     trigger_time = _parse_time(time_desc)
@@ -1404,7 +1985,7 @@ def _tool_get_system_status(args: dict = None) -> str:
             per_camera[cid] = {
                 "name": _camera_name(cid),
                 "events_in_stream": ev_len,
-                "config": ctx.r.hgetall(cfg_key),
+                "config": _redact_sensitive(ctx.r.hgetall(cfg_key)),
                 "state": ctx.r.hgetall(state_key),
             }
             total_events += ev_len
@@ -1434,7 +2015,8 @@ def _tool_query_activity_heatmap(args: dict) -> str:
     from contracts.streams import EVENT_STREAM as _EVT_TMPL
 
     days_back = min(int(args.get("days_back", 14)), 30)
-    camera_arg = args.get("camera", "")
+    # Analytical tool — default to all cameras when omitted
+    camera_arg = args.get("camera", "all")
     cam_ids = _resolve_camera(camera_arg)
     if not cam_ids:
         return json.dumps({
@@ -1489,16 +2071,11 @@ def _tool_query_activity_heatmap(args: dict) -> str:
         # Busiest day
         peak_day = max(daily_total.items(), key=lambda x: x[1]) if daily_total else ("none", 0)
 
-        # Format heatmap as readable grid
+        # Format heatmap as readable grid — always emit all 24 hours per day
+        # so the LLM can distinguish "quiet hour" (0) from "missing hour" (unknown).
         grid = {}
         for day in DAY_NAMES:
-            row = {}
-            for h in range(24):
-                count = heatmap[day].get(h, 0)
-                if count > 0:
-                    row[f"{h:02d}:00"] = count
-            if row:
-                grid[day] = row
+            grid[day] = {f"{h:02d}:00": heatmap[day].get(h, 0) for h in range(24)}
 
         # Weekday vs weekend average (per day)
         num_weekdays = max(min(days_back, 30) * 5 // 7, 1)

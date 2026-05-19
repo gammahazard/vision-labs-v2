@@ -1,6 +1,18 @@
 # Vision Labs — Architecture Reference
 
-> **Last updated:** May 10, 2026 (post-migration to WSL2 + dual-GPU, post-security-hardening pass)
+> ⚠️ **HISTORICAL REFERENCE — NOT THE LIVING SPEC**
+>
+> This document was last fully revised on **May 10, 2026**, before the Phase G "symmetric multi-camera slot" refactor (May 18) and the AI tool overhaul (May 19). Many concrete details below — `front_door`-as-primary references, the "18 tools" count, snapshot/event behavior — are now stale.
+>
+> **For current state, see [CONTEXT.md](CONTEXT.md).** Use this file to understand the architectural *reasoning* and *design decisions* (why slot-based services, why service-per-camera, GPU split rationale), not to verify *what is currently deployed*.
+>
+> Specifically stale-as-of-Phase-G / May-19:
+> - `front_door` is no longer a slot name — replaced by symmetric `cam1`–`cam5`. Replace `front_door` with `cam1` mentally when reading.
+> - Tool count is now **19**, not 18 (added `find_dvr_segment`).
+> - `capture_snapshot` now auto-runs MiniCPM-V (returns `vision_analysis`).
+> - `query_events_by_date` / `query_event_patterns` / `query_events` / `query_unknowns` / `query_notification_history` all gained aggregation fields (`by_identity`, `top_hours`, `by_type_per_hour`, etc.) and a `category` filter.
+> - Analytical tools default to `camera="all"` (was `"primary"`).
+> - ComfyUI / Generate tab removed entirely (Phase 8.A).
 
 ---
 

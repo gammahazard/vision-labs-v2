@@ -74,10 +74,18 @@ MAX_DETECTION_STREAM_LEN = int(os.getenv("MAX_DETECTION_STREAM_LEN", "1000"))
 # How often to check Redis for config changes (every N processed frames)
 CONFIG_RELOAD_INTERVAL = 25
 
-# COCO class IDs for vehicles
-# 2=car, 3=motorcycle, 5=bus, 7=truck
-VEHICLE_CLASSES = [2, 3, 5, 7]
-VEHICLE_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+# COCO class IDs we track. 1=bicycle was added so kids on bikes /
+# cyclists in the driveway show up as their own class rather than
+# being invisible to the vehicle pipeline.
+# 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck.
+VEHICLE_CLASSES = [1, 2, 3, 5, 7]
+VEHICLE_CLASS_NAMES = {
+    1: "bicycle",
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+}
 
 # Minimum bounding box area (pixels²) to accept a vehicle detection.
 # Filters out tiny phantom detections from lights, reflections, distant noise.
@@ -322,8 +330,10 @@ def run():
                     )
 
                     # Cache the source frame so the dashboard can draw bboxes on
-                    # the exact frame they were computed from (prevents drift)
-                    r.set(DETECTION_FRAME, frame_bytes)
+                    # the exact frame they were computed from (prevents drift).
+                    # 30s TTL so a dead detector stops poisoning the dashboard
+                    # with a stale frame indefinitely.
+                    r.setex(DETECTION_FRAME, 30, frame_bytes)
 
                     # Acknowledge the frame
                     r.xack(FRAME_STREAM, CONSUMER_GROUP, msg_id)

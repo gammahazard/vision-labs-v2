@@ -88,8 +88,37 @@ class FaceDB:
                     sighting_count INTEGER DEFAULT 1
                 )
             """)
+            self._migrate_genderage_columns(conn)
             conn.commit()
         logger.info(f"Face database initialized at {self.db_path}")
+
+    def _migrate_genderage_columns(self, conn: sqlite3.Connection):
+        """Idempotent migration: add sex/age columns when missing.
+
+        InsightFace's buffalo_l includes a genderage head whose output we
+        used to discard. Storing it makes the dashboard a bit more useful
+        and costs nothing at inference time. Older rows stay NULL.
+
+        Also adds sex_override / age_override on known_faces so the user
+        can correct the model when it whiffs (kids and seniors are the
+        common cases — the head was trained on adults 20-50).
+        """
+        for table in ("known_faces", "unknown_faces"):
+            cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if "sex" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN sex TEXT")
+                logger.info(f"Migration: added {table}.sex column")
+            if "age" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN age REAL")
+                logger.info(f"Migration: added {table}.age column")
+        # Overrides only on known_faces — unknowns are transient.
+        known_cols = {row[1] for row in conn.execute("PRAGMA table_info(known_faces)")}
+        if "sex_override" not in known_cols:
+            conn.execute("ALTER TABLE known_faces ADD COLUMN sex_override TEXT")
+            logger.info("Migration: added known_faces.sex_override column")
+        if "age_override" not in known_cols:
+            conn.execute("ALTER TABLE known_faces ADD COLUMN age_override REAL")
+            logger.info("Migration: added known_faces.age_override column")
 
     def _load_cache(self):
         """Rebuild both caches from SQLite and atomically swap them in.
@@ -105,11 +134,16 @@ class FaceDB:
         new_cache: list[dict] = []
         new_unknown_cache: list[dict] = []
         with sqlite3.connect(self.db_path) as conn:
-            for row in conn.execute("SELECT id, name, embedding FROM known_faces"):
-                face_id, name, emb_bytes = row
+            for row in conn.execute(
+                "SELECT id, name, embedding, sex_override, age_override "
+                "FROM known_faces"
+            ):
+                face_id, name, emb_bytes, sex_override, age_override = row
                 embedding = np.frombuffer(emb_bytes, dtype=np.float32)
                 new_cache.append({
                     "id": face_id, "name": name, "embedding": embedding,
+                    "sex_override": sex_override,
+                    "age_override": age_override,
                 })
 
             for row in conn.execute(
@@ -143,15 +177,17 @@ class FaceDB:
     # Known face operations
     # ------------------------------------------------------------------
 
-    def enroll(self, name: str, embedding: np.ndarray, photo: bytes = None) -> int:
+    def enroll(self, name: str, embedding: np.ndarray, photo: bytes = None,
+               sex: str | None = None, age: float | None = None) -> int:
         """Enroll a new known face. Returns the new face ID."""
         embedding = embedding / np.linalg.norm(embedding)
         emb_bytes = embedding.astype(np.float32).tobytes()
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "INSERT INTO known_faces (name, embedding, photo) VALUES (?, ?, ?)",
-                (name, emb_bytes, photo),
+                "INSERT INTO known_faces (name, embedding, photo, sex, age) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, emb_bytes, photo, sex, age),
             )
             conn.commit()
             face_id = cursor.lastrowid
@@ -189,13 +225,17 @@ class FaceDB:
             similarity = float(np.dot(embedding, known["embedding"]))
             if similarity > best_sim:
                 best_sim = similarity
-                best_match = {"id": known["id"], "name": known["name"]}
+                best_match = known
 
         if best_match and best_sim >= self.match_threshold:
             return {
                 "id": best_match["id"],
                 "name": best_match["name"],
                 "similarity": round(best_sim, 3),
+                # Carry through the manual override (if any) so the
+                # caller can prefer it over the model's live estimate.
+                "sex_override": best_match.get("sex_override"),
+                "age_override": best_match.get("age_override"),
             }
 
         return None
@@ -204,12 +244,35 @@ class FaceDB:
         """Return all enrolled faces (without embeddings)."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT id, name, created_at FROM known_faces ORDER BY created_at DESC"
+                "SELECT id, name, created_at, sex, age, "
+                "sex_override, age_override FROM known_faces "
+                "ORDER BY created_at DESC"
             )
             return [
-                {"id": row[0], "name": row[1], "created_at": row[2]}
+                {
+                    "id": row[0], "name": row[1], "created_at": row[2],
+                    "sex": row[3], "age": row[4],
+                    "sex_override": row[5], "age_override": row[6],
+                }
                 for row in cursor
             ]
+
+    def set_demographics_override(
+        self, name: str, sex: str | None, age: float | None
+    ) -> int:
+        """Pin sex_override/age_override on every angle of `name`.
+
+        Pass None to clear (revert to model output). Returns the number
+        of rows updated.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "UPDATE known_faces SET sex_override = ?, age_override = ? "
+                "WHERE name = ?",
+                (sex, age, name),
+            )
+            conn.commit()
+            return cursor.rowcount
 
     def get_photo(self, face_id: int) -> bytes | None:
         """Get the JPEG thumbnail for a specific known face."""
@@ -238,7 +301,8 @@ class FaceDB:
     # Unknown face auto-capture
     # ------------------------------------------------------------------
 
-    def save_unknown(self, embedding: np.ndarray, photo: bytes = None) -> int | None:
+    def save_unknown(self, embedding: np.ndarray, photo: bytes = None,
+                     sex: str | None = None, age: float | None = None) -> int | None:
         """
         Save an unknown face, deduplicating by embedding similarity.
 
@@ -280,8 +344,9 @@ class FaceDB:
         emb_bytes = embedding.astype(np.float32).tobytes()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "INSERT INTO unknown_faces (embedding, photo) VALUES (?, ?)",
-                (emb_bytes, photo),
+                "INSERT INTO unknown_faces (embedding, photo, sex, age) "
+                "VALUES (?, ?, ?, ?)",
+                (emb_bytes, photo, sex, age),
             )
             conn.commit()
             uid = cursor.lastrowid
@@ -324,13 +389,14 @@ class FaceDB:
         """Return all unknown faces (for the dashboard gallery)."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT id, first_seen, last_seen, sighting_count "
+                "SELECT id, first_seen, last_seen, sighting_count, sex, age "
                 "FROM unknown_faces ORDER BY last_seen DESC"
             )
             return [
                 {
                     "id": row[0], "first_seen": row[1],
                     "last_seen": row[2], "sighting_count": row[3],
+                    "sex": row[4], "age": row[5],
                 }
                 for row in cursor
             ]
@@ -352,16 +418,18 @@ class FaceDB:
         """
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
-                "SELECT embedding, photo FROM unknown_faces WHERE id = ?", (uid,)
+                "SELECT embedding, photo, sex, age FROM unknown_faces WHERE id = ?",
+                (uid,),
             ).fetchone()
             if not row:
                 return None
 
-            emb_bytes, photo = row
+            emb_bytes, photo, sex, age = row
 
             cursor = conn.execute(
-                "INSERT INTO known_faces (name, embedding, photo) VALUES (?, ?, ?)",
-                (name, emb_bytes, photo),
+                "INSERT INTO known_faces (name, embedding, photo, sex, age) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, emb_bytes, photo, sex, age),
             )
             face_id = cursor.lastrowid
 
@@ -426,14 +494,16 @@ class FaceDB:
         with sqlite3.connect(self.db_path) as conn:
             for uid, sim in candidates:
                 row = conn.execute(
-                    "SELECT embedding, photo FROM unknown_faces WHERE id = ?", (uid,)
+                    "SELECT embedding, photo, sex, age FROM unknown_faces WHERE id = ?",
+                    (uid,),
                 ).fetchone()
                 if not row:
                     continue
-                emb_bytes, photo = row
+                emb_bytes, photo, sex, age = row
                 cursor = conn.execute(
-                    "INSERT INTO known_faces (name, embedding, photo) VALUES (?, ?, ?)",
-                    (name, emb_bytes, photo),
+                    "INSERT INTO known_faces (name, embedding, photo, sex, age) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (name, emb_bytes, photo, sex, age),
                 )
                 promoted.append({
                     "face_id": cursor.lastrowid,
@@ -514,19 +584,19 @@ class FaceDB:
             if best_sim >= self.match_threshold:
                 to_promote.append((unknown["id"], best_name, best_sim))
                 matched_names[best_name] = matched_names.get(best_name, 0) + 1
-                logger.info(
+                logger.debug(
                     f"Reconcile: unknown {unknown['id']} → promote to "
                     f"'{best_name}' (sim={best_sim:.3f})"
                 )
             elif best_sim >= delete_threshold:
                 to_delete.append(unknown["id"])
                 matched_names[best_name] = matched_names.get(best_name, 0) + 1
-                logger.info(
+                logger.debug(
                     f"Reconcile: unknown {unknown['id']} → delete "
                     f"(loose match '{best_name}', sim={best_sim:.3f})"
                 )
             else:
-                logger.info(
+                logger.debug(
                     f"Reconcile: unknown {unknown['id']} keep (best "
                     f"'{best_name}' sim={best_sim:.3f} below {delete_threshold:.2f})"
                 )
@@ -542,14 +612,16 @@ class FaceDB:
         with sqlite3.connect(self.db_path) as conn:
             for uid, name, sim in to_promote:
                 row = conn.execute(
-                    "SELECT embedding, photo FROM unknown_faces WHERE id = ?", (uid,)
+                    "SELECT embedding, photo, sex, age FROM unknown_faces WHERE id = ?",
+                    (uid,),
                 ).fetchone()
                 if not row:
                     continue
-                emb_bytes, photo = row
+                emb_bytes, photo, sex, age = row
                 cursor = conn.execute(
-                    "INSERT INTO known_faces (name, embedding, photo) VALUES (?, ?, ?)",
-                    (name, emb_bytes, photo),
+                    "INSERT INTO known_faces (name, embedding, photo, sex, age) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (name, emb_bytes, photo, sex, age),
                 )
                 promoted_by_name.setdefault(name, []).append({
                     "face_id": cursor.lastrowid,

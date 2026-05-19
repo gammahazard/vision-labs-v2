@@ -17,6 +17,17 @@ import routes as ctx
 
 router = APIRouter(prefix="/api", tags=["zones"])
 
+# Single source of truth for valid zone alert levels. Shared between
+# POST and PUT so they can't disagree on what's accepted.
+#   always      — fire alerts whenever a detection lands in this zone
+#   night_only  — only at night / late-night per contracts.time_rules
+#   log_only    — record events but suppress notifications
+#   ignore      — skip alerting but keep the detection on screen
+#   dead_zone   — drop the detection entirely (no event, no overlay)
+_VALID_ALERT_LEVELS = frozenset({
+    "always", "night_only", "log_only", "ignore", "dead_zone",
+})
+
 
 def _zone_key(camera: str) -> str:
     """Return the Redis zone-hash key for `camera` (defaults to primary)."""
@@ -62,7 +73,7 @@ async def create_zone(data: dict, camera: str = ""):
             content={"error": "Zone must have at least 3 points"},
         )
 
-    if alert_level not in ("always", "night_only", "log_only", "ignore", "dead_zone"):
+    if alert_level not in _VALID_ALERT_LEVELS:
         alert_level = "log_only"
 
     # Generate unique zone ID
@@ -92,12 +103,22 @@ async def update_zone(zone_id: str, data: dict, camera: str = ""):
     zone = json.loads(raw)
 
     if "name" in data:
-        zone["name"] = data["name"].strip()
+        # `name` may be sent as None/non-string by a buggy client; coerce
+        # safely (same handling as POST) so we don't 500 on .strip().
+        zone["name"] = (data.get("name") or "Zone").strip() if isinstance(data.get("name"), str) else "Zone"
     if "points" in data:
         if len(data["points"]) < 3:
             return JSONResponse(status_code=400, content={"error": "Need at least 3 points"})
         zone["points"] = data["points"]
     if "alert_level" in data:
+        # PUT must validate against the same enum as POST — otherwise a
+        # PATCH-ish update can sneak in `alert_level: "destroy"` that the
+        # tracker doesn't recognize.
+        if data["alert_level"] not in _VALID_ALERT_LEVELS:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"alert_level must be one of {sorted(_VALID_ALERT_LEVELS)}"},
+            )
         zone["alert_level"] = data["alert_level"]
 
     ctx.r.hset(zk, zone_id, json.dumps(zone))

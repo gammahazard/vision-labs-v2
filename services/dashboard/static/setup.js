@@ -155,7 +155,7 @@ function renderHardwareResult(data) {
                     </div>
                 </label>
                 <p class="wizard-hint">
-                    The wizard doesn't write .env automatically — apply the env values shown above by editing <code>.env</code> after setup completes.
+                    Click <strong>Apply this configuration</strong> below to write these values to <code>.env</code> and recreate the affected services.
                 </p>
             </div>
         `;
@@ -182,7 +182,11 @@ function renderHardwareResult(data) {
             state.gpuMode = e.target.value;
         });
     });
-    state.gpuMode = (data.gpus.length >= 2) ? 'single' : 'single';
+    // Default the radio state to 'single'. The HTML already marks the
+    // 'single' option as checked; this just keeps `state.gpuMode` in
+    // sync with the rendered DOM in case the user proceeds without
+    // touching the radios.
+    state.gpuMode = 'single';
 }
 
 // ---------------------------------------------------------------------------

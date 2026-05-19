@@ -114,8 +114,33 @@ def _validate_camera(entry: dict) -> Optional[str]:
     cid = entry["id"]
     if not all(c.isalnum() or c in "_-" for c in cid):
         return "'id' must be alphanumeric, dash, or underscore"
-    if not entry.get("rtsp_sub"):
+    if len(cid) > 32:
+        return "'id' must be 32 characters or fewer"
+    # Cap `name` so a user can't HSET a 10 MB string into Redis from the
+    # form. 80 is generous for the UI; tighten later if needed.
+    name = entry.get("name")
+    if name is not None:
+        if not isinstance(name, str):
+            return "'name' must be a string"
+        if len(name) > 80:
+            return "'name' must be 80 characters or fewer"
+    rtsp_sub = entry.get("rtsp_sub")
+    if not rtsp_sub:
         return "'rtsp_sub' is required (sub-stream URL used for detection)"
+    if not isinstance(rtsp_sub, str):
+        return "'rtsp_sub' must be a string"
+    if not (rtsp_sub.startswith("rtsp://") or rtsp_sub.startswith("rtsps://")):
+        return "'rtsp_sub' must start with rtsp:// or rtsps://"
+    if len(rtsp_sub) > 512:
+        return "'rtsp_sub' must be 512 characters or fewer"
+    rtsp_main = entry.get("rtsp_main")
+    if rtsp_main:
+        if not isinstance(rtsp_main, str):
+            return "'rtsp_main' must be a string"
+        if not (rtsp_main.startswith("rtsp://") or rtsp_main.startswith("rtsps://")):
+            return "'rtsp_main' must start with rtsp:// or rtsps://"
+        if len(rtsp_main) > 512:
+            return "'rtsp_main' must be 512 characters or fewer"
     return None
 
 

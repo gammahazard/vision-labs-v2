@@ -34,6 +34,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         showWizard();
     }
 
+    // Deep-link support — used by the AI's find_dvr_segment tool to direct
+    // the user to a specific recording. Format:
+    //   /ai.html?tab=recordings&camera=cam1&date=2026-05-18&segment=13-00.ts
+    handleDeepLink();
+
     // Chat input — Enter to send, Shift+Enter for newline
     const input = document.getElementById('chatInput');
     if (input) {
@@ -462,8 +467,13 @@ function inlineFormat(text) {
         .replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
         // Inline code
         .replace(/`([^`]+)`/g, '<code>$1</code>')
-        // Inline images: ![alt](url)
+        // Inline images: ![alt](url) — MUST run before link regex (which would
+        // otherwise eat these — image leading `!` differentiates them)
         .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:4px 0;">')
+        // Regular links: [text](url) — clickable. Used by find_dvr_segment and
+        // any other tool that hands the user a URL. Stays in same tab so deep
+        // links work via the existing handleDeepLink() URL param handler.
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent,#6366f1);text-decoration:underline;">$1</a>')
         // Bold
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         // Italic
@@ -517,6 +527,96 @@ function switchModelTab(tabName) {
         checkVisionStatus();
     } else if (tabName === 'recordings') {
         window._initRecordingsTab();
+    }
+}
+
+
+// Handle ?tab=recordings&camera=&date=&segment= deep links from the AI's
+// find_dvr_segment tool. Drives the DVR tab directly INSTEAD of going through
+// _initRecordingsTab — that function auto-selects "latest date" and kicks off
+// a non-awaited _loadRecSegments, which races against our override and wins
+// when the user wanted an older date.
+async function handleDeepLink() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') !== 'recordings') return;
+
+    const camera = params.get('camera') || '';
+    const date = params.get('date') || '';
+    const segment = params.get('segment') || '';
+
+    // Show the DVR tab visually — UI flip only, no init side effects.
+    document.querySelectorAll('.model-tab').forEach(btn => {
+        btn.classList.toggle('model-tab--active', btn.dataset.tab === 'recordings');
+    });
+    const chatTab = document.getElementById('tabChat');
+    const visionTab = document.getElementById('tabVision');
+    const recTab = document.getElementById('tabRecordings');
+    if (chatTab) chatTab.style.display = 'none';
+    if (visionTab) visionTab.style.display = 'none';
+    if (recTab) recTab.style.display = 'flex';
+
+    // Populate camera dropdown
+    await _ensureRecCameraList();
+    const camSel = document.getElementById('recCameraPicker');
+    let effectiveCam = camera;
+    if (camSel && camera && Array.from(camSel.options).some(o => o.value === camera)) {
+        camSel.value = camera;
+    } else if (camSel && camSel.options.length > 0) {
+        effectiveCam = camSel.value;
+    }
+    _recCamera = effectiveCam;
+
+    // Load date list for the chosen camera (fetched directly so we don't race
+    // _initRecordingsTab's auto-pick-latest-date logic).
+    try {
+        const camParam = effectiveCam ? `?camera=${encodeURIComponent(effectiveCam)}` : '';
+        const resp = await fetch('/api/recordings/dates' + camParam);
+        const data = await resp.json();
+        const dateSel = document.getElementById('recDatePicker');
+        if (dateSel) {
+            dateSel.innerHTML = '';
+            (data.dates || []).forEach((d) => {
+                const opt = document.createElement('option');
+                opt.value = d;
+                try {
+                    const dt = new Date(d + 'T12:00:00');
+                    opt.textContent = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                } catch (_) {
+                    opt.textContent = d;
+                }
+                dateSel.appendChild(opt);
+            });
+            // Pick requested date if present; otherwise fall back to most recent
+            const dateMatch = date && Array.from(dateSel.options).some(o => o.value === date);
+            const targetDate = dateMatch ? date : (dateSel.options[0] ? dateSel.options[0].value : '');
+            if (targetDate) {
+                dateSel.value = targetDate;
+                _recLastDate = targetDate;
+                await window._loadRecSegments(targetDate);
+
+                // Auto-play the requested segment
+                if (segment) {
+                    try {
+                        const segCamParam = effectiveCam ? `&camera=${encodeURIComponent(effectiveCam)}` : '';
+                        const segResp = await fetch(`/api/recordings/segments?date=${targetDate}${segCamParam}`);
+                        const segData = await segResp.json();
+                        const match = (segData.segments || []).find(s => s.filename === segment);
+                        const label = match ? match.time : segment;
+                        window._playRecording(targetDate, segment, label);
+                    } catch (_) {
+                        window._playRecording(targetDate, segment, segment);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('Deep-link DVR load failed:', e);
+    }
+
+    // Strip deep-link params from the URL so a manual refresh doesn't replay
+    if (window.history && window.history.replaceState) {
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, '', cleanUrl);
     }
 }
 

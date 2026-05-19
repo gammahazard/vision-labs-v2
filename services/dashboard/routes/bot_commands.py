@@ -83,10 +83,23 @@ def _log_telegram_command(username: str, user_id: str, command: str,
 def _save_telegram_media(username: str, user_id: str,
                          media_bytes: bytes, media_type: str,
                          ext: str = ".jpg") -> str:
-    """Save media (snapshot/clip) to the per-user audit folder. Returns relative path."""
+    """Save media (snapshot/clip) to the per-user audit folder. Returns relative path.
+
+    `media_type` is one of `snapshot`, `snapshot_<cam>`, `clip`, `clip_<cam>`,
+    or anything else (treated as `other`). Callers pass camera-suffixed
+    types from per-camera dispatch; previously the comparison was strict
+    `== "snapshot"` so every per-camera media ended up under `clips/`.
+    """
     try:
         folder_name = f"@{username}" if username else f"id_{user_id}"
-        subdir = "snapshots" if media_type == "snapshot" else "clips"
+        # Normalize the type prefix so `snapshot_cam2` and `snapshot` both
+        # land under the `snapshots/` subdir.
+        if media_type.startswith("snapshot"):
+            subdir = "snapshots"
+        elif media_type.startswith("clip"):
+            subdir = "clips"
+        else:
+            subdir = "other"
         media_dir = os.path.join(TELEGRAM_LOG_DIR, folder_name, subdir)
         os.makedirs(media_dir, exist_ok=True)
 
@@ -129,16 +142,29 @@ def _seed_users_from_env():
         return  # Already has users
     if not TELEGRAM_ALLOWED_USERS:
         return
+    # Admin promotion requires explicit opt-in via TELEGRAM_ADMIN_USERS.
+    # Previously every user in TELEGRAM_ALLOWED_USERS was seeded as
+    # "admin", which silently gave anyone in the env list /arm + /disarm
+    # privileges — surprising default for what's just an allowlist.
+    admin_ids_env = os.getenv("TELEGRAM_ADMIN_USERS", "")
+    admin_ids = {
+        u.strip() for u in admin_ids_env.split(",") if u.strip().isdigit()
+    }
     for uid in TELEGRAM_ALLOWED_USERS:
+        uid_str = str(uid)
+        role = "admin" if uid_str in admin_ids else "user"
         meta = json.dumps({
             "chat_id": TELEGRAM_CHAT_ID,
-            "name": "Admin (seeded)",
+            "name": "Admin (seeded)" if role == "admin" else "User (seeded)",
             "username": "",
-            "role": "admin",
+            "role": role,
             "approved_at": datetime.now(TZ_LOCAL).strftime("%Y-%m-%d %H:%M"),
         })
-        ctx.r.hset(ctx.TELEGRAM_USERS_KEY, str(uid), meta)
-    logger.info(f"Seeded {len(TELEGRAM_ALLOWED_USERS)} user(s) from TELEGRAM_ALLOWED_USERS env var")
+        ctx.r.hset(ctx.TELEGRAM_USERS_KEY, uid_str, meta)
+    logger.info(
+        f"Seeded {len(TELEGRAM_ALLOWED_USERS)} user(s) from TELEGRAM_ALLOWED_USERS env "
+        f"({len(admin_ids)} promoted to admin via TELEGRAM_ADMIN_USERS)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -319,8 +345,15 @@ async def poll_telegram_callbacks():
                                 last_name=msg_last, language_code=msg_lang)
 
                     if not authorized:
-                        # Silent rejection — don't reveal bot exists
-                        logger.warning(f"Unauthorized command from user {msg_user_id}: {text}")
+                        # Silent rejection — don't reveal bot exists. Don't
+                        # log the full message text — an unauthenticated
+                        # probe could paste secrets / PII to test the bot
+                        # and we'd persist them. Log first token + length.
+                        first_token = (text.split(maxsplit=1) or [""])[0][:40]
+                        logger.warning(
+                            f"Unauthorized command from user {msg_user_id}: "
+                            f"first_token={first_token!r} len={len(text)}"
+                        )
                         # Emit event so it shows in the dashboard events feed
                         try:
                             ctx.r.xadd(ctx.EVENT_STREAM, {
@@ -1036,6 +1069,18 @@ async def _handle_photo(photo_list: list, chat_id: str = "",
 
             photo_bytes = dl_resp.content
 
+        # Refuse oversize uploads — a 20MB image would blow Ollama's
+        # request and waste GPU time. Telegram's own limit is 10MB but
+        # tighten to 8MB here so we fail fast before describe_scene.
+        MAX_PHOTO_BYTES = 8 * 1024 * 1024
+        if len(photo_bytes) > MAX_PHOTO_BYTES:
+            await send_text(
+                f"⚠️ Photo too large ({len(photo_bytes) // 1024 // 1024} MB). "
+                f"Limit is {MAX_PHOTO_BYTES // 1024 // 1024} MB.",
+                chat_id=chat_id,
+            )
+            return
+
         # Save to audit trail
         _save_telegram_media(username, user_id, photo_bytes, "snapshot", ".jpg")
 
@@ -1506,11 +1551,18 @@ async def _cmd_timelapse(chat_id: str = "", text: str = "", **kwargs):
     if cam_ids and len(cam_ids) == 1 and cam_ids[0] != "all":
         search_globs = [os.path.join(SNAPSHOT_DIR, cam_ids[0], "*.jpg")]
     else:
-        # Scan every camera subdir + legacy root
+        # Scan every camera subdir + legacy root. Guard the listdir —
+        # on a fresh install or snapshot-volume mishap the dir may not
+        # exist, and an unhandled OSError used to crash the command.
+        try:
+            entries = os.listdir(SNAPSHOT_DIR)
+        except OSError as e:
+            logger.warning(f"Timelapse: cannot list {SNAPSHOT_DIR}: {e}")
+            entries = []
         subdir_globs = [
             os.path.join(SNAPSHOT_DIR, d, "*.jpg")
-            for d in os.listdir(SNAPSHOT_DIR)
-            if os.path.isdir(os.path.join(SNAPSHOT_DIR, d)) and d != "vehicles" and d != "clips"
+            for d in entries
+            if os.path.isdir(os.path.join(SNAPSHOT_DIR, d)) and d not in ("vehicles", "clips")
         ]
         search_globs = subdir_globs + [os.path.join(SNAPSHOT_DIR, "*.jpg")]
 

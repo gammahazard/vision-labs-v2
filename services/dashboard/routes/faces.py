@@ -14,6 +14,8 @@ ENDPOINTS:
     GET    /api/faces/{face_id}/photo — Get face thumbnail
 """
 
+import urllib.parse
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 import httpx
@@ -93,6 +95,30 @@ async def delete_face(face_id: int):
     except Exception as e:
         ctx.logger.warning(f"Face deletion failed: {e}")
         return JSONResponse(status_code=503, content={"error": "Face recognizer not available"})
+
+
+@router.post("/faces/by_name/{name}/demographics")
+async def set_face_demographics(name: str, data: dict):
+    """Proxy: pin sex/age override for every angle of `name`.
+
+    `name` is URL-encoded before being injected into the upstream URL so
+    that values containing `/`, `?`, `#` or whitespace can't accidentally
+    route to a different face-recognizer endpoint.
+    """
+    safe_name = urllib.parse.quote(name, safe="")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{ctx.FACE_API_URL}/api/faces/by_name/{safe_name}/demographics",
+                json=data,
+                timeout=5,
+            )
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception as e:
+        ctx.logger.warning(f"Demographics override failed: {e}")
+        return JSONResponse(
+            status_code=503, content={"error": "Face recognizer not available"}
+        )
 
 
 @router.get("/faces/{face_id}/photo")

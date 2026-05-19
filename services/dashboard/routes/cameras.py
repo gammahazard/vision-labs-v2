@@ -12,11 +12,12 @@ ENDPOINTS:
     PUT  /api/cameras/{id}      — update one (admin)
     DELETE /api/cameras/{id}    — remove one (admin)
 
-WHY THIS EXISTS (Phase 7 of REFACTOR_PLAN.md):
-    Scaffold multi-camera support. The actual per-camera service spawning
-    (Phase 7b) reads from this registry. Until 7b, the registry is read-
-    only informational for the UI: today's single camera is seeded from
-    env vars and still served via the existing single-CAMERA_ID services.
+WHY THIS EXISTS:
+    Scaffolds multi-camera support. The orchestrator service watches this
+    registry (via `cameras:events` pub/sub) and reconciles compose profiles
+    automatically — adding/removing a camera here brings up/tears down
+    its per-slot detectors + tracker + recorder. Slot names cam1..cam5
+    map 1:1 to compose profiles.
 
 AUTH:
     All endpoints require a valid session cookie (enforced by the HTTP
@@ -400,10 +401,9 @@ async def update_one(camera_id: str, request: Request):
 async def delete_one(camera_id: str):
     """Remove a camera from the registry.
 
-    Phase 7b: a delete also nudges the orchestrator (via Redis pub/sub
-    inside registry.delete_camera), which will tear down the matching
-    profile's services within seconds. The dashboard does not invoke
-    Docker directly.
+    Also nudges the orchestrator (via Redis pub/sub inside
+    `registry.delete_camera`), which tears down the matching profile's
+    services within seconds. The dashboard does not invoke Docker directly.
     """
     removed = registry.delete_camera(camera_id)
     if not removed:

@@ -8,7 +8,7 @@
     <meta name="description" content="Real-time system monitoring with Grafana dashboards for Vision Labs">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="monitoring.css">
+    <link rel="stylesheet" href="monitoring.css?v=2">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -90,8 +90,16 @@
             </div>
         </div>
 
-        <!-- Grafana Embed -->
-        <div class="mon-iframe-container">
+        <!-- Tab switcher (Grafana / Containers) -->
+        <div class="mon-tab-bar" role="tablist">
+            <button class="mon-tab mon-tab--active" id="tabGrafana" role="tab" aria-selected="true"
+                    onclick="window._monShowTab('grafana')">📈 Grafana</button>
+            <button class="mon-tab" id="tabContainers" role="tab" aria-selected="false"
+                    onclick="window._monShowTab('containers')">📦 Containers</button>
+        </div>
+
+        <!-- Grafana tab -->
+        <div class="mon-iframe-container mon-tab-panel" id="panelGrafana">
             <div class="mon-iframe-toolbar">
                 <span class="mon-iframe-title">📈 Grafana Dashboard</span>
                 <div class="mon-iframe-actions">
@@ -117,9 +125,23 @@
                 </div>
             </div>
         </div>
+
+        <!-- Containers tab -->
+        <div class="mon-iframe-container mon-tab-panel" id="panelContainers" hidden>
+            <div class="mon-iframe-toolbar">
+                <span class="mon-iframe-title">📦 Project Containers <span id="containersAge" class="mon-iframe-hint" style="margin-left: 8px;"></span></span>
+                <div class="mon-iframe-actions">
+                    <button class="mon-iframe-expand-btn" onclick="window._monRefreshContainers()" title="Refresh container list">↻</button>
+                    <a href="https://localhost:9443" target="_blank" rel="noopener" class="mon-grafana-link" title="Open Portainer (full container management UI, opens in new tab — Portainer blocks iframe embedding for security)">↗ Open Portainer</a>
+                </div>
+            </div>
+            <div class="mon-containers-wrapper" id="monContainersWrapper">
+                <div class="mon-iframe-loading"><div class="mon-spinner"></div><span>Loading containers…</span></div>
+            </div>
+        </div>
     </div>
 
-    <script src="monitoring.js?v=1"></script>
+    <script src="monitoring.js?v=2"></script>
     <script src="nav.js?v=3"></script>
 </body>
 

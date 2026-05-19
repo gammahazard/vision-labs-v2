@@ -27,6 +27,7 @@ LLM:
     Tool calling is used for structured actions (query events, send alerts).
 """
 
+import asyncio
 import os
 import json
 import logging
@@ -158,8 +159,10 @@ async def chat(req: ChatRequest):
     system_prompt = build_system_prompt(config, system_context)
     messages = [{"role": "system", "content": system_prompt}]
 
-    # Add conversation history (from client)
-    for msg in req.history[-20:]:  # Last 20 messages for context
+    # Add conversation history (from client). Keep this SHORT — long history
+    # is the #1 cause of Qwen regurgitating stale wrong answers instead of
+    # calling tools fresh. 6 messages = 3 user turns + 3 assistant replies.
+    for msg in req.history[-6:]:
         if msg.get("role") in ("user", "assistant"):
             messages.append({"role": msg["role"], "content": msg["content"]})
 
@@ -177,15 +180,25 @@ async def chat(req: ChatRequest):
     request_id = uuid.uuid4().hex
     ai_state.set_request_id(request_id)
 
-    try:
-        # First call — may include tool calls
-        response = client.chat(
+    # Single-turn Ollama call helper. The ollama python client is SYNC, so
+    # we wrap it in asyncio.to_thread to keep the FastAPI event loop free
+    # for other requests during the 5-30s the model is thinking. We also
+    # bound each turn to 60s so a stuck Ollama (GPU OOM, model swap) can't
+    # hang the request indefinitely.
+    def _chat_turn():
+        return client.chat(
             model=OLLAMA_MODEL,
             messages=messages,
             tools=TOOLS,
             options={"num_ctx": 8192},
             think=False,
             keep_alive=OLLAMA_KEEP_ALIVE,
+        )
+
+    try:
+        # First call — may include tool calls
+        response = await asyncio.wait_for(
+            asyncio.to_thread(_chat_turn), timeout=60.0
         )
 
         # Handle tool calls if any
@@ -208,13 +221,8 @@ async def chat(req: ChatRequest):
                 })
 
             # Get the next response with tool results
-            response = client.chat(
-                model=OLLAMA_MODEL,
-                messages=messages,
-                tools=TOOLS,
-                options={"num_ctx": 8192},
-                think=False,
-                keep_alive=OLLAMA_KEEP_ALIVE,
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_chat_turn), timeout=60.0
             )
 
         # Extract final response text
@@ -260,9 +268,16 @@ async def chat(req: ChatRequest):
 
         return {"reply": reply}
 
+    except asyncio.TimeoutError:
+        ai_state.collect_media(request_id)
+        logger.warning("AI chat turn timed out (60s)")
+        return JSONResponse(
+            status_code=504,
+            content={"error": "AI took too long to respond. Try a simpler question or check Ollama health."},
+        )
     except Exception as e:
         ai_state.collect_media(request_id)  # Clean up on error
-        logger.error(f"AI chat error: {e}")
+        logger.exception(f"AI chat error: {e}")
         return JSONResponse(
             status_code=500,
             content={"error": f"AI unavailable: {str(e)}"},
@@ -323,7 +338,10 @@ async def get_reminders():
 # ---------------------------------------------------------------------------
 # Vision Model (MiniCPM-V) — on-demand image analysis
 # ---------------------------------------------------------------------------
-VISION_MODEL = os.getenv("VISION_MODEL", "minicpm-v")
+# Use the canonical VISION_MODEL from constants — single source of truth.
+# (Previously this file shadowed it with a different env var name
+# `VISION_MODEL` vs constants' `OLLAMA_VISION_MODEL` — silent config split.)
+from constants import VISION_MODEL
 
 
 class VisionRequest(BaseModel):
@@ -335,6 +353,12 @@ class VisionRequest(BaseModel):
 @router.get("/vision/status")
 async def get_vision_status():
     """Check if the MiniCPM-V vision model is available."""
+    # If the tier env disables vision (small/mid tiers can set
+    # VISION_MODEL="" to skip the multimodal model), short-circuit
+    # cleanly. The previous `any("" in name for ...)` test was always
+    # True, so an empty model name would be reported as "available."
+    if not VISION_MODEL or not VISION_MODEL.strip():
+        return {"available": False, "model": "", "status": "disabled"}
     try:
         client = ollama_lib.Client(host=OLLAMA_HOST)
         models = client.list()
@@ -344,7 +368,7 @@ async def get_vision_status():
             name = getattr(m, "model", None) or getattr(m, "name", "") or ""
             model_names.append(name)
         target = VISION_MODEL.split(":")[0]
-        downloaded = any(target in name for name in model_names)
+        downloaded = bool(target) and any(target in name for name in model_names)
 
         if not downloaded:
             return {"available": False, "model": VISION_MODEL, "status": "not_found"}

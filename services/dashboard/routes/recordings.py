@@ -6,9 +6,9 @@ from the camera DVR (recorder service). Extracted from video_pipeline.py
 so DVR functionality remains after video pipeline removal.
 """
 
+import asyncio
 import os
 import logging
-import subprocess as _subprocess
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -20,6 +20,42 @@ router = APIRouter()
 
 RECORDINGS_DIR = Path("/data/recordings")
 DEFAULT_CAMERA = os.getenv("CAMERA_ID", "cam1")
+
+# Cap on the remux cache (`/tmp/rec-cache`). Without this the cache grew
+# unbounded — every distinct .ts segment ever played stayed as an .mp4
+# forever, eventually filling the container's tmpfs. Eviction is LRU by
+# mtime when the cache exceeds the cap.
+REC_CACHE_DIR = Path("/tmp/rec-cache")
+REC_CACHE_MAX_BYTES = int(os.getenv("REC_CACHE_MAX_BYTES", str(5 * 1024 * 1024 * 1024)))  # 5 GB
+
+
+def _evict_rec_cache_if_full() -> None:
+    """LRU eviction by mtime when the cache exceeds REC_CACHE_MAX_BYTES."""
+    try:
+        if not REC_CACHE_DIR.is_dir():
+            return
+        files = [
+            (p, p.stat().st_size, p.stat().st_mtime)
+            for p in REC_CACHE_DIR.iterdir()
+            if p.is_file() and p.suffix == ".mp4"
+        ]
+        total = sum(s for _p, s, _m in files)
+        if total <= REC_CACHE_MAX_BYTES:
+            return
+        # Drop oldest-mtime first until we're under the cap with some slack.
+        target = int(REC_CACHE_MAX_BYTES * 0.8)
+        files.sort(key=lambda t: t[2])  # oldest first
+        for p, size, _mtime in files:
+            if total <= target:
+                break
+            try:
+                p.unlink()
+                total -= size
+                logger.info(f"rec-cache evicted {p.name} ({size//1024//1024} MB)")
+            except OSError:
+                continue
+    except Exception as e:
+        logger.warning(f"rec-cache eviction failed: {e}")
 
 
 def _resolve_camera(camera: str) -> str:
@@ -112,15 +148,20 @@ async def stream_recording(date: str, segment: str, camera: str = ""):
     if not file_path.is_file():
         return JSONResponse({"error": "Recording not found"}, status_code=404)
 
-    # Cache remuxed MP4 in /tmp so repeated plays are instant
-    cache_dir = Path("/tmp/rec-cache")
-    cache_dir.mkdir(exist_ok=True)
-    mp4_name = f"{cam}_{safe_date}_{safe_segment.replace('.ts', '.mp4')}"
-    mp4_path = cache_dir / mp4_name
+    # Cache remuxed MP4 in /tmp so repeated plays are instant.
+    REC_CACHE_DIR.mkdir(exist_ok=True)
+    # Use `/` as a path separator inside the filename via `__` so the
+    # mp4 name can't accidentally collide when one camera+date prefix
+    # extends into another. (cam="a", date="b_c") vs (cam="a_b", date="c")
+    # used to map to the same file with a single `_`.
+    mp4_name = f"{cam}__{safe_date}__{safe_segment.replace('.ts', '.mp4')}"
+    mp4_path = REC_CACHE_DIR / mp4_name
 
     # Only re-encode if not already cached (or source is newer)
     if not mp4_path.exists() or mp4_path.stat().st_mtime < file_path.stat().st_mtime:
-        cmd = [
+        # Run ffmpeg as a child process via asyncio so a slow remux
+        # doesn't block other requests on the FastAPI event loop.
+        proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y",
             "-hide_banner", "-loglevel", "error",
             "-i", str(file_path),
@@ -133,11 +174,21 @@ async def stream_recording(date: str, segment: str, camera: str = ""):
             "-movflags", "+faststart",
             "-f", "mp4",
             str(mp4_path),
-        ]
-        result = _subprocess.run(cmd, capture_output=True, timeout=300)
-        if result.returncode != 0:
-            logger.warning(f"ffmpeg encode failed: {result.stderr.decode()[:200]}")
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.warning(f"ffmpeg remux timed out for {file_path}")
+            return JSONResponse({"error": "Remux timed out"}, status_code=504)
+        if proc.returncode != 0:
+            logger.warning(f"ffmpeg encode failed: {stderr.decode(errors='ignore')[:200]}")
             return JSONResponse({"error": "Failed to convert recording"}, status_code=500)
+        # Best-effort cache trim after a successful encode.
+        _evict_rec_cache_if_full()
 
     return FileResponse(
         str(mp4_path),

@@ -205,8 +205,23 @@
         },
         {
           "expr": "sum by (camera) (rate(vl_events_total{event_type=\"vehicle_detected\"}[1m])) * 60",
-          "legendFormat": "Vehicle \u00b7 {{camera}}",
+          "legendFormat": "Vehicle detected \u00b7 {{camera}}",
           "refId": "D"
+        },
+        {
+          "expr": "sum by (camera) (rate(vl_events_total{event_type=\"vehicle_idle\"}[1m])) * 60",
+          "legendFormat": "Vehicle idle \u00b7 {{camera}}",
+          "refId": "E"
+        },
+        {
+          "expr": "sum by (camera) (rate(vl_events_total{event_type=\"vehicle_left\"}[1m])) * 60",
+          "legendFormat": "Vehicle left \u00b7 {{camera}}",
+          "refId": "F"
+        },
+        {
+          "expr": "sum by (camera) (rate(vl_events_total{event_type=\"action_changed\"}[1m])) * 60",
+          "legendFormat": "Action change \u00b7 {{camera}}",
+          "refId": "G"
         }
       ]
     },
@@ -401,6 +416,11 @@
           "expr": "vl_stream_length{stream=\"events\"}",
           "legendFormat": "events \u00b7 {{camera}}",
           "refId": "C"
+        },
+        {
+          "expr": "vl_stream_length{stream=\"vehicles\"}",
+          "legendFormat": "vehicles \u00b7 {{camera}}",
+          "refId": "D"
         }
       ]
     },
@@ -1035,9 +1055,130 @@
           "refId": "C"
         }
       ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 },
+      "id": 200,
+      "panels": [],
+      "title": "Host",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 46 },
+      "id": 201,
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "title": "Disk Usage (% used)",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|9p\",mountpoint!~\"/mnt/wslg.*|/mnt/wsl|/run.*|/tmp/.*\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|9p\",mountpoint!~\"/mnt/wslg.*|/mnt/wsl|/run.*|/tmp/.*\"}))",
+          "legendFormat": "{{mountpoint}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 46 },
+      "id": 202,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "title": "Disk Free Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|9p\",mountpoint!~\"/mnt/wslg.*|/mnt/wsl|/run.*|/tmp/.*\"}",
+          "legendFormat": "free \u00b7 {{mountpoint}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 54 },
+      "id": 203,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "title": "CPU Usage (%)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))",
+          "legendFormat": "cpu total",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 54 },
+      "id": 204,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "title": "Memory Usage (%)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
+          "legendFormat": "memory used",
+          "refId": "A"
+        }
+      ]
     }
   ],
-  "refresh": "5s",
+  "refresh": "15s",
   "schemaVersion": 39,
   "tags": [
     "vision-labs"

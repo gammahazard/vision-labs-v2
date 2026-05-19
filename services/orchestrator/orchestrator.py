@@ -47,6 +47,8 @@ REDIS KEYS / CHANNELS:
 import json
 import logging
 import os
+import re
+import signal
 import subprocess
 import sys
 import time
@@ -83,14 +85,20 @@ RECONCILE_INTERVAL = int(os.getenv("RECONCILE_INTERVAL", "10"))
 REGISTRY_KEY = "cameras:registry"
 EVENTS_CHANNEL = "cameras:events"
 AUDIT_STREAM = "orchestrator:audit"
-AUDIT_MAXLEN = 500
+# Raised from 500 → 2000: with 5 cameras + periodic reconciles + apply/probe
+# rows, a busy day burned through 500 in under an hour. The dashboard's
+# "live status" timeline reads this stream, so a wider window is useful.
+AUDIT_MAXLEN = 2000
 
 # Setup-wizard hardware probe (Phase D). Dashboard publishes a request,
 # we spawn a one-shot nvidia-smi container and stream the result back.
 PROBE_REQUEST_CHANNEL = "setup:probe-request"
 PROBE_RESULT_STREAM = "setup:probe-result"
 PROBE_RESULT_MAXLEN = 50  # tiny — probe payloads are small + only consumed once
-PROBE_IMAGE = os.getenv("HW_PROBE_IMAGE", "nvidia/cuda:12.4.0-base-ubuntu22.04")
+# CUDA 12.8 is required for the Blackwell architecture (5070 Ti). The
+# previous default of 12.4.0 would silently fail to detect newer cards;
+# the probe would report "no GPUs" precisely when we most need to see them.
+PROBE_IMAGE = os.getenv("HW_PROBE_IMAGE", "nvidia/cuda:12.8.0-base-ubuntu22.04")
 PROBE_TIMEOUT = int(os.getenv("HW_PROBE_TIMEOUT", "120"))  # incl. first-time image pull
 
 # Config-apply (Phase F). When the setup wizard writes new tier/GPU values
@@ -113,6 +121,33 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("orchestrator")
+
+
+# ---------------------------------------------------------------------------
+# Concurrency + shutdown state
+# ---------------------------------------------------------------------------
+# Mutex around reconcile so the periodic loop and the cameras:events
+# listener can't run two reconciles at once. Without this we observed
+# audit log noise where two reconciles racing on the same `down` produce
+# `success=0, detail="removal of container ... is already in progress"`.
+_RECONCILE_LOCK = threading.Lock()
+
+# Flipped by the SIGTERM handler so the reconcile loop exits cleanly.
+_SHUTDOWN = threading.Event()
+
+
+# Credential-scrubbing regex for audit details. compose/build stderr can
+# echo RTSP URLs with user:pass embedded; the audit stream is consumed
+# by the dashboard's status panel and would otherwise leak creds to any
+# logged-in user.
+_RTSP_CRED_RE = re.compile(r"(rtsp[s]?://)[^@\s/]+@", re.IGNORECASE)
+
+
+def _scrub_creds(text: str) -> str:
+    """Replace `user:pass@` in any RTSP URL inside `text` with `***@`."""
+    if not text:
+        return text
+    return _RTSP_CRED_RE.sub(r"\1***@", text)
 
 
 # ---------------------------------------------------------------------------
@@ -237,16 +272,22 @@ def compose_down_profile(r: redis.Redis, profile: str) -> None:
 # ---------------------------------------------------------------------------
 # State queries
 # ---------------------------------------------------------------------------
-def desired_profiles(r: redis.Redis) -> set:
+def desired_profiles(r: redis.Redis) -> set | None:
     """Return the set of profile names that SHOULD be running based on the
     registry — that is, the camera ids that are both enabled AND in
     ALLOWED_PROFILES. All 5 slots (cam1-cam5) are profile-gated; each
-    runs only when the registry has its entry."""
+    runs only when the registry has its entry.
+
+    Returns None on Redis error (sentinel for "I don't know; skip this
+    reconcile"). Previously this returned an empty set on error, which
+    `reconcile` then interpreted as "stop everything" — a transient
+    Redis hiccup would tear down every camera.
+    """
     try:
         raw = r.hgetall(REGISTRY_KEY)
     except redis.RedisError as e:
         logger.warning(f"Registry read failed: {e}")
-        return set()
+        return None
     out = set()
     for cid, val in raw.items():
         try:
@@ -286,38 +327,121 @@ def running_profiles() -> set:
 # ---------------------------------------------------------------------------
 # Audit + reconcile
 # ---------------------------------------------------------------------------
-def _audit(r: redis.Redis, action: str, profile: str, success: bool, detail: str = "") -> None:
-    """Append an entry to the audit stream so the dashboard can show status."""
+def _audit(r: redis.Redis, action: str, profile: str, success: bool,
+           detail: str = "", request_id: str = "") -> None:
+    """Append an entry to the audit stream so the dashboard can show status.
+
+    `detail` is credential-scrubbed (any `rtsp://user:pass@` is masked)
+    so a build error or compose stderr can't leak camera credentials
+    through the dashboard status feed.
+
+    `request_id` is optional and echoed verbatim so the dashboard can
+    correlate audit rows with the apply/probe call that triggered them.
+    """
+    fields = {
+        "action": action,
+        "profile": profile,
+        "success": "1" if success else "0",
+        "detail": _scrub_creds(detail),
+        "timestamp": str(time.time()),
+    }
+    if request_id:
+        fields["request_id"] = request_id
     try:
-        r.xadd(AUDIT_STREAM, {
-            "action": action,
-            "profile": profile,
-            "success": "1" if success else "0",
-            "detail": detail,
-            "timestamp": str(time.time()),
-        }, maxlen=AUDIT_MAXLEN)
+        r.xadd(AUDIT_STREAM, fields, maxlen=AUDIT_MAXLEN)
     except redis.RedisError as e:
         logger.warning(f"Audit write failed: {e}")
 
 
 def reconcile(r: redis.Redis) -> None:
-    """Compare desired vs running profiles and apply the diff."""
-    desired = desired_profiles(r)
-    actual = running_profiles()
+    """Compare desired vs running profiles and apply the diff.
 
-    to_start = sorted(desired - actual)
-    to_stop = sorted(actual - desired)
+    Serialized on `_RECONCILE_LOCK` so the periodic safety-net pass and
+    the cameras:events listener can't run two reconciles at once. We saw
+    this fire in production — two near-simultaneous `down` invocations
+    on the same profile produced spurious audit entries like
+    "removal of container ... is already in progress".
+    """
+    with _RECONCILE_LOCK:
+        desired = desired_profiles(r)
+        if desired is None:
+            # Sentinel: registry unreadable. Skip the pass rather than
+            # treat an empty desired-set as "stop everything." Next tick
+            # (or pubsub nudge) will retry.
+            return
+        actual = running_profiles()
 
-    if to_start or to_stop:
-        logger.info(
-            f"Reconcile: desired={sorted(desired)} actual={sorted(actual)} "
-            f"start={to_start} stop={to_stop}"
-        )
+        to_start = sorted(desired - actual)
+        to_stop = sorted(actual - desired)
 
-    for profile in to_start:
-        compose_up_profile(r, profile)
-    for profile in to_stop:
-        compose_down_profile(r, profile)
+        if to_start or to_stop:
+            logger.info(
+                f"Reconcile: desired={sorted(desired)} actual={sorted(actual)} "
+                f"start={to_start} stop={to_stop}"
+            )
+
+        for profile in to_start:
+            compose_up_profile(r, profile)
+        for profile in to_stop:
+            compose_down_profile(r, profile)
+
+        # Publish a snapshot of every project container's state so the
+        # dashboard's Containers tab can render without needing its own
+        # Docker socket. Best-effort: a failure here doesn't break the
+        # reconcile pass that's the actual job of this function.
+        try:
+            _publish_container_state(r)
+        except Exception as e:
+            logger.debug(f"Container state publish failed: {e}")
+
+
+def _publish_container_state(r: redis.Redis) -> None:
+    """Snapshot all project containers via `docker compose ps` and store
+    the result as JSON in `orchestrator:containers` (60 s TTL).
+
+    The dashboard's `/api/containers` reads this. We use a TTL so a
+    dead orchestrator can't keep a stale list around forever; the
+    Containers tab will show "orchestrator offline" if the key is gone.
+    """
+    cmd = _compose_base_cmd() + ["ps", "-a", "--format", "json"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        logger.debug(f"docker compose ps failed: {e}")
+        return
+    if result.returncode != 0:
+        return
+    containers = []
+    # Compose v2 emits one JSON object per line
+    for line in (result.stdout or "").strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        # Keep just the fields the UI needs — keeps the payload tiny
+        # and avoids leaking command-line args or env into the response.
+        containers.append({
+            "name": obj.get("Name", ""),
+            "service": obj.get("Service", ""),
+            "state": obj.get("State", ""),
+            "status": obj.get("Status", ""),
+            "health": obj.get("Health", ""),
+            "image": obj.get("Image", ""),
+            "exit_code": obj.get("ExitCode", 0),
+        })
+    containers.sort(key=lambda c: c["name"])
+    payload = json.dumps({
+        "containers": containers,
+        "generated_at": time.time(),
+        "project": COMPOSE_PROJECT_NAME,
+    })
+    try:
+        r.setex("orchestrator:containers", 60, payload)
+    except redis.RedisError as e:
+        logger.debug(f"setex orchestrator:containers failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -404,8 +528,12 @@ def probe_listen_loop(r: redis.Redis) -> None:
                         maxlen=PROBE_RESULT_MAXLEN,
                     )
                     logger.info(f"Probe result published (id={request_id}, gpus={len(payload.get('gpus', []))})")
-                    _audit(r, "probe", "host", "error" not in payload,
-                           f"{len(payload.get('gpus', []))} GPU(s)" if "error" not in payload else payload["error"])
+                    _audit(
+                        r, "probe", "host",
+                        "error" not in payload,
+                        f"{len(payload.get('gpus', []))} GPU(s)" if "error" not in payload else payload["error"],
+                        request_id=request_id,
+                    )
                 except redis.RedisError as e:
                     logger.warning(f"Couldn't publish probe result: {e}")
         except redis.RedisError as e:
@@ -429,7 +557,7 @@ def apply_config(r: redis.Redis, services: list, request_id: str) -> None:
 
     if not valid:
         logger.info(f"config:apply {request_id}: no valid services to restart")
-        _audit(r, "apply", "config", True, "no services")
+        _audit(r, "apply", "config", True, "no services", request_id=request_id)
         return
 
     logger.info(f"config:apply {request_id}: recreating {valid}")
@@ -439,7 +567,11 @@ def apply_config(r: redis.Redis, services: list, request_id: str) -> None:
         ["up", "-d", "--force-recreate", "--no-deps"] + valid,
         timeout=240,
     )
-    _audit(r, "apply", "config", ok, f"{','.join(valid)}" + (f" — {err}" if err else ""))
+    _audit(
+        r, "apply", "config", ok,
+        f"{','.join(valid)}" + (f" — {err}" if err else ""),
+        request_id=request_id,
+    )
 
 
 def config_apply_listen_loop(r: redis.Redis) -> None:
@@ -495,6 +627,22 @@ def listen_loop(r: redis.Redis) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def _install_shutdown_handlers() -> None:
+    """Trap SIGTERM/SIGINT and flip _SHUTDOWN.
+
+    The main reconcile loop checks _SHUTDOWN on every iteration so it
+    can exit cleanly. In-flight `docker compose` subprocesses are NOT
+    interrupted — they're managed by the daemon and will finish on their
+    own; we just stop initiating new ones. Daemon listener threads die
+    when main returns.
+    """
+    def _handler(signum, _frame):
+        logger.info(f"Received signal {signum} — draining and exiting")
+        _SHUTDOWN.set()
+    signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGINT, _handler)
+
+
 def main() -> None:
     logger.info(f"Orchestrator starting. Allowed profiles: {sorted(ALLOWED_PROFILES)}")
     logger.info(f"Host project dir: {HOST_PROJECT_DIR}")
@@ -503,6 +651,8 @@ def main() -> None:
     if not ALLOWED_PROFILES:
         logger.error("ALLOWED_PROFILES is empty — nothing to orchestrate. Exiting.")
         sys.exit(1)
+
+    _install_shutdown_handlers()
 
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     for attempt in range(30):
@@ -533,13 +683,17 @@ def main() -> None:
     cfg_t = threading.Thread(target=config_apply_listen_loop, args=(cfg_r,), daemon=True)
     cfg_t.start()
 
-    # Safety-net reconcile loop
-    while True:
+    # Safety-net reconcile loop. `_SHUTDOWN.wait(timeout=N)` is a
+    # responsive sleep — SIGTERM unblocks immediately instead of
+    # waiting up to RECONCILE_INTERVAL seconds.
+    while not _SHUTDOWN.is_set():
         try:
             reconcile(r)
         except Exception as e:
             logger.warning(f"Reconcile error: {e}")
-        time.sleep(RECONCILE_INTERVAL)
+        if _SHUTDOWN.wait(timeout=RECONCILE_INTERVAL):
+            break
+    logger.info("Orchestrator main loop exited.")
 
 
 if __name__ == "__main__":

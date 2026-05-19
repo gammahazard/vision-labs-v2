@@ -51,12 +51,16 @@ async def warm_ollama():
 
     try:
         client = ollama_lib.Client(host=host)
-        # Check if model already exists
-        models = client.list()
+        loop = asyncio.get_event_loop()
+        # Both client.list() and client.pull() are synchronous network calls
+        # that can block for minutes on first-boot model download. Run them
+        # in the default executor so the FastAPI event loop keeps serving
+        # other requests (Telegram polling, /api/events, etc.) during the pull.
+        models = await loop.run_in_executor(None, client.list)
         model_names = [m.model for m in models.models] if models.models else []
         if not any(model in name for name in model_names):
             logger.info(f"Pulling AI model '{model}' (~9.3 GB, first-time download)...")
-            client.pull(model)
+            await loop.run_in_executor(None, client.pull, model)
             logger.info(f"AI model '{model}' downloaded successfully")
         else:
             logger.info(f"AI model '{model}' already available")

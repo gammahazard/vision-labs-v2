@@ -30,6 +30,7 @@ SECURITY:
 import os
 import io
 import json
+import html
 import time
 import base64
 import asyncio
@@ -38,6 +39,22 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 import redis
+
+
+def _esc(value) -> str:
+    """HTML-escape any user-controlled string before it lands in a Telegram
+    caption sent with parse_mode=HTML.
+
+    Captions used to interpolate `identity_name`, `zone`, `action`,
+    `vehicle_class`, and AI descriptions raw. A face enrolled with a
+    name like `<unclosed` was enough to make Telegram return 400 — and
+    `send_photo` would silently drop the whole notification. This helper
+    makes that an impossible failure mode and incidentally blocks any
+    HTML injection from a malicious face name.
+    """
+    if value is None:
+        return ""
+    return html.escape(str(value), quote=False)
 import httpx
 import numpy as np
 import cv2
@@ -95,21 +112,34 @@ logger = logging.getLogger("dashboard.notifications")
 _COOLDOWN_KEY = "notify:last"
 
 
-def _get_last_notification(event_type: str) -> float:
-    """Return the last-broadcast timestamp for the given event type, 0 if never."""
+def _cooldown_field(event_type: str, camera_id: str = "") -> str:
+    """Per-camera cooldown field. Returns `event_type:camera_id` so each
+    camera tracks its own cooldown — the global `event_type` key meant
+    a person event on cam1 would suppress notifications from cam2-5 for
+    the next 60s. Falls back to the bare event_type when no camera_id
+    is provided (legacy callers / global gates)."""
+    cid = (camera_id or "").strip()
+    return f"{event_type}:{cid}" if cid else event_type
+
+
+def _get_last_notification(event_type: str, camera_id: str = "") -> float:
+    """Return the last-broadcast timestamp for the given event type + camera, 0 if never."""
     try:
-        val = ctx.r.hget(_COOLDOWN_KEY, event_type)
+        val = ctx.r.hget(_COOLDOWN_KEY, _cooldown_field(event_type, camera_id))
         return float(val) if val else 0.0
     except (redis.RedisError, ValueError, TypeError):
         return 0.0
 
 
-def _set_last_notification(event_type: str, ts: float) -> None:
-    """Record the last-broadcast timestamp. Best-effort — failure to write
-    just falls back to the previous behavior (in-process counter), so we
-    swallow Redis errors rather than crashing the notification path."""
+def _set_last_notification(event_type: str, ts: float, camera_id: str = "") -> None:
+    """Record the last-broadcast timestamp for `event_type` on `camera_id`.
+
+    Best-effort — failure to write just falls back to the previous behavior
+    (in-process counter), so we swallow Redis errors rather than crashing
+    the notification path.
+    """
     try:
-        ctx.r.hset(_COOLDOWN_KEY, event_type, str(ts))
+        ctx.r.hset(_COOLDOWN_KEY, _cooldown_field(event_type, camera_id), str(ts))
     except redis.RedisError as e:
         logger.warning(f"Failed to persist cooldown timestamp: {e}")
 
@@ -176,6 +206,25 @@ def _get_all_chat_ids() -> list[str]:
 # ---------------------------------------------------------------------------
 # Telegram API helpers
 # ---------------------------------------------------------------------------
+async def _handle_429(resp: "httpx.Response", call_name: str) -> float:
+    """If `resp` is a 429 Too Many Requests, parse Telegram's retry_after
+    and return the wait seconds (cap 30 so we don't sleep forever on a
+    misconfigured chat). Otherwise return 0.
+    """
+    if resp.status_code != 429:
+        return 0.0
+    try:
+        body = resp.json()
+        wait = float(body.get("parameters", {}).get("retry_after", 1.0))
+    except Exception:
+        wait = 1.0
+    wait = min(max(0.5, wait), 30.0)
+    logger.warning(
+        f"Telegram 429 on {call_name}: retry_after={wait:.1f}s (will retry once)"
+    )
+    return wait
+
+
 async def send_text(message: str, chat_id: str = "",
                     reply_markup: dict | None = None) -> bool:
     """Send a plain text message to a specific Telegram chat.
@@ -190,29 +239,38 @@ async def send_text(message: str, chat_id: str = "",
         if reply_markup:
             payload["reply_markup"] = json.dumps(reply_markup)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{TELEGRAM_API}/sendMessage",
-                json=payload,
-                timeout=10,
-            )
-            if resp.status_code != 200:
-                logger.warning(f"Telegram sendMessage failed: {resp.status_code} {resp.text}")
-                return False
-            return True
+            for attempt in (1, 2):
+                resp = await client.post(
+                    f"{TELEGRAM_API}/sendMessage",
+                    json=payload,
+                    timeout=10,
+                )
+                wait = await _handle_429(resp, "sendMessage")
+                if wait and attempt == 1:
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    logger.warning(f"Telegram sendMessage failed: {resp.status_code} {resp.text}")
+                    return False
+                return True
+        return False
     except Exception as e:
         logger.warning(f"Telegram sendMessage error: {e}")
         return False
 
 
 async def broadcast_text(message: str) -> bool:
-    """Send a text message to ALL approved users."""
+    """Send a text message to ALL approved users — concurrently."""
     chat_ids = _get_all_chat_ids()
     if not chat_ids:
         return False
-    results = []
-    for cid in chat_ids:
-        results.append(await send_text(message, chat_id=cid))
-    return any(results)
+    # Was serial (`for cid: await send_text`), so N users × per-user-latency
+    # blocked the event loop. Now parallel: total = max(per-user-latency).
+    results = await asyncio.gather(
+        *(send_text(message, chat_id=cid) for cid in chat_ids),
+        return_exceptions=True,
+    )
+    return any(r is True for r in results)
 
 
 async def send_photo(photo_bytes: bytes, caption: str = "",
@@ -231,17 +289,23 @@ async def send_photo(photo_bytes: bytes, caption: str = "",
         if reply_markup:
             data["reply_markup"] = json.dumps(reply_markup)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{TELEGRAM_API}/sendPhoto",
-                data=data,
-                files={"photo": ("snapshot.jpg", photo_bytes, "image/jpeg")},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                logger.warning(f"Telegram sendPhoto failed: {resp.status_code} {resp.text}")
-                return 0
-            result = resp.json().get("result", {})
-            return result.get("message_id", 0)
+            for attempt in (1, 2):
+                resp = await client.post(
+                    f"{TELEGRAM_API}/sendPhoto",
+                    data=data,
+                    files={"photo": ("snapshot.jpg", photo_bytes, "image/jpeg")},
+                    timeout=15,
+                )
+                wait = await _handle_429(resp, "sendPhoto")
+                if wait and attempt == 1:
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    logger.warning(f"Telegram sendPhoto failed: {resp.status_code} {resp.text}")
+                    return 0
+                result = resp.json().get("result", {})
+                return result.get("message_id", 0)
+        return 0
     except Exception as e:
         logger.warning(f"Telegram sendPhoto error: {e}")
         return 0
@@ -250,7 +314,8 @@ async def send_photo(photo_bytes: bytes, caption: str = "",
 async def broadcast_photo(photo_bytes: bytes, caption: str = "",
                           reply_markup: dict = None,
                           camera_id: str = "") -> int:
-    """Send a photo to ALL approved users. Returns first message_id.
+    """Send a photo to ALL approved users concurrently. Returns first
+    successful message_id (0 if every send failed).
 
     `camera_id` is used to label the Prometheus notification counter
     so Grafana can chart "alerts per camera". Callers should pass the
@@ -260,12 +325,16 @@ async def broadcast_photo(photo_bytes: bytes, caption: str = "",
     chat_ids = _get_all_chat_ids()
     if not chat_ids:
         return 0
+    results = await asyncio.gather(
+        *(send_photo(photo_bytes, caption, reply_markup=reply_markup, chat_id=cid)
+          for cid in chat_ids),
+        return_exceptions=True,
+    )
     first_msg_id = 0
-    for cid in chat_ids:
-        mid = await send_photo(photo_bytes, caption,
-                               reply_markup=reply_markup, chat_id=cid)
-        if not first_msg_id and mid:
-            first_msg_id = mid
+    for r in results:
+        if isinstance(r, int) and r and not first_msg_id:
+            first_msg_id = r
+            break
 
     # Increment Prometheus notification counter
     if first_msg_id:
@@ -535,33 +604,42 @@ async def send_video(video_bytes: bytes, caption: str = "",
     try:
         data = {"chat_id": target, "caption": caption, "parse_mode": "HTML"}
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{TELEGRAM_API}/sendVideo",
-                data=data,
-                files={"video": ("clip.mp4", video_bytes, "video/mp4")},
-                timeout=30,
-            )
-            if resp.status_code != 200:
-                logger.warning(f"Telegram sendVideo failed: {resp.status_code} {resp.text}")
-                return 0
-            result = resp.json().get("result", {})
-            return result.get("message_id", 0)
+            for attempt in (1, 2):
+                resp = await client.post(
+                    f"{TELEGRAM_API}/sendVideo",
+                    data=data,
+                    files={"video": ("clip.mp4", video_bytes, "video/mp4")},
+                    timeout=30,
+                )
+                wait = await _handle_429(resp, "sendVideo")
+                if wait and attempt == 1:
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    logger.warning(f"Telegram sendVideo failed: {resp.status_code} {resp.text}")
+                    return 0
+                result = resp.json().get("result", {})
+                return result.get("message_id", 0)
+        return 0
     except Exception as e:
         logger.warning(f"Telegram sendVideo error: {e}")
         return 0
 
 
 async def broadcast_video(video_bytes: bytes, caption: str = "") -> int:
-    """Send a video to ALL approved users. Returns first message_id."""
+    """Send a video to ALL approved users concurrently. Returns first
+    successful message_id (0 if every send failed)."""
     chat_ids = _get_all_chat_ids()
     if not chat_ids:
         return 0
-    first_msg_id = 0
-    for cid in chat_ids:
-        mid = await send_video(video_bytes, caption, chat_id=cid)
-        if not first_msg_id and mid:
-            first_msg_id = mid
-    return first_msg_id
+    results = await asyncio.gather(
+        *(send_video(video_bytes, caption, chat_id=cid) for cid in chat_ids),
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, int) and r:
+            return r
+    return 0
 
 
 def build_clip(duration: float = 5.0, fps: int = 10, camera_id: str = "") -> bytes | None:
@@ -700,15 +778,19 @@ async def notify_person_detected(event_data: dict,
     if not is_configured():
         return 0
 
+    cam = event_data.get("camera_id", "")
     now = time.time()
     cooldown = _get_cooldown("notify_cooldown", 60)
-    last_sent = _get_last_notification("person")
+    last_sent = _get_last_notification("person", cam)
     if now - last_sent < cooldown:
         remaining = cooldown - (now - last_sent)
-        logger.debug(f"Person notification rate-limited ({remaining:.0f}s remaining in {cooldown}s cooldown)")
+        logger.debug(
+            f"Person notification rate-limited on {cam or 'global'} "
+            f"({remaining:.0f}s remaining in {cooldown}s cooldown)"
+        )
         return 0  # Rate limited
 
-    _set_last_notification("person", now)
+    _set_last_notification("person", now, cam)
 
     identity = event_data.get("identity_name", "")
     zone = event_data.get("zone", "")
@@ -716,11 +798,11 @@ async def notify_person_detected(event_data: dict,
     person_id = event_data.get("person_id", "unknown")
     name = identity if identity else person_id
     parts = [f"\U0001f6a8 <b>Person Detected</b>"]
-    parts.append(f"\u2022 Who: {name}")
+    parts.append(f"\u2022 Who: {_esc(name)}")
     if zone:
-        parts.append(f"\u2022 Zone: {zone}")
+        parts.append(f"\u2022 Zone: {_esc(zone)}")
     if action:
-        parts.append(f"\u2022 Action: {action}")
+        parts.append(f"\u2022 Action: {_esc(action)}")
     parts.append(f"\u2022 Time: {_now_str()}")
 
     caption = "\n".join(parts)
@@ -789,12 +871,12 @@ async def notify_person_identified(event_data: dict,
 
 
     parts = [f"\U0001f464 <b>Person Identified</b>"]
-    parts.append(f"\u2022 Name: {identity_name}")
-    parts.append(f"\u2022 Tracker ID: {person_id}")
+    parts.append(f"\u2022 Name: {_esc(identity_name)}")
+    parts.append(f"\u2022 Tracker ID: {_esc(person_id)}")
     if zone:
-        parts.append(f"\u2022 Zone: {zone}")
+        parts.append(f"\u2022 Zone: {_esc(zone)}")
     if action:
-        parts.append(f"\u2022 Action: {action}")
+        parts.append(f"\u2022 Action: {_esc(action)}")
     parts.append(f"\u2022 Time: {_now_str()}")
 
     caption = "\n".join(parts)
@@ -838,15 +920,19 @@ async def notify_vehicle_idle(event_data: dict,
     if not is_configured():
         return 0
 
+    cam = event_data.get("camera_id", "")
     now = time.time()
     cooldown = _get_cooldown("vehicle_cooldown", 60)
-    last_sent = _get_last_notification("vehicle_idle")
+    last_sent = _get_last_notification("vehicle_idle", cam)
     if now - last_sent < cooldown:
         remaining = cooldown - (now - last_sent)
-        logger.debug(f"Vehicle idle notification rate-limited ({remaining:.0f}s remaining in {cooldown}s cooldown)")
+        logger.debug(
+            f"Vehicle idle notification rate-limited on {cam or 'global'} "
+            f"({remaining:.0f}s remaining in {cooldown}s cooldown)"
+        )
         return 0  # Rate limited
 
-    _set_last_notification("vehicle_idle", now)
+    _set_last_notification("vehicle_idle", now, cam)
 
     vehicle_class = event_data.get("vehicle_class", "vehicle")
     zone = event_data.get("zone", "")
@@ -862,12 +948,12 @@ async def notify_vehicle_idle(event_data: dict,
         duration_str = f"{duration_raw:.0f}s"
 
     parts = [f"\U0001f697 <b>Vehicle Idling</b>"]
-    parts.append(f"\u2022 Type: {vehicle_class}")
+    parts.append(f"\u2022 Type: {_esc(vehicle_class)}")
     if zone:
-        parts.append(f"\u2022 Zone: {zone}")
+        parts.append(f"\u2022 Zone: {_esc(zone)}")
     parts.append(f"\u2022 Stationary: {duration_str}")
     if confidence:
-        parts.append(f"\u2022 Confidence: {confidence}")
+        parts.append(f"\u2022 Confidence: {_esc(confidence)}")
     parts.append(f"\u2022 Time: {_now_str()}")
 
     caption = "\n".join(parts)

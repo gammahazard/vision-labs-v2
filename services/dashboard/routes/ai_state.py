@@ -37,49 +37,61 @@ def set_gpu_ready_flag(ready: bool):
 # the media into the final reply before returning it to the caller.
 #
 # Why per-request: web chat and Telegram /ask can run concurrently.
-# With globals, one request could steal another's media.
+# Previously we tracked the "current" request id in a plain module-level
+# global, which made the two concurrent paths clobber each other —
+# request B would overwrite request A's pointer before A's tool dispatcher
+# ran, and A's stashed snapshot would land in B's bucket. The fix is a
+# ContextVar: each asyncio task and each thread inherits its own copy,
+# so set_request_id() in one chat handler never leaks into another's.
+import contextvars
 import threading
 
 _media_lock = threading.Lock()
 _pending_media: dict[str, dict] = {}  # {request_id: {snapshot, clip, images}}
 
-# Current request ID — set by the chat handler before calling the LLM
-_current_request_id: str | None = None
+# Per-task / per-thread current request ID. Inherited by sub-tasks
+# automatically (Python contextvars semantics).
+_current_request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "ai_current_request_id", default=None
+)
 
 
 def set_request_id(request_id: str):
-    """Set the current request ID for media stashing."""
-    global _current_request_id
-    _current_request_id = request_id
+    """Set the current request ID for media stashing.
+
+    Returns the previous token so the caller can `reset()` it on exit
+    if they want fully balanced scoping, but most callers can ignore
+    the return — the ContextVar dies with the task.
+    """
+    token = _current_request_id.set(request_id)
     with _media_lock:
         _pending_media[request_id] = {"snapshot": None, "clip": None, "images": None}
+    return token
+
+
+def _stash(field: str, value) -> None:
+    """Internal: stash a value into the current request's media bucket."""
+    rid = _current_request_id.get()
+    if rid is None:
+        return
+    with _media_lock:
+        if rid in _pending_media:
+            _pending_media[rid][field] = value
 
 
 def stash_snapshot(b64: str):
     """Stash a base64 snapshot for the current request."""
-    rid = _current_request_id
-    if rid:
-        with _media_lock:
-            if rid in _pending_media:
-                _pending_media[rid]["snapshot"] = b64
+    _stash("snapshot", b64)
 
 
 def stash_clip(filename: str):
     """Stash a clip filename for the current request."""
-    rid = _current_request_id
-    if rid:
-        with _media_lock:
-            if rid in _pending_media:
-                _pending_media[rid]["clip"] = filename
+    _stash("clip", filename)
 
 
 def stash_images(images: list[dict]):
     """Stash browse images for the current request."""
-    rid = _current_request_id
-    if rid:
-        with _media_lock:
-            if rid in _pending_media:
-                _pending_media[rid]["images"] = images
+    _stash("images", images)
 
 
 def collect_media(request_id: str) -> dict:

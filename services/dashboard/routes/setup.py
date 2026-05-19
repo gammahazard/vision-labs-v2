@@ -41,6 +41,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,7 +61,12 @@ SETUP_STATE_PATH = Path(os.getenv("SETUP_STATE_PATH", "/data/setup-state/setup.j
 
 PROBE_REQUEST_CHANNEL = "setup:probe-request"
 PROBE_RESULT_STREAM = "setup:probe-result"
-PROBE_TIMEOUT_SECONDS = 60  # nvidia/cuda base image pull can take ~30s on first run
+# Must exceed orchestrator's PROBE_TIMEOUT (120s). On a fresh install the
+# orchestrator first pulls the nvidia/cuda base image (~200 MB), then runs
+# nvidia-smi — both happen within 120s, but the dashboard previously gave
+# up at 60s and returned a false-negative "probe timed out" while the
+# orchestrator was still working in the background.
+PROBE_TIMEOUT_SECONDS = 150
 
 
 # ---------------------------------------------------------------------------
@@ -87,12 +93,33 @@ def _load_state() -> dict | None:
 
 
 def _write_state(state: dict) -> None:
-    """Atomically write setup.json (write to .tmp, then rename)."""
+    """Atomically write setup.json (write to .tmp, then rename).
+
+    Falls back to a truncate-and-write when the rename fails with EBUSY —
+    this happens when SETUP_STATE_PATH itself is a bind-mount target
+    (someone mapped `-v ./setup.json:/data/setup-state/setup.json` for
+    inspection). Same workaround pattern as env_writer.
+    """
     SETUP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(state, indent=2)
     tmp = SETUP_STATE_PATH.with_suffix(".tmp")
-    with tmp.open("w") as f:
-        json.dump(state, f, indent=2)
-    tmp.replace(SETUP_STATE_PATH)
+    try:
+        with tmp.open("w") as f:
+            f.write(payload)
+        tmp.replace(SETUP_STATE_PATH)
+    except OSError as e:
+        if getattr(e, "errno", None) == 16:  # EBUSY → bind-mount target
+            logger.warning(
+                f"setup.json appears bind-mounted (EBUSY); using truncate fallback"
+            )
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            with SETUP_STATE_PATH.open("w") as f:
+                f.write(payload)
+        else:
+            raise
 
 
 def is_setup_complete() -> bool:
@@ -111,12 +138,24 @@ def auto_mark_complete_if_preexisting() -> bool:
     if _load_state() is not None:
         return False
 
-    try:
-        r = _redis_client()
-        camera_count = r.hlen("cameras:registry")
-    except Exception as e:
-        logger.debug(f"Pre-existing-install check: registry read failed: {e}")
-        camera_count = 0
+    # Redis may be slow to come up alongside the dashboard on first boot
+    # after `docker compose up`. Retry a few times before treating an
+    # unreadable registry as "fresh install" — otherwise a backup-restore
+    # bootup where Redis lags by a few seconds would force the user through
+    # the wizard with cameras already registered.
+    camera_count = 0
+    last_error = None
+    for attempt in range(5):
+        try:
+            r = _redis_client()
+            camera_count = r.hlen("cameras:registry")
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            time.sleep(2)
+    if last_error is not None:
+        logger.debug(f"Pre-existing-install check: registry read failed: {last_error}")
 
     # The dashboard already has a forced-rotation flow for admin/admin, so by
     # the time anyone has a working stack with at least one camera, they've
@@ -282,6 +321,20 @@ async def apply_config(request: Request):
         return JSONResponse({"ok": False, "error": "detector_gpu must be 0/1/2/3"}, status_code=400)
     if "CHAT_GPU" in updates and updates["CHAT_GPU"] not in ("0", "1", "2", "3"):
         return JSONResponse({"ok": False, "error": "chat_gpu must be 0/1/2/3"}, status_code=400)
+    # Restrict model paths so a malicious / fat-fingered request can't
+    # write `POSE_MODEL=/etc/passwd` into .env. The detector would just
+    # fail to load, but it's cleaner to reject at the API.
+    _MODEL_PATH_RE = re.compile(r"^/models/[A-Za-z0-9_./-]+$")
+    if "POSE_MODEL" in updates and not _MODEL_PATH_RE.match(updates["POSE_MODEL"]):
+        return JSONResponse(
+            {"ok": False, "error": "pose_model must look like /models/<name>"},
+            status_code=400,
+        )
+    if "VEHICLE_MODEL" in updates and not _MODEL_PATH_RE.match(updates["VEHICLE_MODEL"]):
+        return JSONResponse(
+            {"ok": False, "error": "vehicle_model must look like /models/<name>"},
+            status_code=400,
+        )
 
     result = update_env(updates)
     if not result["ok"]:

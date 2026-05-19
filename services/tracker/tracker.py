@@ -25,7 +25,7 @@ DATA FLOW:
 TRACKING METHOD:
     Simple IoU (Intersection over Union) matching:
     - For each new detection, compute overlap with every tracked person's last bbox
-    - If overlap > threshold (50%), it's the same person → update their state
+    - If overlap > threshold (0.3), it's the same person → update their state
     - If no match, it's a new person → assign a new ID
     - If a tracked person has no match for N seconds → emit "person_left" event
 
@@ -39,7 +39,7 @@ CONFIG (environment variables):
     REDIS_HOST          — Redis server hostname (default: "127.0.0.1")
     REDIS_PORT          — Redis server port (default: 6379)
     IOU_THRESHOLD       — Min overlap to consider same person (default: 0.3)
-    LOST_TIMEOUT        — Seconds before a lost person triggers "person_left" (default: 5)
+    LOST_TIMEOUT        — Seconds before a lost person triggers "person_left" (default: 8)
 """
 
 import json
@@ -49,7 +49,6 @@ import time
 import signal
 import logging
 
-import numpy as np
 import redis
 
 # Action classifier — classifies posture from keypoints (no new model needed)
@@ -100,13 +99,12 @@ HD_FRAME_KEY = stream_key(_HD_FRAME_TMPL, camera_id=CAMERA_ID)
 # these to a UI knob later without a rebuild. Defaults preserve historic
 # behavior verbatim.
 MAX_EVENT_STREAM_LEN = int(os.getenv("MAX_EVENT_STREAM_LEN", "5000"))      # cap events:{cam_id}
-VEHICLE_RATE_LIMIT_SEC = int(os.getenv("VEHICLE_RATE_LIMIT_SEC", "3"))     # min seconds between vehicle events
 VEHICLE_IDLE_TIMEOUT = float(os.getenv("VEHICLE_IDLE_TIMEOUT", "90.0"))    # seconds stationary before idle alert
 VEHICLE_LOST_TIMEOUT = float(os.getenv("VEHICLE_LOST_TIMEOUT", "10.0"))    # seconds before dropping a tracked vehicle
 VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))   # lower than person IoU — parked cars don't move much
 CONFIG_RELOAD_INTERVAL = int(os.getenv("CONFIG_RELOAD_INTERVAL", "10"))    # check config every N detection messages
 ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))    # frames a new action must be stable for
-ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "2")) # once set, require N×multiplier to change away
+ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "1")) # once set, require N×multiplier to change away (1 = no stickiness)
 MIN_BBOX_AREA = int(os.getenv("MIN_BBOX_AREA", "3072"))                   # ~1% of 640×480 — skip tiny distant detections
 IDENTITY_GRACE_SECONDS = float(os.getenv("IDENTITY_GRACE_SECONDS", "4.0"))  # when suppress_known on, wait this long
                                                                             # for face recognition to identify them
@@ -181,16 +179,22 @@ class TrackedVehicle:
     seen in previous frames. Tracks duration for idle detection.
     """
 
+    # Class label changes are noisy frame-to-frame (truck flips to car
+    # when partly occluded). We keep a short history and report the
+    # mode so the event stamp matches what the vehicle MOSTLY looks like.
+    _CLASS_HISTORY_LEN = 10
+
     def __init__(self, vehicle_id: str, bbox: list, class_name: str,
                  confidence: float, timestamp: float):
         self.vehicle_id = vehicle_id
         self.bbox = bbox                    # Current bounding box [x1, y1, x2, y2]
-        self.class_name = class_name        # car, truck, bus, motorcycle
+        self.class_name = class_name        # car, truck, bus, motorcycle, bicycle
+        self._class_history: list[str] = [class_name]
         self.confidence = confidence
         self.first_seen = timestamp         # When this vehicle first appeared
         self.last_seen = timestamp          # Last frame it was detected in
         self.frame_count = 1
-        self.idle_alerted = False           # Whether idle notification was sent
+        self.idle_alerted = False           # Has idle notification fired
         self.snapshot_key = ""              # Redis key for stored snapshot
         self.snapshot_bbox = bbox           # Bbox at the time snapshot was captured
         # Track center positions for movement detection
@@ -198,7 +202,8 @@ class TrackedVehicle:
         cy = (bbox[1] + bbox[3]) / 2
         self.center_history: list[tuple] = [(cx, cy)]
 
-    def update(self, bbox: list, confidence: float, timestamp: float):
+    def update(self, bbox: list, class_name: str, confidence: float,
+               timestamp: float):
         """Update vehicle state with a new detection."""
         self.bbox = bbox
         self.confidence = confidence
@@ -210,6 +215,22 @@ class TrackedVehicle:
         self.center_history.append((cx, cy))
         if len(self.center_history) > 20:
             self.center_history.pop(0)
+        # Update class history → mode. Stabilises against noisy
+        # truck↔car flips on partial occlusion.
+        self._class_history.append(class_name)
+        if len(self._class_history) > self._CLASS_HISTORY_LEN:
+            self._class_history.pop(0)
+        # Mode (ties broken by most-recent label, which is
+        # what max() returns for ties on `count` due to stable iter).
+        counts: dict[str, int] = {}
+        for c in self._class_history:
+            counts[c] = counts.get(c, 0) + 1
+        self.class_name = max(counts, key=counts.get)
+        # If the vehicle visibly moves again, allow a fresh idle alert
+        # the next time it re-parks. Without this, a parked car that
+        # drives off + comes back would never emit a second vehicle_idle.
+        if self.idle_alerted and not self.is_stationary:
+            self.idle_alerted = False
 
     @property
     def duration(self) -> float:
@@ -219,26 +240,28 @@ class TrackedVehicle:
     @property
     def is_stationary(self) -> bool:
         """Check if the vehicle has stayed in roughly the same spot.
-        Returns True if the max displacement from the first recorded center
-        is less than 30 pixels (in sub-stream coordinates ~640x480).
+
+        Compares the CURRENT center against the MEDIAN of the rolling
+        20-sample history (~4s at 5 FPS). Threshold scales with bbox
+        width (10%, min 8 px) so the test works at any distance.
+
+        Why median, not first-sample: YOLO bbox jitter on a parked car
+        regularly produces 3-5 px shifts frame-to-frame even when the
+        car hasn't moved. Comparing against the oldest sample treats
+        that jitter as cumulative drift; against the median it averages
+        out. Also resists noisy outliers (single misdetection bbox).
         """
         if len(self.center_history) < 5:
-            return False  # Not enough data yet
-        first_cx, first_cy = self.center_history[0]
-        max_drift = 0.0
-        for cx, cy in self.center_history:
-            drift = ((cx - first_cx) ** 2 + (cy - first_cy) ** 2) ** 0.5
-            if drift > max_drift:
-                max_drift = drift
-        return max_drift < 30.0  # < 30px drift = stationary
-
-    @property
-    def center(self) -> tuple:
-        """Center point of the bounding box."""
-        return (
-            (self.bbox[0] + self.bbox[2]) / 2,
-            (self.bbox[1] + self.bbox[3]) / 2,
-        )
+            return False  # Not enough samples yet
+        xs = sorted(c[0] for c in self.center_history)
+        ys = sorted(c[1] for c in self.center_history)
+        mid = len(xs) // 2
+        ref_cx, ref_cy = xs[mid], ys[mid]
+        cur_cx, cur_cy = self.center_history[-1]
+        drift = ((cur_cx - ref_cx) ** 2 + (cur_cy - ref_cy) ** 2) ** 0.5
+        bbox_w = max(1.0, self.bbox[2] - self.bbox[0])
+        threshold = max(8.0, bbox_w * 0.10)
+        return drift < threshold
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +274,18 @@ class TrackedPerson:
     Stores their current bounding box, when they first appeared,
     when they were last seen, and movement history for direction estimation.
     """
+
+    # Identity-flip protection: when a NEW face-rec name comes in for a
+    # person who already has a sticky identity, require this many
+    # consecutive identity-load cycles agreeing on the new name before
+    # actually overwriting. Stops a single bad face frame from corrupting
+    # the track. Logs every observed flip attempt at INFO so unexpected
+    # behaviour shows up in the logs without silencing the data.
+    _IDENTITY_FLIP_CONFIRM_CYCLES = 3
+
+    # Per-person cooldown on action_changed events. Prevents spam when a
+    # pose oscillates around the debounce/sticky thresholds.
+    _ACTION_EVENT_COOLDOWN_SEC = 2.0
 
     def __init__(self, person_id: str, bbox: list, timestamp: float):
         self.person_id = person_id
@@ -265,7 +300,14 @@ class TrackedPerson:
         self.action_confidence = 0.0       # How confident in the action classification
         self._pending_action = "unknown"   # Candidate action being debounced
         self._pending_count = 0            # Consecutive frames with pending action
+        self._last_action_event_ts = 0.0   # Last action_changed emit time (cooldown)
         self.identity_name = ""            # Name from face recognition (sticky)
+        # Identity-flip debounce state. _pending_identity is the candidate
+        # name we're observing; _pending_identity_count is how many
+        # consecutive cycles it has appeared. The current sticky identity
+        # is in `identity_name` above.
+        self._pending_identity = ""
+        self._pending_identity_count = 0
 
     def update(self, bbox: list, timestamp: float, keypoints: list = None):
         """Update this person's state with a new detection. Returns previous action."""
@@ -276,10 +318,12 @@ class TrackedPerson:
         self.bbox_history.append(bbox)
         if len(self.bbox_history) > 10:
             self.bbox_history.pop(0)
-        # Classify action from keypoints (with debounce + sticky bias)
+        # Classify action from keypoints (with debounce + sticky bias).
+        # Pass bbox so the classifier can scale its pixel thresholds —
+        # otherwise distant/small detections fail the absolute-pixel checks.
         prev_action = self.action
         if keypoints:
-            result = classify_action(keypoints)
+            result = classify_action(keypoints, bbox=bbox)
             raw_action = result["action"]
             # Debounce: only change if new action is stable for N consecutive frames
             if raw_action == self._pending_action:
@@ -313,17 +357,34 @@ class TrackedPerson:
     def direction(self) -> str:
         """
         Estimate movement direction based on bbox center history.
+
+        Uses the mean of the first half vs the mean of the second half
+        of `bbox_history`, instead of comparing single endpoints — one
+        jittery sample at either end used to flip the answer between
+        frames. Threshold scales with the current bbox width so a tiny
+        wobble for a small/distant person isn't reported as motion.
+
         Returns: "left", "right", "stationary", or "unknown"
         """
-        if len(self.bbox_history) < 3:
+        n = len(self.bbox_history)
+        if n < 4:
             return "unknown"
 
-        # Compare first and last center positions
-        first_center_x = (self.bbox_history[0][0] + self.bbox_history[0][2]) / 2
-        last_center_x = (self.bbox_history[-1][0] + self.bbox_history[-1][2]) / 2
-        dx = last_center_x - first_center_x
+        half = n // 2
+        first_xs = [
+            (b[0] + b[2]) / 2 for b in self.bbox_history[:half]
+        ]
+        last_xs = [
+            (b[0] + b[2]) / 2 for b in self.bbox_history[-half:]
+        ]
+        dx = (sum(last_xs) / len(last_xs)) - (sum(first_xs) / len(first_xs))
 
-        if abs(dx) < 20:  # Pixel threshold for "stationary"
+        # Pixel threshold scaled by bbox width (min 8 px) so the
+        # classifier works at any frame size / distance.
+        bbox_w = max(1.0, self.bbox[2] - self.bbox[0])
+        threshold = max(8.0, bbox_w * 0.10)
+
+        if abs(dx) < threshold:
             return "stationary"
         elif dx > 0:
             return "right"
@@ -370,11 +431,37 @@ class PersonTracker:
         self.frame_width = 640   # Updated from detection messages
         self.frame_height = 480  # Updated from detection messages
         self._identity_load_time = 0  # Timestamp of last identity load
-        self._last_vehicle_event_time = 0.0  # Rate limiting for vehicle events
         self.tracked_vehicles: dict[str, TrackedVehicle] = {}  # vehicle_id → TrackedVehicle
         self._next_vehicle_id = 1  # Simple incrementing ID counter
         self.vehicle_idle_timeout = VEHICLE_IDLE_TIMEOUT  # Hot-reloadable via Redis config
         self.suppress_known = False  # Hot-reloadable: skip alerts for identified people
+        # Whether face-recognition is enabled for this camera (read from
+        # cameras:registry once at startup). When True, person_appeared
+        # is deferred by IDENTITY_GRACE_SECONDS so the face-recognizer
+        # has time to identify the person — gives us a single
+        # `person_identified` event instead of `appeared (Unknown)` + a
+        # follow-up `identified` for known faces. When False we announce
+        # immediately because deferring would just add dead time.
+        self.face_recognition_enabled = self._read_face_recognition_flag()
+
+    def _read_face_recognition_flag(self) -> bool:
+        """One-shot read of `cameras:registry[CAMERA_ID].detect_faces`."""
+        try:
+            raw = self.r.hget("cameras:registry", CAMERA_ID)
+            if not raw:
+                return True  # registry missing → default on
+            entry = json.loads(raw if isinstance(raw, str) else raw.decode())
+            enabled = bool(entry.get("detect_faces", True))
+            logger.info(
+                f"Face recognition for {CAMERA_ID}: "
+                f"{'enabled' if enabled else 'disabled'} "
+                f"(grace period for person_appeared "
+                f"{'will' if enabled else 'will NOT'} be applied)"
+            )
+            return enabled
+        except Exception as e:
+            logger.warning(f"Could not read detect_faces flag: {e} — defaulting to enabled")
+            return True
 
     def _generate_id(self) -> str:
         """Generate a short, readable person ID."""
@@ -478,11 +565,7 @@ class PersonTracker:
         - vehicle_idle: when a vehicle stays in roughly the same spot
                         for > VEHICLE_IDLE_TIMEOUT seconds
         """
-        now = time.time()
-
         # --- Step 1: Match incoming detections to tracked vehicles via IoU ---
-        matched_vehicle_ids = set()
-
         for det in detections:
             bbox = det.get("bbox", [0, 0, 0, 0])
             class_name = det.get("class_name", "vehicle")
@@ -505,8 +588,7 @@ class PersonTracker:
             if best_match_id:
                 # --- Existing vehicle: update state ---
                 veh = self.tracked_vehicles[best_match_id]
-                veh.update(bbox, confidence, timestamp)
-                matched_vehicle_ids.add(best_match_id)
+                veh.update(bbox, class_name, confidence, timestamp)
 
                 # Store/update snapshot if frame bytes provided
                 if frame_bytes and not veh.snapshot_key:
@@ -538,21 +620,23 @@ class PersonTracker:
                     self.r.setex(snap_key, 86400, frame_bytes)
                     self.r.setex(bbox_key, 86400, json.dumps(bbox))
                     veh.snapshot_key = snap_key
-                    veh.snapshot_bbox = bbox  # Store bbox matching the snapshot frame
+                    veh.snapshot_bbox = bbox
 
                 self.tracked_vehicles[vid] = veh
 
-                # Rate-limit vehicle_detected events to avoid flood
-                if now - self._last_vehicle_event_time >= VEHICLE_RATE_LIMIT_SEC:
-                    self._emit_vehicle_detected_event(veh, timestamp)
-                    self._last_vehicle_event_time = now
+                # Emit on first sighting. Removed the old global rate-limit
+                # — IoU matching already prevents same-vehicle duplicates,
+                # and the global timer was dropping legitimate events when
+                # two vehicles arrived within 3 seconds of each other.
+                self._emit_vehicle_detected_event(veh, timestamp)
 
-        # --- Step 2: Prune stale vehicles ---
+        # --- Step 2: Prune stale vehicles + emit vehicle_left ---
         stale_ids = [
             vid for vid, veh in self.tracked_vehicles.items()
             if timestamp - veh.last_seen > VEHICLE_LOST_TIMEOUT
         ]
         for vid in stale_ids:
+            self._emit_vehicle_left_event(self.tracked_vehicles[vid], timestamp)
             del self.tracked_vehicles[vid]
 
     def _emit_vehicle_detected_event(self, veh: 'TrackedVehicle', timestamp: float):
@@ -623,6 +707,47 @@ class PersonTracker:
 
         logger.info(
             f"EVENT: vehicle_idle | {veh.class_name} idling {veh.duration:.1f}s"
+            f"{f' | zone={zone_name}' if zone_name else ''}"
+        )
+
+    def _emit_vehicle_left_event(self, veh: 'TrackedVehicle', timestamp: float):
+        """Emit a vehicle_left event when a tracked vehicle disappears.
+
+        Fires when the vehicle hasn't been detected for VEHICLE_LOST_TIMEOUT
+        seconds. `duration` is the full visit length (first_seen → last_seen),
+        which is what the dashboard / Telegram feed will display for the
+        "car parked here for 2h" use case.
+        """
+        zone_name, alert_level = self._find_zone(veh.bbox)
+        alert_triggered = should_alert(alert_level) if alert_level else False
+        visit_duration = veh.last_seen - veh.first_seen
+
+        event = {
+            "camera_id": CAMERA_ID,
+            "event_type": "vehicle_left",
+            "timestamp": str(timestamp),
+            "person_id": "",
+            "identity_name": "",
+            "duration": str(round(visit_duration, 1)),
+            "direction": "",
+            "action": "",
+            "bbox": json.dumps(veh.bbox),
+            "frame_count": str(veh.frame_count),
+            "zone": zone_name,
+            "alert_level": alert_level,
+            "alert_triggered": str(alert_triggered),
+            "vehicle_class": veh.class_name,
+            "vehicle_confidence": str(round(veh.confidence, 3)),
+            "snapshot_key": veh.snapshot_key,
+            "snapshot_bbox": json.dumps(veh.snapshot_bbox),
+            "time_period": get_time_period(),
+        }
+
+        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
+        self.total_events += 1
+
+        logger.info(
+            f"EVENT: vehicle_left | {veh.class_name} after {visit_duration:.1f}s"
             f"{f' | zone={zone_name}' if zone_name else ''}"
         )
 
@@ -711,6 +836,11 @@ class PersonTracker:
             id_bbox = ident.get("bbox", [])
             if len(id_bbox) != 4:
                 continue
+            # Skip identities whose face bbox sits inside a dead zone —
+            # don't let an identity match in a "don't care" area assign
+            # a name to a legitimate person whose bbox happens to overlap.
+            if self._check_in_dead_zone(id_bbox):
+                continue
             # Match identity bbox to a tracked person via IoU
             best_iou = 0.0
             best_person = None
@@ -723,12 +853,49 @@ class PersonTracker:
                 if not best_person.identity_name:
                     # First identification — emit event
                     best_person.identity_name = id_name
+                    best_person._pending_identity = id_name
+                    best_person._pending_identity_count = 1
                     self._emit_event(
                         "person_identified", best_person, now,
                         extra={"identity_name": id_name}
                     )
+                elif id_name == best_person.identity_name:
+                    # Same name — clear any pending flip candidate.
+                    best_person._pending_identity = id_name
+                    best_person._pending_identity_count = 0
                 else:
-                    best_person.identity_name = id_name
+                    # Different name proposed for an already-identified
+                    # person. Require N consecutive cycles agreeing on
+                    # the new name before overwriting; one bad face
+                    # frame shouldn't corrupt the track. Always log so
+                    # unexpected flips show up in operator review.
+                    if best_person._pending_identity == id_name:
+                        best_person._pending_identity_count += 1
+                    else:
+                        best_person._pending_identity = id_name
+                        best_person._pending_identity_count = 1
+                    logger.info(
+                        f"Identity flip candidate: {best_person.person_id} "
+                        f"'{best_person.identity_name}' → '{id_name}' "
+                        f"({best_person._pending_identity_count}"
+                        f"/{TrackedPerson._IDENTITY_FLIP_CONFIRM_CYCLES})"
+                    )
+                    if (best_person._pending_identity_count
+                            >= TrackedPerson._IDENTITY_FLIP_CONFIRM_CYCLES):
+                        previous = best_person.identity_name
+                        logger.warning(
+                            f"Identity flip CONFIRMED: {best_person.person_id} "
+                            f"'{previous}' → '{id_name}'"
+                        )
+                        best_person.identity_name = id_name
+                        best_person._pending_identity_count = 0
+                        self._emit_event(
+                            "person_identified", best_person, now,
+                            extra={
+                                "identity_name": id_name,
+                                "previous_identity": previous,
+                            },
+                        )
 
     def _update_state(self):
         """
@@ -736,12 +903,21 @@ class PersonTracker:
 
         This is a single key (not a stream) that the dashboard reads to show
         who is currently in the frame RIGHT NOW. Overwritten on every update.
+
+        Filters out people whose bbox sits entirely inside a dead zone —
+        the dashboard's overlay also skips drawing them, so counting them
+        in `num_people` produced a "ghost count" mismatch (UI shows
+        "1 person" with no bbox visible).
         """
+        visible = [
+            p for p in self.tracked.values()
+            if not self._check_in_dead_zone(p.bbox)
+        ]
         state = {
             "camera_id": CAMERA_ID,
             "timestamp": str(time.time()),
-            "num_people": str(len(self.tracked)),
-            "people": json.dumps([p.to_dict() for p in self.tracked.values()]),
+            "num_people": str(len(visible)),
+            "people": json.dumps([p.to_dict() for p in visible]),
         }
         self.r.hset(STATE_KEY, mapping=state)
 
@@ -789,23 +965,41 @@ class PersonTracker:
                 )
                 matched_track_ids.add(best_track_id)
 
-                # Emit "person_appeared" on first stable detection (after ~1 second)
+                # Emit "person_appeared" on first stable detection.
+                #
+                # When face-recognition is enabled for this camera, ALWAYS
+                # defer by IDENTITY_GRACE_SECONDS so the face-recognizer
+                # has time to identify the person first. If identification
+                # lands inside the window, `_update_identities` fires a
+                # single `person_identified` event and the grace block at
+                # the bottom of update() skips the appeared event — this
+                # eliminates the old "Unknown appeared then Alice
+                # identified" dual-alert flow.
+                #
+                # When face-recognition is OFF (registry has
+                # detect_faces=false), deferring would just be dead time,
+                # so we announce immediately.
                 person = self.tracked[best_track_id]
-                if not person.announced and person.announce_after is None and person.frame_count >= 15:
-                    if self.suppress_known:
-                        # Defer announcement — give face recognition time to identify
+                if (not person.announced
+                        and person.announce_after is None
+                        and person.frame_count >= 15):
+                    if self.face_recognition_enabled:
                         person.announce_after = current_time + IDENTITY_GRACE_SECONDS
                     else:
-                        # No suppress_known — announce immediately
                         self._emit_event("person_appeared", person, current_time)
                         person.announced = True
                 elif (person.announced
                       and prev_action != person.action
                       and prev_action not in ("unknown", "")
-                      and person.action not in ("unknown", "")):
-                    # Action changed — emit transition event
+                      and person.action not in ("unknown", "")
+                      and current_time - person._last_action_event_ts
+                          >= TrackedPerson._ACTION_EVENT_COOLDOWN_SEC):
+                    # Action changed — emit transition event (with
+                    # per-person cooldown so a borderline pose doesn't
+                    # spam the feed when it oscillates).
                     self._emit_event("action_changed", person, current_time,
                                      extra={"prev_action": prev_action})
+                    person._last_action_event_ts = current_time
             else:
                 # No match — save for new track creation
                 unmatched_detections.append(det)
