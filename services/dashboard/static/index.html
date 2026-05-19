@@ -205,11 +205,15 @@
             .modal-header { padding: env(safe-area-inset-top, 0.5rem) 0.75rem 0.5rem; }
         }
 
-        /* ---- Bottom panels (Conditions + Faces) ---- */
-        /* Reuses .panel styles from style.css; wraps them in a 2-col grid on desktop. */
+        /* ---- Bottom panels (Conditions + Activity + Faces + Browse + Account) ---- */
+        /* Reuses .panel styles from style.css; wraps them in a 2-col grid on desktop.
+           align-items:start so each panel sizes to its own content — without it CSS
+           grid stretches both panels in a row to match the taller one, which makes
+           a collapsed panel still occupy the row's full height (looks broken). */
         .home-panels {
             display: grid;
             grid-template-columns: 1fr;
+            align-items: start;
             gap: 0.75rem;
             padding: 0 0.75rem 1.25rem;
             max-width: 1800px;

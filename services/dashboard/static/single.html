@@ -313,45 +313,9 @@
             </div>
         </section>
 
-        <!-- Account -->
-        <section class="panel account-panel collapsed" id="accountPanel">
-            <div class="panel-header" onclick="togglePanel(this)">
-                <h2>🔐 Account</h2>
-                <div style="display:flex;align-items:center;gap:6px;">
-                    <span class="auth-username" id="authUsername">--</span>
-                    <span class="panel-toggle">▼</span>
-                </div>
-            </div>
-            <div class="panel-body">
-                <div class="setting">
-                    <label class="setting-label">New Username (optional)</label>
-                    <input type="text" id="newUsername" class="setting-input" placeholder="Leave blank to keep current">
-                </div>
-                <div class="setting">
-                    <label class="setting-label">Current Password</label>
-                    <input type="password" id="currentPassword" class="setting-input" placeholder="Required"
-                        autocomplete="current-password">
-                </div>
-                <div class="setting">
-                    <label class="setting-label">New Password</label>
-                    <input type="password" id="newPassword" class="setting-input" placeholder="Minimum 4 characters"
-                        autocomplete="new-password">
-                </div>
-                <div class="setting">
-                    <label class="setting-label">Confirm New Password</label>
-                    <input type="password" id="confirmPassword" class="setting-input"
-                        placeholder="Re-enter new password" autocomplete="new-password">
-                </div>
-                <div class="setting">
-                    <button class="btn btn-primary" onclick="changePassword()">💾 Update Credentials</button>
-                    <p class="auth-msg" id="changePwMsg"></p>
-                </div>
-                <div class="setting" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
-                    <button class="btn btn-danger" onclick="logout()">🚪 Logout</button>
-                    <p class="setting-hint">Ends your session and returns to the login screen</p>
-                </div>
-            </div>
-        </section>
+        <!-- Account panel removed from detail view — the home page (index.html)
+             still has the Account panel, so credential changes + logout still
+             have a single owner. Keeping it here was duplicative noise. -->
 
         <!-- Notifications Panel -->
         <section class="panel notifications-panel collapsed" id="notificationsPanel">
@@ -365,6 +329,10 @@
             <div class="panel-body">
                 <div class="setting">
                     <p class="setting-hint" id="notifConfigHint">Checking Telegram configuration...</p>
+                    <p class="setting-hint" style="color:var(--accent,#6366f1);margin-top:4px;">
+                        ℹ️ These settings apply <strong>only to this camera</strong>.
+                        Other cameras have independent notification preferences (configure each in its detail view).
+                    </p>
                 </div>
                 <!-- Notification Preferences -->
                 <div class="setting notification-pref">
@@ -552,6 +520,19 @@
         // Any URL param: thread it through verbatim.
         window.EVENT_FEED_CAMERA = fromUrl || "";
     })();
+
+    // updateNotifPref — was called from the notifications panel's onchange
+    // handlers but never defined anywhere, so toggling alerts silently did
+    // nothing. Wires through to updateConfig (defined in app.js) which POSTs
+    // to /api/config?camera=<CAMERA_ID> — i.e. notification prefs are
+    // strictly per-camera. Disabling notify_person on cam1 does NOT silence
+    // cam2; cam2 has its own config:cam2 hash.
+    function updateNotifPref(key, value) {
+        if (typeof updateConfig === "function") {
+            return updateConfig(key, value);
+        }
+        console.error("updateConfig not loaded yet; check script order in single.html");
+    }
 </script>
 
 <!-- app.js sets window.CAMERA_ID from ?camera URL param; the module scripts
