@@ -101,9 +101,8 @@ async def event_notification_poller():
         """Append event to daily JSONL file for persistent audit trail.
         Includes the source camera so downstream consumers can filter."""
         try:
-            _tz = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
             ts = float(data.get("timestamp", time.time()))
-            dt = datetime.fromtimestamp(ts, tz=_tz)
+            dt = datetime.fromtimestamp(ts, tz=TZ_LOCAL)
             day_str = dt.strftime("%Y-%m-%d")
             journal_path = os.path.join(EVENT_JOURNAL_DIR, f"{day_str}.jsonl")
             entry = {
@@ -259,8 +258,7 @@ async def event_notification_poller():
 
             # Parse timestamp from event data
             ts = float(event_data.get("timestamp", time.time()))
-            _tz = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
-            dt = datetime.fromtimestamp(ts, tz=_tz)
+            dt = datetime.fromtimestamp(ts, tz=TZ_LOCAL)
             day_str = dt.strftime("%Y-%m-%d")
             time_str = dt.strftime("%H-%M-%S")
 

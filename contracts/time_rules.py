@@ -35,16 +35,16 @@ try:
 except ImportError:
     HAS_ASTRAL = False
 
-# Location configured via environment variables — no personal data in source
+# Location configured via environment variables — no personal data in source.
+# Timezone is resolved through contracts.tz so we get validated single source of truth.
+from contracts.tz import TZ_LOCAL as TIMEZONE
 LOCATION = {
     "name": os.getenv("LOCATION_NAME", "Default"),
     "region": os.getenv("LOCATION_REGION", ""),
-    "timezone": os.getenv("LOCATION_TIMEZONE", "America/Toronto"),
+    "timezone": str(TIMEZONE),  # keep string form for callers that need the name
     "latitude": float(os.getenv("LOCATION_LAT", "43.6532")),
     "longitude": float(os.getenv("LOCATION_LON", "-79.3832")),
 }
-
-TIMEZONE = ZoneInfo(LOCATION["timezone"])
 
 # Twilight buffer around sunrise/sunset
 TWILIGHT_MINUTES = 30

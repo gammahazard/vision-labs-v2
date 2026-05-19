@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api", tags=["events"])
 
 SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
 EVENT_JOURNAL_DIR = os.environ.get("EVENT_JOURNAL_DIR", "/data/events")
-_TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+from contracts.tz import TZ_LOCAL as _TZ_LOCAL  # validated single source of truth
 
 
 def _enabled_camera_ids() -> list:

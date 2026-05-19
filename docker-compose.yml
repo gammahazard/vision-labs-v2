@@ -35,10 +35,25 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru --auto-aof-rewrite-min-size 64mb
+    # If REDIS_PASSWORD is set in .env, Redis demands AUTH from clients.
+    # Empty by default for backward compat. Set a strong value in .env when
+    # ready to enable — all Python clients honor it via contracts/redis_client.py.
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    command: >
+      sh -c "exec redis-server
+      $${REDIS_PASSWORD:+--requirepass $$REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --auto-aof-rewrite-min-size 64mb"
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      # `redis-cli ping` returns NOAUTH when auth is required and no creds passed.
+      # Use $REDIS_PASSWORD if set so the healthcheck is still meaningful.
+      test:
+        - "CMD-SHELL"
+        - "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a $$REDIS_PASSWORD --no-auth-warning ping; else redis-cli ping; fi"
       interval: 10s
       timeout: 5s
       retries: 3
@@ -69,6 +84,7 @@ services:
       - RTSP_URL=${CAM1_RTSP_URL:-}
       - RTSP_MAIN=${CAM1_RTSP_MAIN:-}
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - TARGET_FPS=${TARGET_FPS:-15}
       - JPEG_QUALITY=75
@@ -95,6 +111,7 @@ services:
     environment:
       - CAMERA_ID=cam1
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=${POSE_MODEL:-/models/yolov8s-pose.pt}
       - CONFIDENCE_THRESH=0.5
@@ -129,6 +146,7 @@ services:
     environment:
       - CAMERA_ID=cam1
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - IOU_THRESHOLD=0.3
       - LOST_TIMEOUT=5.0
@@ -163,6 +181,7 @@ services:
     environment:
       - CAMERA_ID=cam1
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
@@ -199,6 +218,7 @@ services:
     environment:
       - CAMERA_ID=cam1
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=${VEHICLE_MODEL:-/models/yolov8s.pt}
       - CONFIDENCE_THRESH=0.35
@@ -302,6 +322,7 @@ services:
       # default (live view "first camera") now read from the cameras:registry
       # at request time.
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - DASHBOARD_PORT=8080
       # Dashboard proxies face-enrollment requests to cam1's face-recognizer.
@@ -357,6 +378,7 @@ services:
       # the published host port. Without this the registry-fallback for
       # RTSP_URL fails and the recorder crash-loops with "RTSP_URL not set".
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
@@ -379,6 +401,7 @@ services:
       - RTSP_URL=${CAM2_RTSP_URL:-}
       # Host-network container — must use 127.0.0.1 to reach Redis.
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
@@ -436,6 +459,9 @@ services:
     network_mode: host
     environment:
       - REDIS_ADDR=redis://127.0.0.1:6379
+      # Auth — empty default = no auth (matches current Redis config).
+      # When REDIS_PASSWORD is set, exporter authenticates so metrics keep flowing.
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     depends_on:
       - redis
     restart: unless-stopped
@@ -513,6 +539,7 @@ services:
     environment:
       - CAMERA_ID=cam2
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - TARGET_FPS=15
       - JPEG_QUALITY=75
@@ -533,6 +560,7 @@ services:
     environment:
       - CAMERA_ID=cam2
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
@@ -563,6 +591,7 @@ services:
     environment:
       - CAMERA_ID=cam2
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
@@ -594,6 +623,7 @@ services:
     environment:
       - CAMERA_ID=cam2
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
@@ -624,6 +654,7 @@ services:
     environment:
       - CAMERA_ID=cam2
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - IOU_THRESHOLD=0.3
       - LOST_TIMEOUT=5.0
@@ -650,6 +681,7 @@ services:
     environment:
       - CAMERA_ID=cam3
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
@@ -665,6 +697,7 @@ services:
     environment:
       - CAMERA_ID=cam3
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - TARGET_FPS=15
       - JPEG_QUALITY=75
@@ -681,6 +714,7 @@ services:
     environment:
       - CAMERA_ID=cam3
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
@@ -706,6 +740,7 @@ services:
     environment:
       - CAMERA_ID=cam3
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
@@ -733,6 +768,7 @@ services:
     environment:
       - CAMERA_ID=cam3
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
@@ -760,6 +796,7 @@ services:
     environment:
       - CAMERA_ID=cam3
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - IOU_THRESHOLD=0.3
       - LOST_TIMEOUT=5.0
@@ -781,6 +818,7 @@ services:
     environment:
       - CAMERA_ID=cam4
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
@@ -796,6 +834,7 @@ services:
     environment:
       - CAMERA_ID=cam4
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - TARGET_FPS=15
       - JPEG_QUALITY=75
@@ -812,6 +851,7 @@ services:
     environment:
       - CAMERA_ID=cam4
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
@@ -837,6 +877,7 @@ services:
     environment:
       - CAMERA_ID=cam4
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
@@ -864,6 +905,7 @@ services:
     environment:
       - CAMERA_ID=cam4
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
@@ -891,6 +933,7 @@ services:
     environment:
       - CAMERA_ID=cam4
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - IOU_THRESHOLD=0.3
       - LOST_TIMEOUT=5.0
@@ -912,6 +955,7 @@ services:
     environment:
       - CAMERA_ID=cam5
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
@@ -927,6 +971,7 @@ services:
     environment:
       - CAMERA_ID=cam5
       - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - TARGET_FPS=15
       - JPEG_QUALITY=75
@@ -943,6 +988,7 @@ services:
     environment:
       - CAMERA_ID=cam5
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s-pose.pt
       - CONFIDENCE_THRESH=0.5
@@ -968,6 +1014,7 @@ services:
     environment:
       - CAMERA_ID=cam5
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - MODEL_NAME=/models/yolov8s.pt
       - CONFIDENCE_THRESH=0.35
@@ -995,6 +1042,7 @@ services:
     environment:
       - CAMERA_ID=cam5
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - DB_PATH=/data/faces.db
       - MATCH_THRESHOLD=0.5
@@ -1022,6 +1070,7 @@ services:
     environment:
       - CAMERA_ID=cam5
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - IOU_THRESHOLD=0.3
       - LOST_TIMEOUT=5.0
@@ -1046,6 +1095,7 @@ services:
       context: ./services/orchestrator
     environment:
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_PORT=6379
       - COMPOSE_PROJECT_NAME=vision-labs
       # Compose uses --project-directory for resolving relative build

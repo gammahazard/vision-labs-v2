@@ -33,6 +33,7 @@ import logging
 import cv2
 import numpy as np
 import redis
+from contracts.redis_client import make_redis_client
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, Response
@@ -106,9 +107,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Vision Labs Dashboard")
 
-# Redis connections
-r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)       # text
-r_bin = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)   # binary (JPEG frames)
+# Redis connections — make_redis_client honors REDIS_PASSWORD when set
+r = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)       # text
+r_bin = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)  # binary (JPEG frames)
 
 # Auth database path (Docker volume for persistence)
 AUTH_DB_PATH = os.getenv("AUTH_DB_PATH", "/data/auth.db")

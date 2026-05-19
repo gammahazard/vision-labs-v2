@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 import cv2
 import numpy as np
 import redis
+from contracts.redis_client import make_redis_client
 import httpx
 
 import routes as ctx
@@ -44,7 +45,7 @@ from routes.notifications import (
 logger = logging.getLogger("dashboard.notifications")
 
 # Timezone
-TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 # Telegram update offset — tracks which updates we've processed.
 # Loaded from Redis at startup so dashboard restarts don't replay old commands.
@@ -696,7 +697,7 @@ async def _cmd_status(chat_id: str = "", text: str = "", **kwargs):
     )
     try:
         r = ctx.r
-        r_raw = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+        r_raw = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
 
         # Default to "all" for status: if user didn't name a camera, show every one.
         cam_ids, _ = _resolve_camera_token(text)
@@ -1196,7 +1197,7 @@ async def _cmd_events(chat_id: str = "", text: str = "", **kwargs):
             continue
 
     try:
-        r_ev = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        r_ev = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
         # Pull last N from each camera, merge by stream id (ms timestamp), trim to N
         merged = []
         for cid in cam_ids:

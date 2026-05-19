@@ -55,6 +55,7 @@ import time
 import threading
 
 import redis
+from contracts.redis_client import make_redis_client
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +655,7 @@ def main() -> None:
 
     _install_shutdown_handlers()
 
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    r = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
     for attempt in range(30):
         try:
             r.ping()
@@ -668,18 +669,18 @@ def main() -> None:
 
     # Pub/sub listener on a daemon thread; uses its own Redis connection
     # so the blocking listen() doesn't tie up the main reconcile loop.
-    listener_r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    listener_r = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
     t = threading.Thread(target=listen_loop, args=(listener_r,), daemon=True)
     t.start()
 
     # Hardware probe listener — separate thread + connection so the (slow)
     # nvidia-smi spawn doesn't block camera-event handling.
-    probe_r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    probe_r = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
     probe_t = threading.Thread(target=probe_listen_loop, args=(probe_r,), daemon=True)
     probe_t.start()
 
     # Config-apply listener — recreates services when .env changes (Phase F)
-    cfg_r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    cfg_r = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
     cfg_t = threading.Thread(target=config_apply_listen_loop, args=(cfg_r,), daemon=True)
     cfg_t.start()
 

@@ -50,7 +50,7 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 logger = logging.getLogger("dashboard.ai")
 
 from constants import CHAT_MODEL as OLLAMA_MODEL, OLLAMA_KEEP_ALIVE, OLLAMA_HOST
-TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 
 

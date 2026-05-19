@@ -62,10 +62,10 @@ def _load_rtsp_from_registry():
         return  # env value wins
     try:
         import json as _json
-        import redis as _redis
-        r = _redis.Redis(host=REDIS_HOST_FOR_REGISTRY,
-                         port=REDIS_PORT_FOR_REGISTRY,
-                         decode_responses=True)
+        from contracts.redis_client import make_redis_client as _make_rc
+        r = _make_rc(decode_responses=True,
+                     host=REDIS_HOST_FOR_REGISTRY,
+                     port=REDIS_PORT_FOR_REGISTRY)
         r.ping()
         raw = r.hget("cameras:registry", CAMERA_ID)
         if raw:
@@ -83,9 +83,8 @@ RECORDING_DIR = os.getenv("RECORDING_DIR", "/recordings")
 SEGMENT_DURATION = int(os.getenv("SEGMENT_DURATION", "3600"))  # 1 hour
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "28"))
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL", "6"))
-TZ_NAME = os.getenv("LOCATION_TIMEZONE", "America/Toronto")
-
-TZ_LOCAL = ZoneInfo(TZ_NAME)
+from contracts.tz import TZ_LOCAL  # validated single source of truth — see contracts/tz.py
+TZ_NAME = str(TZ_LOCAL)  # kept for any log lines that reference it by name
 
 # ---------------------------------------------------------------------------
 # Logging

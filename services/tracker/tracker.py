@@ -50,6 +50,7 @@ import signal
 import logging
 
 import redis
+from contracts.redis_client import make_redis_client
 
 # Action classifier — classifies posture from keypoints (no new model needed)
 # Imported from contracts/ directory (mounted as volume in Docker)
@@ -1087,7 +1088,7 @@ def run():
     logger.info(f"IoU threshold: {IOU_THRESHOLD}, Lost timeout: {LOST_TIMEOUT}s")
 
     # Connect to Redis
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+    r = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
     r.ping()
     logger.info("Redis connection verified")
 

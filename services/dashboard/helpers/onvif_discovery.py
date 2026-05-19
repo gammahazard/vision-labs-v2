@@ -230,10 +230,8 @@ def detect_local_cidr() -> Optional[str]:
 
     # 1) cameras:registry — any registered camera tells us the LAN
     try:
-        import redis as _redis
-        _r = _redis.Redis(host=os.getenv("REDIS_HOST", "redis"),
-                          port=int(os.getenv("REDIS_PORT", "6379")),
-                          decode_responses=True)
+        from contracts.redis_client import make_redis_client as _make_rc
+        _r = _make_rc(decode_responses=True)
         raw = _r.hgetall("cameras:registry") or {}
         for _slot, val in raw.items():
             try:

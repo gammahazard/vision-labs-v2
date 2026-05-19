@@ -45,6 +45,7 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 import cv2
 import redis
+from contracts.redis_client import make_redis_client
 
 # Import stream key definitions from contracts (single source of truth)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "contracts"))
@@ -75,7 +76,7 @@ def _load_rtsp_from_registry():
         return  # env value wins
     try:
         import json
-        _r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        _r = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
         _r.ping()
         raw = _r.hget("cameras:registry", CAMERA_ID)
         if raw:
@@ -183,7 +184,7 @@ def connect_to_redis(host: str, port: int) -> redis.Redis:
     verify it's reachable on startup to fail fast if Redis isn't running.
     """
     logger.info(f"Connecting to Redis at {host}:{port}")
-    r = redis.Redis(host=host, port=port, decode_responses=False)
+    r = make_redis_client(decode_responses=False, host=host, port=port)
     r.ping()  # Raises ConnectionError if Redis is unreachable
     logger.info("Redis connection verified")
     return r
@@ -370,7 +371,7 @@ def run_hd_stream():
         return
 
     logger.info(f"Starting HD stream thread for '{CAMERA_ID}'")
-    r_hd = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+    r_hd = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
     frame_interval = 1.0 / HD_TARGET_FPS
     reconnect_delay = 8  # Start higher than sub-stream to give it reconnect priority
 

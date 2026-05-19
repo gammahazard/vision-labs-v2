@@ -18,7 +18,7 @@ import routes as ctx
 import routes.ai_state as ai_state
 
 logger = logging.getLogger("dashboard.ai")
-TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 
 # Cache for build_system_context. The snapshot includes a Redis hgetall,

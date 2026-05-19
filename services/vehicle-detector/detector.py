@@ -38,6 +38,7 @@ import logging
 import cv2
 import numpy as np
 import redis
+from contracts.redis_client import make_redis_client
 from ultralytics import YOLO
 
 # Import stream key definitions from contracts (single source of truth)
@@ -188,7 +189,7 @@ def run():
     logger.info("=" * 60)
 
     # --- Connect to Redis ---
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+    r = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
     while not _shutdown:
         try:
             r.ping()
@@ -199,7 +200,7 @@ def run():
             time.sleep(2)
 
     # Phase 7c: skip this detector if the camera registry says it's not wanted.
-    r_text = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    r_text = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
     if not _check_camera_wants_detector(r_text, "detect_vehicles"):
         logger.info(f"Camera '{CAMERA_ID}' has detect_vehicles=false — exiting cleanly")
         return

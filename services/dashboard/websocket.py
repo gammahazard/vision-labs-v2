@@ -41,6 +41,7 @@ import time
 import cv2
 import numpy as np
 import redis
+from contracts.redis_client import make_redis_client
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 import routes as ctx
@@ -117,7 +118,7 @@ def register(app: FastAPI):
         logger.info(f"WebSocket client connected (user={username}, camera={camera_id})")
 
         # Use a separate Redis connection for binary frame data
-        r_bin = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+        r_bin = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
 
         last_frame_id = "$"  # Start from latest
 

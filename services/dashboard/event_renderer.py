@@ -36,9 +36,7 @@ OUTPUT SHAPE:
 
 import os
 from datetime import datetime
-from zoneinfo import ZoneInfo
-
-TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 _VEHICLE_ICONS = {"car": "🚗", "truck": "🚛", "motorcycle": "🏍️", "bus": "🚌"}
 

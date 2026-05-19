@@ -29,7 +29,7 @@ import routes as ctx
 import routes.ai_state as ai_state
 
 logger = logging.getLogger("dashboard.ai")
-TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 # Every event_type string emitted somewhere in the pipeline. Used so type-aggregating
 # tools can pre-populate zero counts — the LLM should never have to guess whether

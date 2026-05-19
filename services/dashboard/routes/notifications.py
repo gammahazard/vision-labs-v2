@@ -39,6 +39,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 import redis
+from contracts.redis_client import make_redis_client
 
 
 def _esc(value) -> str:
@@ -72,6 +73,27 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
+
+def _redact_token(text: str) -> str:
+    """Strip the bot token from any string before logging it.
+
+    Telegram API error responses occasionally echo the token back in URLs
+    or in the request-line of error messages. Logging resp.text raw would
+    leak the token into stdout, container logs, and any log aggregator
+    downstream. This helper redacts:
+      - The exact configured token (if non-empty)
+      - Any generic bot-token-shaped string (`\\d+:[A-Za-z0-9_-]{30,}`)
+    """
+    import re as _re
+    if not text:
+        return text
+    out = text
+    if TELEGRAM_BOT_TOKEN:
+        out = out.replace(TELEGRAM_BOT_TOKEN, "[bot_token_redacted]")
+    # Generic shape — catches a different token if env was rotated mid-run
+    out = _re.sub(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b", "[bot_token_redacted]", out)
+    return out
+
 # Security — seed users from env var (migrated to Redis at startup)
 # Comma-separated in .env, e.g. TELEGRAM_ALLOWED_USERS=987654321,123456789
 TELEGRAM_ALLOWED_USERS: set[int] = {
@@ -81,8 +103,8 @@ TELEGRAM_ALLOWED_USERS: set[int] = {
 }
 
 
-# Timezone — from env (handles EST/EDT automatically via zoneinfo)
-TZ_LOCAL = ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
+# Timezone — validated single source of truth (handles EST/EDT automatically)
+from contracts.tz import TZ_LOCAL
 
 # Vision model config — for AI scene analysis on detection snapshots
 from constants import OLLAMA_HOST, VISION_MODEL, OLLAMA_KEEP_ALIVE
@@ -250,7 +272,7 @@ async def send_text(message: str, chat_id: str = "",
                     await asyncio.sleep(wait)
                     continue
                 if resp.status_code != 200:
-                    logger.warning(f"Telegram sendMessage failed: {resp.status_code} {resp.text}")
+                    logger.warning(f"Telegram sendMessage failed: {resp.status_code} {_redact_token(resp.text)}")
                     return False
                 return True
         return False
@@ -301,7 +323,7 @@ async def send_photo(photo_bytes: bytes, caption: str = "",
                     await asyncio.sleep(wait)
                     continue
                 if resp.status_code != 200:
-                    logger.warning(f"Telegram sendPhoto failed: {resp.status_code} {resp.text}")
+                    logger.warning(f"Telegram sendPhoto failed: {resp.status_code} {_redact_token(resp.text)}")
                     return 0
                 result = resp.json().get("result", {})
                 return result.get("message_id", 0)
@@ -616,7 +638,7 @@ async def send_video(video_bytes: bytes, caption: str = "",
                     await asyncio.sleep(wait)
                     continue
                 if resp.status_code != 200:
-                    logger.warning(f"Telegram sendVideo failed: {resp.status_code} {resp.text}")
+                    logger.warning(f"Telegram sendVideo failed: {resp.status_code} {_redact_token(resp.text)}")
                     return 0
                 result = resp.json().get("result", {})
                 return result.get("message_id", 0)
@@ -658,7 +680,7 @@ def build_clip(duration: float = 5.0, fps: int = 10, camera_id: str = "") -> byt
     import time as _time
 
     try:
-        r_bin = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
+        r_bin = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
         frames = []
         target_count = int(duration * fps)
         start = _time.monotonic()

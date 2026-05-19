@@ -60,9 +60,7 @@ async def approve_user(user_id: str, chat_id: str = "",
         "name": name,
         "username": username,
         "role": role,
-        "approved_at": datetime.now(
-            ZoneInfo(os.getenv("LOCATION_TIMEZONE", "America/Toronto"))
-        ).strftime("%Y-%m-%d %H:%M"),
+        "approved_at": datetime.now(TZ_LOCAL).strftime("%Y-%m-%d %H:%M"),
     })
     ctx.r.hset(ctx.TELEGRAM_USERS_KEY, user_id.strip(), meta)
     ctx.logger.info(f"Telegram user approved: {user_id} ({name}) role={role}")

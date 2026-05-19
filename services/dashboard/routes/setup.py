@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import redis
+from contracts.redis_client import make_redis_client
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -73,11 +74,7 @@ PROBE_TIMEOUT_SECONDS = 150
 # Helpers
 # ---------------------------------------------------------------------------
 def _redis_client():
-    return redis.Redis(
-        host=os.getenv("REDIS_HOST", "redis"),
-        port=int(os.getenv("REDIS_PORT", "6379")),
-        decode_responses=True,
-    )
+    return make_redis_client(decode_responses=True)
 
 
 def _load_state() -> dict | None:
