@@ -40,27 +40,35 @@ logger = logging.getLogger("dashboard.retention")
 
 
 async def retention_poller():
-    """Daily prune of /data/snapshots and /data/events older than configured retention."""
-    retention_days = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "4"))
-    # Clips are bigger than person snapshots — separate (shorter) retention.
-    clip_retention_days = int(os.getenv("CLIP_RETENTION_DAYS", "3"))
-    if retention_days <= 0:
-        logger.info("Local retention disabled (SNAPSHOT_RETENTION_DAYS=0)")
-        return
+    """Hourly prune of /data/snapshots and /data/events older than configured retention.
 
+    Env vars are re-read on every cycle so config changes (via wizard or
+    direct .env edit) take effect within one cycle (max 1h) — no service
+    restart needed. The cycle was previously 24h; we tightened to 1h after
+    receiving feedback that "I just lowered retention but old files are still
+    there" was a confusing UX.
+    """
     SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
     EVENT_DIR = os.environ.get("EVENT_JOURNAL_DIR", "/data/events")
     CLIPS_DIR = os.path.join(SNAPSHOT_DIR, "clips")
+    CYCLE_SECONDS = 3600  # 1 hour — see docstring above
 
     logger.info(
-        f"Local retention enabled — snapshots/events {retention_days}d, "
-        f"clips {clip_retention_days}d (snapshots={SNAPSHOT_DIR}, "
-        f"clips={CLIPS_DIR}, events={EVENT_DIR})"
+        f"Local retention poller starting (cycle every {CYCLE_SECONDS//60} min, "
+        f"snapshots={SNAPSHOT_DIR}, clips={CLIPS_DIR}, events={EVENT_DIR}). "
+        f"Reads SNAPSHOT_RETENTION_DAYS / CLIP_RETENTION_DAYS each cycle."
     )
 
     await asyncio.sleep(60)  # let the rest of startup finish
 
     while True:
+        # Re-read env each cycle so wizard changes apply without restart.
+        retention_days = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "4"))
+        clip_retention_days = int(os.getenv("CLIP_RETENTION_DAYS", "3"))
+        if retention_days <= 0:
+            # Disabled — sleep then re-check (allow user to turn it back on).
+            await asyncio.sleep(CYCLE_SECONDS)
+            continue
         try:
             cutoff_ts = time.time() - (retention_days * 86400)
             cutoff_date = (datetime.now() - timedelta(days=retention_days)).date()
@@ -178,4 +186,4 @@ async def retention_poller():
         except Exception as e:
             logger.warning(f"Retention prune error: {e}")
 
-        await asyncio.sleep(86400)  # once per day
+        await asyncio.sleep(CYCLE_SECONDS)  # once per cycle (default 1h)

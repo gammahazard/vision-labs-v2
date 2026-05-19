@@ -111,6 +111,10 @@ CONFIG_APPLY_CHANNEL = "config:apply"
 CONFIG_APPLY_ALLOWED_SERVICES = {
     "pose-detector", "vehicle-detector", "face-recognizer",
     "camera-ingester", "ollama", "dashboard",
+    # recorder needs restart for RETENTION_DAYS changes; snapshot + clip
+    # retention is handled by dashboard's hot-reload poller so no restart
+    # needed for those two.
+    "recorder",
 }
 
 # ---------------------------------------------------------------------------

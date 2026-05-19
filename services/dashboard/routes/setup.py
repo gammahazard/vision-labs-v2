@@ -407,12 +407,14 @@ async def apply_config(request: Request):
     if any(k in updates for k in (
         "LOCATION_TIMEZONE", "LOCATION_NAME", "LOCATION_REGION",
         "LOCATION_LAT", "LOCATION_LON",
-        "SNAPSHOT_RETENTION_DAYS", "CLIP_RETENTION_DAYS",
     )):
-        # Dashboard re-reads TZ_LOCAL + retention env on startup.
-        # Recorder restart is needed for RETENTION_DAYS (recordings).
+        # TZ is module-level constant in 13+ files — dashboard restart is the
+        # safe way to update it. Location fields are read at startup too.
         affected.add("dashboard")
+    # NOTE: SNAPSHOT_RETENTION_DAYS + CLIP_RETENTION_DAYS DO NOT need a
+    # dashboard restart — the retention poller re-reads env each cycle (hourly).
     if "RETENTION_DAYS" in updates:
+        # Recorder still reads RETENTION_DAYS at startup, so it does need a restart.
         affected.add("recorder")
 
     # Tell the orchestrator

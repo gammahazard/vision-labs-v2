@@ -617,9 +617,14 @@ async function saveLocation() {
         }
         status.style.background = '#1f3a1f';
         status.style.color = '#9bff9b';
-        status.textContent = `Saved. Restart services (\`docker compose restart\`) for timezone changes to take full effect. Retention values apply on the next prune cycle.`;
+        // Orchestrator auto-restarts dashboard (+ recorder if RETENTION_DAYS
+        // changed) so the user doesn't need to touch the terminal. The
+        // retention poller cycles hourly and re-reads env each cycle, so
+        // snapshot/clip retention values apply within an hour even without
+        // a restart.
+        status.textContent = `Saved. Dashboard is restarting to pick up the new timezone (takes ~10s). Retention changes apply within the hour.`;
         state.locationSaved = true;
-        setTimeout(() => showStep('camera'), 1500);
+        setTimeout(() => showStep('camera'), 2500);
     } catch (e) {
         status.style.background = '#3a1f1f';
         status.style.color = '#ff9b9b';
