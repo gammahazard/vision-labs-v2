@@ -191,6 +191,10 @@ All paths under `services/`. Every service ID below is profile-gated unless note
 
 Bind-mounted RO into every service at `/app/contracts`. The single source of truth for stream/key names and shared algorithms.
 
+> **Build/runtime split — the #1 footgun.** Only `contracts/` is bind-mounted at runtime; every other service's `.py` file is COPY'd into its Docker image at build time. That means editing `services/<svc>/<svc>.py` does **not** take effect in a running container — you must `docker compose build <svc>` first, then recreate. Editing anything under `contracts/` is hot — just restart the service. The orchestrator pulls `contracts/` via `/workspace` (the project mount), not `/app/contracts`, because its image is intentionally tiny (alpine + docker-cli).
+>
+> This split bit us in May 2026 when we added Redis AUTH. The dashboard worked (recently rebuilt with `make_redis_client`) but every detector failed because their old images still had hardcoded `redis.Redis(host=..., port=...)` calls. Always rebuild affected service images after touching their `.py`.
+
 ### 5.1 `contracts/streams.py` — every stream/key template
 
 | Template | Type | Written by | Read by |
