@@ -1,0 +1,123 @@
+"""
+routes/ai_tools/query_events_by_date.py — implementation + schema for the `query_events_by_date` tool.
+
+Extracted from the legacy monolithic ai_tools.py (Phase J modularization).
+The function and schema live together so adding/changing a tool is a single-
+file change. ``__init__.py`` aggregates SCHEMA from every tool module into the
+``TOOLS`` list that the chat endpoint passes to Ollama.
+"""
+
+import json
+import logging
+import os
+from datetime import datetime, timedelta
+
+import routes as ctx
+import routes.ai_state as ai_state
+
+from ._shared import (
+    KNOWN_EVENT_TYPES,
+    KNOWN_EVENT_TYPES_DOC,
+    EVENT_CATEGORIES,
+    TZ_LOCAL,
+    _category_matches,
+    _camera_key,
+    _camera_name,
+    _get_camera_list,
+    _redact_sensitive,
+    _resolve_camera,
+)
+
+logger = logging.getLogger("dashboard.ai")
+
+
+SCHEMA = {'type': 'function', 'function': {'name': 'query_events_by_date', 'description': "Query events filtered by date. **Defaults to camera='all', category='all'.** Use 'category' to filter — when user says 'only people / no vehicles / just faces', pass category='people'. Use 'event_type' to filter to ONE specific event type. Returns: total_events, by_type, by_identity, unique_people_identified, latest_events, per_camera with each camera's own by_type and by_identity. Use total_events for 'how many detections', by_identity for 'who was seen', per_camera.<cam>.by_identity for 'which camera saw which person'. NEVER invent identity counts.", 'parameters': {'type': 'object', 'properties': {'date': {'type': 'string', 'description': "Date to query in YYYY-MM-DD format. Use 'today' or 'yesterday' as shortcuts."}, 'event_type': {'type': 'string', 'description': f"Optional: filter by ONE event type. Known types: {KNOWN_EVENT_TYPES_DOC}. Use 'category' instead if user said 'people' or 'vehicles' generally."}, 'category': {'type': 'string', 'enum': ['people', 'vehicles', 'faces', 'actions', 'security', 'all'], 'description': "Filter by category. 'people' = person events only. 'vehicles' = vehicle events only. 'faces' = face events + person_identified. Default 'all'."}, 'camera': {'type': 'string', 'description': "Camera id to query (e.g. 'cam1', 'cam2'), or 'all' for every camera. Default = primary camera."}}, 'required': ['date']}}}
+
+
+def _tool_query_events_by_date(args: dict) -> str:
+    """Query events filtered by date. Multi-camera aware — defaults to ALL cameras
+    when no camera is specified (analytical tool; cross-camera is the useful answer).
+
+    Merges the Redis events stream with the JSONL journal at
+    /data/events/<date>.jsonl so requests for past dates still return data
+    even if the Redis stream has trimmed those events (default cap 5000 per
+    camera). Dedup is by event_id.
+    """
+    from contracts.streams import EVENT_STREAM as _EVT_TMPL
+    date_str = args.get('date', 'today')
+    event_type = args.get('event_type', '')
+    camera_arg = args.get('camera', 'all')
+    category = (args.get('category') or 'all').strip().lower()
+    if category not in EVENT_CATEGORIES:
+        return json.dumps({'error': f"Unknown category '{category}'. Valid: {list(EVENT_CATEGORIES.keys())}"})
+    cam_ids = _resolve_camera(camera_arg)
+    if not cam_ids:
+        return json.dumps({'error': f"Unknown camera '{camera_arg}'. Use 'all' or a registered camera id.", 'available': [c['id'] for c in _get_camera_list()]})
+    now = datetime.now(TZ_LOCAL)
+    if date_str == 'today':
+        target_date = now.date()
+    elif date_str == 'yesterday':
+        target_date = (now - timedelta(days=1)).date()
+    else:
+        try:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return json.dumps({'error': f"Invalid date format: {date_str}. Use YYYY-MM-DD, 'today', or 'yesterday'."})
+    day_start = datetime.combine(target_date, datetime.min.time(), tzinfo=TZ_LOCAL)
+    day_end = datetime.combine(target_date, datetime.max.time(), tzinfo=TZ_LOCAL)
+    start_ms = int(day_start.timestamp() * 1000)
+    end_ms = int(day_end.timestamp() * 1000)
+    journal_events = _load_jsonl_journal(target_date)
+    journal_used = bool(journal_events)
+    journal_events = [e for e in journal_events if start_ms <= int(float(e.get('timestamp', 0)) * 1000) <= end_ms]
+    try:
+        per_camera = {}
+        all_events = []
+        for cid in cam_ids:
+            evt_key = _camera_key(_EVT_TMPL, cid)
+            events_raw = ctx.r.xrange(evt_key, min=f'{start_ms}-0', max=f'{end_ms}-0')
+            cam_events_by_id: dict[str, dict] = {}
+            for msg_id, data in events_raw:
+                evt = {k: v for k, v in data.items()}
+                evt['event_id'] = msg_id
+                evt['camera'] = cid
+                if event_type and evt.get('event_type') != event_type:
+                    continue
+                if not _category_matches(evt.get('event_type', ''), category):
+                    continue
+                cam_events_by_id[msg_id] = evt
+            for jevt in journal_events:
+                if jevt.get('camera') != cid:
+                    continue
+                if event_type and jevt.get('event_type') != event_type:
+                    continue
+                if not _category_matches(jevt.get('event_type', ''), category):
+                    continue
+                jid = jevt.get('event_id') or ''
+                if jid and jid not in cam_events_by_id:
+                    cam_events_by_id[jid] = jevt
+            cam_events = [cam_events_by_id[k] for k in sorted(cam_events_by_id.keys())]
+            type_counts = {}
+            identity_counts = {}
+            for evt in cam_events:
+                t = evt.get('event_type', 'unknown')
+                type_counts[t] = type_counts.get(t, 0) + 1
+                if t == 'person_identified':
+                    name = evt.get('identity_name') or '<unknown>'
+                    identity_counts[name] = identity_counts.get(name, 0) + 1
+            per_camera[cid] = {'name': _camera_name(cid), 'total_events': len(cam_events), 'by_type': type_counts, 'by_identity': identity_counts}
+            all_events.extend(cam_events)
+        agg_type_counts = {}
+        agg_identity_counts = {}
+        for evt in all_events:
+            t = evt.get('event_type', 'unknown')
+            agg_type_counts[t] = agg_type_counts.get(t, 0) + 1
+            if t == 'person_identified':
+                name = evt.get('identity_name') or '<unknown>'
+                agg_identity_counts[name] = agg_identity_counts.get(name, 0) + 1
+        result = {'date': str(target_date), 'cameras_queried': cam_ids, 'total_events': len(all_events), 'by_type': agg_type_counts, 'by_identity': agg_identity_counts, 'unique_people_identified': len(agg_identity_counts), 'latest_events': all_events[-10:] if len(all_events) > 10 else all_events, 'journal_used': journal_used}
+        if len(cam_ids) > 1:
+            result['per_camera'] = per_camera
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({'error': str(e)})
