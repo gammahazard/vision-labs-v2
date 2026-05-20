@@ -19,8 +19,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code — tracker.py is a thin entrypoint shim that
+# imports from the core/ package where the real logic lives.
 COPY tracker.py .
+COPY core/ ./core/
 
 # Note: contracts/actions.py is mounted as a volume by docker-compose.yml
 # at /app/contracts/ (read-only). No need to COPY it here.
