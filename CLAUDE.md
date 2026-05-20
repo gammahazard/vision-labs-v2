@@ -55,7 +55,7 @@ That means:
   - `cameras:events` — pub/sub, fires when the registry changes
   - `setup:probe-request` — pub/sub, fires when the setup wizard needs GPU info
   - `config:apply` — pub/sub, fires when /api/setup/apply-config wrote new env values
-- The orchestrator validates every incoming message against `ALLOWED_PROFILES` (env). It will only `up`/`down` cam1–cam5 (or whatever's in the list), never arbitrary services.
+- The orchestrator validates every incoming message against `ALLOWED_PROFILES` (env). It will only `up`/`down` cam1–cam20 (or whatever's in the list — the default install ships with 20 slots), never arbitrary services.
 - Audit trail lives on the `orchestrator:audit` Redis stream. The dashboard reads it for camera-status badges.
 
 **Implication for security:** if Redis is reachable from the LAN (and there's no password), an attacker can publish to those channels and trigger compose actions. **This is why we bind Redis to 127.0.0.1 and auto-generate REDIS_PASSWORD at install.**
@@ -64,12 +64,12 @@ That means:
 
 ## 5. Per-camera profile pattern
 
-- Slots `cam1` through `cam5` are pre-defined in `docker-compose.yml`, each profile-gated.
+- Slots `cam1` through `cam20` are pre-defined in `docker-compose.yml`, each profile-gated. (Originally 5; bumped to 10 then to 20 on 2026-05-19.)
 - Adding a camera = upsert into `cameras:registry` Redis hash + publish on `cameras:events`. Orchestrator runs `docker compose --profile camN up -d`.
 - Removing a camera = `hdel` + publish. Orchestrator runs `--profile camN down`.
 - **All env vars are inherited from the host's `.env`.** A new cam slot does not need extra config — it gets `REDIS_PASSWORD`, `DETECTOR_GPU`, etc. automatically.
 
-**To add more than 5 cam slots:** add `tracker-cam6:`, `pose-detector-cam6:`, etc. blocks in `docker-compose.yml` (each profile-gated), then add `cam6` to `ALLOWED_PROFILES` env on the orchestrator. Same pattern repeats for cam7, etc.
+**To add more than 20 cam slots:** duplicate a `camN` block in `docker-compose.yml` (6 services per slot — recorder, camera-ingester, pose-detector, vehicle-detector, face-recognizer, tracker), add the new slot to `AVAILABLE_SLOTS` in `services/dashboard/cameras.py`, and append to `ALLOWED_PROFILES` env on the orchestrator. **The right long-term fix is dynamic slot generation:** the orchestrator could write per-camera `docker-compose.override.yml` entries on the fly when a camera is added, removing the static cap entirely. Not done yet; flagged as future work in CONTEXT.md.
 
 ---
 

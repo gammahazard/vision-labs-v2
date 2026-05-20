@@ -539,7 +539,7 @@ async function addCamera() {
         id = sd.slot;
     } catch (_) {}
     if (!id) {
-        alert('No free camera slots. The default install ships with 10 slots (cam1-cam10) — add more by duplicating camN blocks in docker-compose.yml.');
+        alert('No free camera slots. The default install ships with 20 slots (cam1-cam20). Going beyond that requires duplicating camN blocks in docker-compose.yml — open an issue if you actually need this.');
         return;
     }
 

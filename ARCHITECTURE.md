@@ -287,11 +287,11 @@ camera (where it makes semantic sense — events, system status).
 | Module | Prefix | Purpose | Multi-camera |
 |--------|--------|---------|---|
 | `ai.py` | `/api/ai` | Chat, vision analysis, history, reminders, model status | n/a (per-message) |
-| `ai_tools.py` | — | 19 LLM tool definitions + executors; all tools accept `camera` arg via `_resolve_camera()` helper | ✅ all 19 tools |
+| `ai_tools/` (package) | — | 19 LLM tools, one file per tool + `_shared.py` + `__init__.py` dispatcher. All tools accept `camera` arg via `_resolve_camera()` helper. Split from a 2264-line monolith on 2026-05-19 | ✅ all 19 tools |
 | `ai_prompts.py` | — | System prompt builder; injects camera registry list into LLM context | ✅ |
 | `ai_state.py` | — | Shared AI state (DB refs, GPU flag, pending media) | n/a |
-| `notifications.py` | `/api` | Telegram API helpers, scene analysis, snapshot drawing, `build_clip(camera_id=…)` | ✅ |
-| `bot_commands.py` | — | Telegram polling loop, 15+ command handlers w/ `[camera]` token parsing, inline-keyboard camera picker, `/cameras` helper command | ✅ |
+| `notifications/` (package) | `/api` | Split into `endpoints.py` (router), `telegram_api.py` (send/broadcast wrappers + 429 retry), `frame.py` (snapshot helpers + `build_clip`), `scene.py` (MiniCPM-V describe_scene + prompts), `alerts.py` (notify_person/identified/vehicle/face_enrolled), `_shared.py` (config + cooldowns + auth gate). Package since 2026-05-19. | ✅ |
+| `bot_commands/` (package) | — | `_poller.py` (long-poll loop), `_dispatch.py` (17-command router), one file per command. Package since 2026-05-19 | ✅ |
 | `recordings.py` | `/api/recordings` | DVR playback: `/dates`, `/segments`, `/stream/{date}/{segment}` all accept `?camera`. New `/cameras` endpoint lists every camera that has recordings on disk | ✅ |
 | `events.py` | `/api/events` | Event feed; `?camera=` filters or `all`/empty merges streams newest-first; per-event `camera_id` field; `resolve_event_snapshot_path()` helper walks per-camera dirs w/ legacy-flat fallback | ✅ |
 | `config.py` | `/api/config` | Per-camera config hash (`config:{camera_id}`); detection thresholds, notification toggles | ✅ |
@@ -428,14 +428,15 @@ User message → build system prompt with live context
 - System health
 
 ### 19 Tool Functions (all multi-camera-aware)
-See `routes/ai_tools.py` — each returns a JSON string. Tools that touch
-per-camera data accept an optional `camera` arg:
+See `routes/ai_tools/` — one file per tool, each returns a JSON string.
+Tools that touch per-camera data accept an optional `camera` arg:
 - `""` or absent → primary camera (env `CAMERA_ID`)
 - `"<id>"`        → specific camera, must exist in registry
 - `"all"`         → aggregate across every enabled camera
 
-Resolution via `_resolve_camera()` helper (ai_tools.py:66+). Per-camera Redis
-keys built via `_camera_key()` from `contracts.streams` templates.
+Resolution via `_resolve_camera()` helper in `routes/ai_tools/_shared.py`.
+Per-camera Redis keys built via `_camera_key()` from `contracts.streams`
+templates.
 
 Multi-camera-aware tools: `query_events`, `query_events_by_date`,
 `query_zones`, `query_event_patterns`, `query_activity_heatmap`,
@@ -473,7 +474,7 @@ All alerts are sent to **every approved Telegram user** (multi-user support).
 ## Telegram Bot
 
 ### Polling Architecture
-`bot_commands.py` runs a long-polling loop as a background task:
+`routes/bot_commands/_poller.py` runs a long-polling loop as a background task:
 1. `getUpdates` from Telegram API (30s timeout)
 2. Validate user via `telegram:users` Redis hash
 3. Route to command handler
@@ -684,14 +685,19 @@ services/
 │   │   ├── ollama_warmup.py    # Pulls chat model + warms GPU at startup
 │   │   ├── retention.py        # Daily prune of /data/snapshots and /data/events
 │   │   └── events.py           # Event stream consumer + Telegram broadcast + snapshot save
-│   ├── routes/          # 21 API route modules (cameras.py was added; see Multi-camera section)
+│   ├── routes/          # ~16 route modules + 3 packages (ai_tools/, bot_commands/, notifications/)
 │   └── static/
-│       ├── index.html   # NEW HOME: multi-camera grid view (mobile-responsive)
-│       ├── grid.js      # Tile WebSocket + modal logic
-│       ├── single.html  # Old per-camera dashboard (now at /single.html?camera=X)
+│       ├── index.html   # HOME: multi-camera grid view (mobile-responsive)
+│       ├── single.html  # Per-camera dashboard (/single.html?camera=X)
 │       ├── cameras.html # Camera registry admin UI
-│       └── (existing JS/CSS modules — events.js, zones.js, faces.js, …)
-├── recorder/            # ffmpeg RTSP → .ts DVR. Always on for cam1; recorder-cam2..cam5
+│       ├── ai.html / monitoring.html / telegram.html / setup.html / login.html
+│       ├── css/         # style.css (shared base) + ai/monitoring/setup page-specific
+│       ├── js/core/     # nav.js, auth.js — loaded on every authenticated page
+│       ├── js/dashboard/# app, grid, events, faces, unknowns, zones, browse,
+│       │                # conditions, settings — the camera-view feature cluster
+│       └── js/pages/    # ai, cameras, monitoring, setup, telegram — 1:1 with HTML
+                          # (Reorganized from a flat layout on 2026-05-19.)
+├── recorder/            # ffmpeg RTSP → .ts DVR. Always on for cam1; recorder-cam2..cam20
 │                        # are profile-gated and managed by the orchestrator. recorder.py
 │                        # reads RTSP URL from cameras:registry if RTSP_URL env is empty.
 ├── orchestrator/        # NEW (Phase 7b). Single-purpose sidecar with the Docker socket.
@@ -704,12 +710,12 @@ services/
 
 ### Multi-camera state (Phase 7+ — fully shipped)
 - **Registry**: `cameras:registry` Redis hash — `{id, name, rtsp_sub, rtsp_main, gpu_id, enabled, detect_persons, detect_vehicles, detect_faces}`.
-- **Slot pool (Phase 7c)**: pre-defined service blocks for `cam2`, `cam3`, `cam4`, `cam5` in `docker-compose.yml`, each profile-gated. `cam1` runs unconditionally as the primary.
+- **Slot pool (Phase 7c → expanded 2026-05-19)**: pre-defined service blocks for `cam1` through `cam20` in `docker-compose.yml`, each profile-gated. After Phase G all slots are symmetric — no privileged primary. (Originally 5 slots, then 10, now 20. **Future:** dynamic slot generation via orchestrator-written compose override would remove the cap.)
 - **Auto-orchestration (Phase 7b)**: the `orchestrator` service watches `cameras:registry` + the `cameras:events` pub/sub channel and reconciles compose profiles automatically — adding a camera in the dashboard spawns its services within ~10s, no terminal command needed. Writes every action to `orchestrator:audit` so the UI can show live status badges. The dashboard intentionally does NOT have the Docker socket; the orchestrator does, with a strict allowlist of profiles it may up/down (`ALLOWED_PROFILES`).
 - **Per-camera detector flags**: each detector reads `detect_persons` / `detect_vehicles` / `detect_faces` from its registry entry at startup and exits cleanly (Exit 0, restart policy `on-failure`) if its detector is disabled. Saves GPU.
 - **WebSocket**: `/ws/live?camera=<id>` — each grid tile opens its own connection per camera.
-- **AI tools**: every multi-camera-relevant tool accepts a `camera` arg (`""` / `"<id>"` / `"all"`). See `routes/ai_tools.py`.
-- **Telegram commands**: per-command `[camera]` token parsing in `bot_commands.py`.
+- **AI tools**: every multi-camera-relevant tool accepts a `camera` arg (`""` / `"<id>"` / `"all"`). See `routes/ai_tools/` (package).
+- **Telegram commands**: per-command `[camera]` token parsing — one command per file under `routes/bot_commands/`.
 
 ### Contracts
 ```

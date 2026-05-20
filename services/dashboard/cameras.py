@@ -79,8 +79,7 @@ def _publish_event(action: str, camera_id: str) -> None:
 # docker-compose.yml, append to this list, and update ALLOWED_PROFILES
 # in the orchestrator service env. (cam1 is FIRST in this list so it's
 # the default for the first camera a user adds via the wizard.)
-AVAILABLE_SLOTS = ["cam1", "cam2", "cam3", "cam4", "cam5",
-                   "cam6", "cam7", "cam8", "cam9", "cam10"]
+AVAILABLE_SLOTS = [f"cam{n}" for n in range(1, 21)]  # cam1..cam20
 
 
 def next_available_slot() -> Optional[str]:

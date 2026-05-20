@@ -75,11 +75,11 @@ portainer ──▶ https://localhost:9443 (Docker management UI)
 
 ---
 
-## 3. Camera slot model — `cam1` through `cam5`
+## 3. Camera slot model — `cam1` through `cam20`
 
-**This was refactored from a special `front_door` primary on 2026-05-18 (Phase G).** All 5 slots are now symmetric. There is no longer a privileged primary camera.
+**This was refactored from a special `front_door` primary on 2026-05-18 (Phase G).** All slots are now symmetric. There is no longer a privileged primary camera. Slots cam1–cam5 originally; cam6–cam10 added 2026-05-19; cam11–cam20 added 2026-05-19. The cap is a docker-compose authoring artifact (each slot is a templated block) — not an architectural limit. **Future work:** the orchestrator could generate slot blocks dynamically via a `docker-compose.override.yml` it writes itself, removing the cap entirely. Not done yet.
 
-- `AVAILABLE_SLOTS = ["cam1", "cam2", "cam3", "cam4", "cam5"]` (services/dashboard/cameras.py:8)
+- `AVAILABLE_SLOTS = [f"cam{n}" for n in range(1, 21)]` (services/dashboard/cameras.py:82)
 - Each slot has 6 profile-gated services in docker-compose.yml: `camera-ingester-camN`, `pose-detector-camN`, `vehicle-detector-camN`, `face-recognizer-camN`, `tracker-camN`, `recorder-camN`.
 - `profiles: ["camN"]` on every block. None of the per-cam services start with bare `docker compose up`; the orchestrator brings them up.
 - Adding a camera in the UI = upsert into `cameras:registry` + publish `cameras:events`. The orchestrator's reconcile loop sees the new slot and runs `docker compose --profile camN up -d <services>`.
@@ -100,7 +100,7 @@ All paths under `services/`. Every service ID below is profile-gated unless note
 - **Must be built before `docker compose up`** — `scripts/build.sh` builds this first, then everything else.
 
 ### 4.2 `camera-ingester/` (per-cam, host-net)
-- **Reads:** RTSP via `RTSP_URL` env (only cam1 has `${CAM1_RTSP_URL}` populated; cam2-5 fall back to `cameras:registry`).
+- **Reads:** RTSP via `RTSP_URL` env (only cam1 has `${CAM1_RTSP_URL}` populated; cam2..cam20 fall back to `cameras:registry`).
 - **Writes:** `frames:{camN}` Redis stream (maxlen=`MAX_STREAM_LEN`=1000) + `frame_hd:{camN}` key (5s TTL) for HD live view.
 - **Hot-reloads** `config:{camN}.target_fps` every 25 frames.
 - **Gotcha:** sets `os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]="rtsp_transport;tcp"` *before* importing cv2 (ingester.py:44). RTSP-over-TCP avoids packet loss on busy LANs.
@@ -168,7 +168,7 @@ All paths under `services/`. Every service ID below is profile-gated unless note
   - `to_start = desired - running` → `compose --profile X up -d --no-recreate <services>` (180s timeout)
   - `to_stop = running - desired` → `compose stop <services>` (90s) then `compose rm -f -s <services>` (30s)
 - **Audit stream** `orchestrator:audit` (maxlen 500) with `{action, profile, success, detail, timestamp}`.
-- **`ALLOWED_PROFILES=cam1,cam2,cam3,cam4,cam5`** strict allowlist — refuses any other profile name.
+- **`ALLOWED_PROFILES=cam1,cam2,...,cam20`** strict allowlist — refuses any other profile name. See docker-compose.yml's orchestrator block for the canonical comma-separated list.
 - **Critical safety rules (orchestrator.py):**
   - NEVER `compose --profile X down` (tears down ALL services).
   - NEVER `--remove-orphans` (deletes out-of-profile services).
@@ -219,7 +219,7 @@ Bind-mounted RO into every service at `/app/contracts`. The single source of tru
 | `setup:probe-result` | stream (maxlen 50) | orchestrator | dashboard routes/setup.py |
 | `config:apply` | pub/sub | dashboard routes/setup.py | orchestrator |
 | `orchestrator:audit` | stream (maxlen 500) | orchestrator | dashboard routes/cameras.py status badge |
-| `notify:last` | hash | dashboard notifications.py | itself (cooldown persistence) |
+| `notify:last` | hash | dashboard `routes/notifications/_shared.py` | itself (cooldown persistence) |
 | `scene_analysis:{event_id}` | string (24h TTL) | dashboard notifications.describe_scene | routes/events.py /analysis endpoint |
 | `telegram:users` | hash | dashboard routes/telegram_access.py | notifications._is_authorized |
 | `telegram:access_log` | stream (maxlen 500) | dashboard bot_commands | telegram.html access-log view |
@@ -254,7 +254,7 @@ This is the biggest service. Read this section when working on UI, routes, or ba
 6. WebSocket registered via `register_websocket(app)`.
 7. StaticFiles mounted AFTER routers (so `/api/*` wins over static `index.html`).
 8. **auth_middleware** (line 204) validates `vl_session` cookie via `validate_session`. Redirects to `/login.html` (HTML routes) or returns 401 (API routes).
-9. **`_setup_exempt()`** gate (line 250) — if setup.json missing, only `/setup.html`, `/setup.js`, `/setup.css`, `/api/setup/*`, `/api/auth/*`, `/static/*`, `/api/cameras*` are accessible.
+9. **`_setup_exempt()`** gate (line 250) — if setup.json missing, only `/setup.html`, `/js/pages/setup.js`, `/css/setup.css`, `/api/setup/*`, `/api/auth/*`, `/static/*`, `/api/cameras*` are accessible. (After the 2026-05-19 static-folder reorg, JS/CSS now live under `/js/<group>/` and `/css/` subdirs respectively.)
 
 ### 6.2 `routes/` — all 20 router files
 
@@ -270,16 +270,16 @@ Prefix shown in parens. Most routes auth-gated by middleware (not per-endpoint d
 - **`unknowns.py`** (`/api`) — 6 endpoints proxying face-recognizer. `/label` pre-fetches photo (since labeling deletes the unknown) and stashes it as `person_snapshot:{cam}:{ts}` so the emitted `person_identified` event has a thumbnail.
 - **`zones.py`** (`/api`) — per-camera CRUD via `?camera=`. Alert level enum validation.
 - **`browse.py`** (`/api/browse`) — `GET /days`, `GET /days/{date}`, `GET /snapshot/{cam_or_legacy}/{date}/{file}`, legacy `GET /snapshot/{date}/{file}`, `GET /faces`.
-- **`notifications.py`** (`/api`) — `POST /notifications/test`, `GET /notifications/status`. The bulk of this file is internal Telegram dispatch (see §8).
+- **`notifications/`** (`/api`, package as of 2026-05-19) — `POST /notifications/test` and `GET /notifications/status` live in `endpoints.py`. Internal Telegram dispatch is split across `_shared.py`, `telegram_api.py`, `frame.py`, `scene.py`, `alerts.py`. Old `routes/notifications.py` was 1102 lines; package surface is unchanged (see §8).
 - **`clips.py`** (`/api/video`) — `GET /clips`, `GET /clips/{f}`, `DELETE /clips/{f}`. Currently appears orphaned (not imported in server.py).
 - **`recordings.py`** — `GET /api/recordings/cameras`, `GET /api/recordings/dates?camera=`, `GET /api/recordings/segments?date&camera`, `GET /api/recordings/stream/{date}/{segment}?camera=` (remux .ts→.mp4 via async ffmpeg, cached in `/tmp/rec-cache` with 5 GB LRU eviction).
 - **`containers.py`** — `GET /api/containers` returns a snapshot of every project container (name/service/state/status/health). Reads `orchestrator:containers` from Redis — the orchestrator publishes that key every reconcile (60 s TTL). Read-only by design: the dashboard never touches the Docker socket; for start/stop/exec/logs the UI links out to Portainer.
 - **`metrics.py`** — `GET /metrics` (Prom text exposition), `GET /api/monitoring/health`. Counters/gauges all labeled by `camera`: `vl_detections_total`, `vl_vehicle_detections_total`, `vl_events_total`, `vl_active_persons`, `vl_inference_ms`, `vl_frames_per_second`, `vl_stream_length`, `vl_notifications_total`. Background collector polls every 10s. Per-camera last-seen-id dicts (`_last_*_id_by_cam`) — single global was a bug that broke multi-cam metrics.
 - **`ai.py`** (`/api/ai`) — chat (Qwen 3 14B with tool calls), history, vision (MiniCPM-V), clip serving, config, reset, reminders. See §9.
 - **`ai_state.py`** — per-request `request_id → media` stash under threading.Lock. Lets web + Telegram `/ask` run concurrently without stealing each other's snapshots.
-- **`ai_tools.py`** — 18 LLM tools (JSON schema + dispatcher). See §9.
+- **`ai_tools/`** — 19 LLM tools (one file per tool + `_shared.py` + `__init__.py` dispatcher). Package as of 2026-05-19. See §9.
 - **`ai_prompts.py`** — `build_system_context` (live Redis snapshot — cameras, faces, zone count, event stream length) + `build_system_prompt`.
-- **`bot_commands.py`** — Telegram polling + 18 commands + photo handler. See §8.
+- **`bot_commands/`** — Package as of 2026-05-19. `_poller.py` is the long-poll loop, `_dispatch.py` is the command router (17 commands wired), one file per command, plus `_shared.py` and `analyze.py` for photo-message handling. See §8.
 - **`telegram_access.py`** (`/api/telegram`) — `GET /users`, `POST /users` (approve), `DELETE /users/{uid}`, `GET /access-log?count=` (XREVRANGE, capped 200), `DELETE /access-log`.
 
 ### 6.3 `helpers/`
@@ -322,11 +322,16 @@ Prefix shown in parens. Most routes auth-gated by middleware (not per-endpoint d
 - `auto_mark_complete_if_preexisting()` on startup writes setup.json if registry has ≥1 camera, so upgrades skip the wizard.
 - To re-run intentionally: `docker exec vision-labs-dashboard-1 rm /data/setup-state/setup.json && docker compose restart dashboard`.
 
-### Flow (4 steps)
+### Flow (7 steps as of 2026-05-19)
 1. **Welcome.**
-2. **Hardware detect** — `POST /api/setup/detect-hardware` publishes `setup:probe-request` to orchestrator. Orchestrator runs one-shot `nvidia-smi` container, returns GPU list via `setup:probe-result` stream. Wizard recommends tier (small/mid/full) based on biggest VRAM; offers single-GPU or dual-GPU split chooser when ≥2 cards. Click **Apply this configuration** → `POST /api/setup/apply-config` writes .env keys + publishes `config:apply` (orchestrator recreates affected services).
-3. **First camera** — Scan subnet button (ONVIF unicast scan) + manual RTSP fallback. Camera ID is locked to the next available slot (cam1 first). Test connection runs `ffprobe`.
-4. **Finish** — `POST /api/setup/complete` writes setup.json. Dashboard becomes accessible.
+2. **Hardware detect** — `POST /api/setup/detect-hardware` publishes `setup:probe-request` to orchestrator. Orchestrator runs one-shot `nvidia-smi` container, returns GPU list via `setup:probe-result` stream. Wizard recommends tier (small/mid/full) based on biggest VRAM; offers single-GPU or dual-GPU split chooser when ≥2 cards. Shows a "I'd rather have more cameras than AI chat" checkbox when disabling chat would meaningfully bump slot count. Click **Apply this configuration** → `POST /api/setup/apply-config` writes .env keys + publishes `config:apply` (orchestrator recreates affected services).
+3. **Location + retention** — IANA timezone (full list from `available_timezones()`, grouped by region), DVR/snapshot/clip retention days. Same `/api/setup/apply-config` path.
+4. **First camera** — Scan subnet button (ONVIF unicast scan) + manual RTSP fallback. Camera ID is locked to the next available slot (cam1 first). Test connection runs `ffprobe`. Skip jumps straight to Telegram.
+5. **Verify** — Polls `/api/stats?camera=<id>` every 2s for 30s. ✓ when `frames_in_stream > 0` (pipeline is end-to-end alive), ✗ on timeout (pointer to Cameras tab to fix RTSP). Skippable.
+6. **Telegram (optional)** — 3 substeps: paste bot token → backend validates via `getMe` → user sends `/start` to the bot → backend polls `getUpdates` for ~30 s to capture `chat_id` + `user_id` → writes both to `.env` via env_writer (TELEGRAM_BOT_TOKEN/CHAT_ID/ALLOWED_USERS are in the ALLOWED_KEYS allowlist). Sends a confirmation message. Skippable. The Telegram page (`/telegram.html`) shows this same flow inline when no token is configured.
+7. **Finish** — `POST /api/setup/complete` writes setup.json. Dashboard becomes accessible.
+
+The step indicator at the top is clickable for any already-visited step; forward jumps are blocked so required state (hardware probe before verify, camera before verify) can't be skipped.
 
 ### State file
 ```json
@@ -348,13 +353,13 @@ Prefix shown in parens. Most routes auth-gated by middleware (not per-endpoint d
 ### Authorization
 Users in `telegram:users` hash (managed via dashboard `/api/telegram/users`). Unauthorized commands silently dropped + logged + emit `unauthorized_access` event to the primary camera's events stream.
 
-### Commands (all in `routes/bot_commands.py`)
+### Commands (all in `routes/bot_commands/`, one file per command)
 - Admin only (role=admin): `/arm`, `/disarm` (toggle notify_person + notify_vehicle on primary config).
 - User: `/snapshot [cam]`, `/clip [Ns] [cam]`, `/status [cam]`, `/who [cam]`, `/events [N] [cam]`, `/zones [cam]`, `/timelapse [YYYY-MM-DD] [cam]`, `/analyze [cam] [prompt]`, `/ask <q>`, `/rules`, `/night`, `/faces`, `/cameras`, `/start`, `/help`.
 - **Camera token parsing** — accepts cam id (`cam2`), friendly name (`basement`), prefix (`base`), or `all`. Bare commands with multiple cameras send an inline keyboard "tap to pick" with callback_data `cmd:<name>:<cam>` that re-dispatches a synthetic command.
 - Photo handler runs MiniCPM-V on user-uploaded images.
 
-### Broadcast (`notifications.py`)
+### Broadcast (`routes/notifications/`)
 - `_get_all_chat_ids()` walks `telegram:users` hash; falls back to `TELEGRAM_CHAT_ID` env.
 - `broadcast_photo` iterates all chat_ids, increments `vl_notifications_total{camera, type}`.
 - Cooldowns persisted to Redis hash `notify:last`. `_get_cooldown` floors at 10s regardless of user config.
@@ -374,7 +379,7 @@ Users in `telegram:users` hash (managed via dashboard `/api/telegram/users`). Un
 - `OLLAMA_HOST=http://ollama:11434`. `OLLAMA_CHAT_MODEL=qwen3:14b` (env, empty disables chat). `OLLAMA_VISION_MODEL=minicpm-v` (env, empty disables vision). `OLLAMA_KEEP_ALIVE=5m`. `OLLAMA_NUM_CTX=8192`.
 - GPU placement via compose: `NVIDIA_VISIBLE_DEVICES=${CHAT_GPU}` + `device_ids: ['${CHAT_GPU:-0}']`. Default `0` (single-GPU); set `CHAT_GPU=1` on dual-GPU.
 
-### The 19 tools (`routes/ai_tools.py`)
+### The 19 tools (`routes/ai_tools/`, one file per tool)
 1. `query_events` — recent events (newest first, max 50). Returns events + `by_type` + `by_identity` + `unique_people_identified` aggregations + `truncated` flag. Defaults to `camera="all"`.
 2. `query_faces` — list enrolled people (deduped by name, grouped photos).
 3. `send_telegram` — message with optional snapshot/clip; accepts `camera` arg, echoes `source_camera_id` back.
@@ -395,7 +400,7 @@ Users in `telegram:users` hash (managed via dashboard `/api/telegram/users`). Un
 18. `analyze_image` — MiniCPM-V vision LLM (standalone; for ad-hoc analysis of the latest frame).
 19. `find_dvr_segment` — resolves `camera+date+time` to a `.ts` segment and returns a deep-link URL (`/ai.html?tab=recordings&camera=&date=&segment=`) for the user to click. Does NOT extract or send video bytes. Typical workflow: AI calls `query_event_patterns` to find busy hour, then `find_dvr_segment` to hand the user a link.
 
-**Known event types** (all enumerated in tool descriptions via `KNOWN_EVENT_TYPES` constant in `ai_tools.py`): `person_appeared`, `person_left`, `person_identified`, `vehicle_detected`, `vehicle_left`, `vehicle_idle`, `face_enrolled`, `face_reconciled`, `action_changed`, `unauthorized_access`.
+**Known event types** (all enumerated in tool descriptions via `KNOWN_EVENT_TYPES` constant in `routes/ai_tools/_shared.py`): `person_appeared`, `person_left`, `person_identified`, `vehicle_detected`, `vehicle_left`, `vehicle_idle`, `face_enrolled`, `face_reconciled`, `action_changed`, `unauthorized_access`.
 
 **Category groups** (semantic buckets via `EVENT_CATEGORIES` constant): `people` (person_appeared/left/identified), `vehicles` (vehicle_*), `faces` (face_enrolled/reconciled + person_identified), `actions` (action_changed), `security` (unauthorized_access), `all`.
 
@@ -420,7 +425,7 @@ Each cam slot has 6 services with `profiles: ["camN"]`:
 5. `face-recognizer-camN` (GPU, exposes 8081 internal-only)
 6. `tracker-camN` (no GPU)
 
-cam1 (lines 58–361), cam2 (467–599), cam3 (604–732), cam4 (735–863), cam5 (866–994).
+Slot block ranges in docker-compose.yml: cam1 starts at line 78, cam5 around line 957, with cam6–cam10 + cam11–cam20 templated after. (Run `grep -n "^  recorder-camN:" docker-compose.yml` to find the exact lines for any slot — the file is ~104 KB after 2026-05-19's expansion.) **Future work:** dynamic slot generation via orchestrator-written `docker-compose.override.yml` would remove the 20-slot ceiling entirely.
 
 Detectors use `restart: on-failure` (NOT `unless-stopped`) so that a clean exit from the `detect_<type>=false` registry gate stays exited rather than restart-looping. Minor inconsistency: cam1's detector blocks still say `restart: unless-stopped` (compose lines 117, 187, 222) — holdover from when cam1 was the legacy primary.
 
@@ -552,7 +557,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 
 10. **Identity grace period** — when `suppress_known=1`, tracker defers `person_appeared` for `IDENTITY_GRACE_SECONDS=4.0`; if face-recognizer identifies the person during the window, the event is suppressed entirely.
 
-11. **First-camera-goes-to-cam1** — `AVAILABLE_SLOTS = ["cam1", ..., "cam5"]` in order; `next_available_slot()` walks it. The wizard's "first camera" always lands as cam1 after a fresh install.
+11. **First-camera-goes-to-cam1** — `AVAILABLE_SLOTS = [f"cam{n}" for n in range(1, 21)]` in order; `next_available_slot()` walks it. The wizard's "first camera" always lands as cam1 after a fresh install.
 
 12. **Face DB atomic cache swap** — `FaceDB._load_cache()` builds NEW lists, then assigns to `self._cache` / `self._unknown_cache` in single STORE_ATTR ops (atomic in CPython). Readers iterating OLD lists complete safely. This is what lets multiple face-recognizer containers sharing the same SQLite stay in sync — 30s refresh thread can run without lock contention.
 
@@ -582,7 +587,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 
 25. **The detector "registry gate" exits cleanly** — pose/vehicle/face-recognizer all run `_check_camera_wants_detector()` at startup; clean exit when the flag is false. Compose uses `restart: on-failure` so the exit stays exited. Toggling `detect_persons` etc. in the UI requires the user to delete+re-add or click the per-detector toggle (which would trigger an orchestrator restart of just that service).
 
-26. **`build_clip` re-encodes to H.264** — OpenCV's mp4v (MPEG-4 Part 2) doesn't play inline in Telegram. notifications.py:654 wraps the OpenCV output in ffmpeg `libx264 +faststart`.
+26. **`build_clip` re-encodes to H.264** — OpenCV's mp4v (MPEG-4 Part 2) doesn't play inline in Telegram. `routes/notifications/frame.py` (the `build_clip` function) wraps the OpenCV output in ffmpeg `libx264 +faststart`.
 
 27. **`network_mode: host` on Prometheus implies localhost-only scrape addresses** — `prometheus.yml` uses `localhost:8080`, `localhost:9121`, `localhost:9400`. Grafana also reachable at `localhost:3000` only.
 
@@ -613,7 +618,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 - **Setup wizard writes .env + triggers service recreation.** `apply-config` endpoint + `env_writer.py` + `config:apply` pub/sub.
 
 ### Phase G (2026-05-18) — biggest refactor of the month
-- **`front_door` → `cam1`. Symmetric slot model.** No more privileged primary camera. All 5 slots cam1-cam5 are profile-gated and orchestrator-managed identically.
+- **`front_door` → `cam1`. Symmetric slot model.** No more privileged primary camera. All slots are profile-gated and orchestrator-managed identically; originally 5 (cam1–cam5), expanded to 20 on 2026-05-19.
 - Live migration ran on dev host: 104 Redis keys renamed, 718 events rewritten, 1012 identities rewritten, recordings dir + snapshot subdirs moved, event JSONLs rewritten in place.
 - Stale references remaining: docs/history/REFACTOR_PLAN.md (historical doc), docs/history/PHASES.md.
 

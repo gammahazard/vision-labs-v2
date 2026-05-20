@@ -15,7 +15,7 @@ Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubun
 - **19-tool AI assistant** (Qwen 3 14B) — query events, capture live snapshots (with auto vision-model description), set reminders, find DVR segments — all multi-camera aware
 - **DVR recording** — 1-hour MPEG-TS segments, browseable through the dashboard with date + camera filters
 - **Drawable zones** with per-time-of-day alert rules (always / night-only / log / ignore / dead zone)
-- **Up to 5 cameras** out of the box (symmetric `cam1`–`cam5` slots, orchestrator-managed)
+- **Up to 20 cameras** out of the box (symmetric `cam1`–`cam20` slots, orchestrator-managed). The real cap is GPU VRAM, not the slot count — a 16 GB card with AI chat off comfortably handles 7+ cameras at 'n' detector models; a 24 GB 3090 with chat off pushes 12+. The wizard estimates a number for your hardware.
 - **Prometheus + Grafana monitoring** embedded in the dashboard
 
 ---

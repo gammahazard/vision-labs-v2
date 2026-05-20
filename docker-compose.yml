@@ -1775,6 +1775,1376 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
 
+
+  recorder-cam11:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam11"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam11
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam11:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam11"]
+    environment:
+      - CAMERA_ID=cam11
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam11:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam11"]
+    environment:
+      - CAMERA_ID=cam11
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam11:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam11"]
+    environment:
+      - CAMERA_ID=cam11
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam11:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam11"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam11
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam11:
+    build: { context: ./services/tracker }
+    profiles: ["cam11"]
+    environment:
+      - CAMERA_ID=cam11
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam12:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam12"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam12
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam12:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam12"]
+    environment:
+      - CAMERA_ID=cam12
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam12:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam12"]
+    environment:
+      - CAMERA_ID=cam12
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam12:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam12"]
+    environment:
+      - CAMERA_ID=cam12
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam12:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam12"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam12
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam12:
+    build: { context: ./services/tracker }
+    profiles: ["cam12"]
+    environment:
+      - CAMERA_ID=cam12
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam13:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam13"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam13
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam13:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam13"]
+    environment:
+      - CAMERA_ID=cam13
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam13:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam13"]
+    environment:
+      - CAMERA_ID=cam13
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam13:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam13"]
+    environment:
+      - CAMERA_ID=cam13
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam13:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam13"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam13
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam13:
+    build: { context: ./services/tracker }
+    profiles: ["cam13"]
+    environment:
+      - CAMERA_ID=cam13
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam14:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam14"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam14
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam14:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam14"]
+    environment:
+      - CAMERA_ID=cam14
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam14:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam14"]
+    environment:
+      - CAMERA_ID=cam14
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam14:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam14"]
+    environment:
+      - CAMERA_ID=cam14
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam14:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam14"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam14
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam14:
+    build: { context: ./services/tracker }
+    profiles: ["cam14"]
+    environment:
+      - CAMERA_ID=cam14
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam15:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam15"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam15
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam15:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam15"]
+    environment:
+      - CAMERA_ID=cam15
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam15:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam15"]
+    environment:
+      - CAMERA_ID=cam15
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam15:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam15"]
+    environment:
+      - CAMERA_ID=cam15
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam15:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam15"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam15
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam15:
+    build: { context: ./services/tracker }
+    profiles: ["cam15"]
+    environment:
+      - CAMERA_ID=cam15
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam16:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam16"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam16
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam16:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam16"]
+    environment:
+      - CAMERA_ID=cam16
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam16:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam16"]
+    environment:
+      - CAMERA_ID=cam16
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam16:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam16"]
+    environment:
+      - CAMERA_ID=cam16
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam16:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam16"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam16
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam16:
+    build: { context: ./services/tracker }
+    profiles: ["cam16"]
+    environment:
+      - CAMERA_ID=cam16
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam17:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam17"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam17
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam17:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam17"]
+    environment:
+      - CAMERA_ID=cam17
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam17:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam17"]
+    environment:
+      - CAMERA_ID=cam17
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam17:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam17"]
+    environment:
+      - CAMERA_ID=cam17
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam17:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam17"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam17
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam17:
+    build: { context: ./services/tracker }
+    profiles: ["cam17"]
+    environment:
+      - CAMERA_ID=cam17
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam18:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam18"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam18
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam18:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam18"]
+    environment:
+      - CAMERA_ID=cam18
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam18:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam18"]
+    environment:
+      - CAMERA_ID=cam18
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam18:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam18"]
+    environment:
+      - CAMERA_ID=cam18
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam18:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam18"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam18
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam18:
+    build: { context: ./services/tracker }
+    profiles: ["cam18"]
+    environment:
+      - CAMERA_ID=cam18
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam19:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam19"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam19
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam19:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam19"]
+    environment:
+      - CAMERA_ID=cam19
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam19:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam19"]
+    environment:
+      - CAMERA_ID=cam19
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam19:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam19"]
+    environment:
+      - CAMERA_ID=cam19
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam19:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam19"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam19
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam19:
+    build: { context: ./services/tracker }
+    profiles: ["cam19"]
+    environment:
+      - CAMERA_ID=cam19
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+
+  recorder-cam20:
+    build: { context: ./services/recorder }
+    network_mode: host
+    profiles: ["cam20"]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
+    environment:
+      - CAMERA_ID=cam20
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - RECORDING_DIR=/recordings
+      - SEGMENT_DURATION=3600
+      - RETENTION_DAYS=3
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    restart: unless-stopped
+
+  camera-ingester-cam20:
+    build: { context: ./services/camera-ingester }
+    network_mode: host
+    profiles: ["cam20"]
+    environment:
+      - CAMERA_ID=cam20
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - TARGET_FPS=15
+      - JPEG_QUALITY=75
+      - HD_TARGET_FPS=8
+      - HD_JPEG_QUALITY=70
+      - MAX_STREAM_LEN=1000
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
+  pose-detector-cam20:
+    build: { context: ./services/pose-detector }
+    profiles: ["cam20"]
+    environment:
+      - CAMERA_ID=cam20
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s-pose.pt
+      - CONFIDENCE_THRESH=0.5
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  vehicle-detector-cam20:
+    build: { context: ./services/vehicle-detector }
+    profiles: ["cam20"]
+    environment:
+      - CAMERA_ID=cam20
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - MODEL_NAME=/models/yolov8s.pt
+      - CONFIDENCE_THRESH=0.35
+      - FRAME_SKIP=1
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - yolo-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  face-recognizer-cam20:
+    build: { context: ./services/face-recognizer }
+    profiles: ["cam20"]
+    expose: [ "8081" ]
+    environment:
+      - CAMERA_ID=cam20
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - DB_PATH=/data/faces.db
+      - MATCH_THRESHOLD=0.5
+      - API_PORT=8081
+      - NVIDIA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - face-data:/data
+      - insightface-models:/root/.insightface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [ gpu ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: on-failure
+
+  tracker-cam20:
+    build: { context: ./services/tracker }
+    profiles: ["cam20"]
+    environment:
+      - CAMERA_ID=cam20
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - IOU_THRESHOLD=0.3
+      - LOST_TIMEOUT=5.0
+      - LOCATION_NAME=${LOCATION_NAME:-Default}
+      - LOCATION_REGION=${LOCATION_REGION:-}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
+      - LOCATION_LAT=${LOCATION_LAT:-43.6532}
+      - LOCATION_LON=${LOCATION_LON:--79.3832}
+    volumes: [ "./contracts:/app/contracts:ro" ]
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+
   # ---------------------------------------------------------------------------
   # Orchestrator — reconciles compose profiles against cameras:registry.
   # Single-purpose sidecar; intentionally tiny attack surface (no HTTP, no
@@ -1801,7 +3171,7 @@ services:
       # process environment — pass through the host's PWD here so the
       # expansion matches and the spec stays valid.
       - PWD=${PWD}
-      - ALLOWED_PROFILES=cam1,cam2,cam3,cam4,cam5,cam6,cam7,cam8,cam9,cam10
+      - ALLOWED_PROFILES=cam1,cam2,cam3,cam4,cam5,cam6,cam7,cam8,cam9,cam10,cam11,cam12,cam13,cam14,cam15,cam16,cam17,cam18,cam19,cam20
       - RECONCILE_INTERVAL=10
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

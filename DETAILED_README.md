@@ -63,7 +63,7 @@ Orchestrator ◀──▶ Docker socket ──▶ docker compose up/down --profi
 Portainer ◀──▶ https://localhost:9443 (Docker management UI)
 ```
 
-All inter-service communication is via Redis. Cameras are slot-based (`cam1`–`cam5`), each slot gated by a Docker Compose profile, brought up/down by the orchestrator when you add/remove cameras in the dashboard.
+All inter-service communication is via Redis. Cameras are slot-based (`cam1`–`cam20`), each slot gated by a Docker Compose profile, brought up/down by the orchestrator when you add/remove cameras in the dashboard.
 
 For a deeper walk through Redis streams/keys, pub/sub channels, and service-by-service responsibilities, see [CONTEXT.md](CONTEXT.md).
 
@@ -82,7 +82,7 @@ For a deeper walk through Redis streams/keys, pub/sub channels, and service-by-s
 | **dashboard** | — | FastAPI backend + static frontend — WebSocket live view (authenticated), REST APIs, background pollers, retention prune. Always on (not profile-gated) |
 | **ollama** | ✅ `CHAT_GPU` | Local LLM server — Qwen 3 14B (chat + tools) and MiniCPM-V (vision). Always on |
 | **recorder** | — | ffmpeg RTSP→`.ts` copy (no transcode), 1-hour segments, 3-day retention. Default destination `./data/recordings/`. Profile-gated per slot |
-| **orchestrator** | — | Watches `cameras:registry` and reconciles compose profiles. Adding a camera via the dashboard auto-runs `docker compose --profile <slot> up -d` (the dashboard itself stays Docker-socket-free for security). Allowed slots: `cam1`–`cam5`. Audits every action to `orchestrator:audit` Redis stream |
+| **orchestrator** | — | Watches `cameras:registry` and reconciles compose profiles. Adding a camera via the dashboard auto-runs `docker compose --profile <slot> up -d` (the dashboard itself stays Docker-socket-free for security). Allowed slots: `cam1`–`cam20`. Audits every action to `orchestrator:audit` Redis stream |
 | **prometheus** | — | Metrics collection (GPU, Redis, inference timing) |
 | **grafana** | — | Monitoring dashboards embedded in the system monitor page |
 | **redis-exporter** | — | Exports Redis metrics to Prometheus |
@@ -285,7 +285,7 @@ Append a tier to `.env` with `cat tiers/<tier>.env >> .env`.
 | `MAX_EVENT_STREAM_LEN` | No | tracker: cap on `events:{cam}` stream (default 5000) |
 | `MAX_DETECTION_STREAM_LEN` | No | pose/vehicle detectors: cap on detection streams (default 1000) |
 | `CACHE_REFRESH_INTERVAL` | No | face-recognizer: seconds between cache reloads from shared DB (default 30) |
-| `ALLOWED_PROFILES` | No | orchestrator: profile names it's permitted to up/down (default `cam1,cam2,cam3,cam4,cam5`) |
+| `ALLOWED_PROFILES` | No | orchestrator: profile names it's permitted to up/down (default `cam1,cam2,...,cam20`) |
 | `RECONCILE_INTERVAL` | No | orchestrator: safety-net reconcile loop period in seconds (default 10) |
 
 ---
@@ -315,7 +315,7 @@ Per-camera detailed dashboard. The `?camera=` URL param scopes everything on the
 Grid tiles link to `/single.html?camera=<id>` by default. Visiting `/single.html` with no param falls back to the primary camera.
 
 ### Cameras (`cameras.html`) — Registry admin
-Add / edit / delete / pause cameras. Test RTSP URLs via the Test Connection button (runs ffprobe in the dashboard container). Per-camera detector toggles (Persons / Vehicles / Faces). On Save, the orchestrator sees the registry change via the `cameras:events` Redis pub/sub channel and brings the slot's services up automatically — no terminal command needed. A status pill on each camera row shows live state: `running`, `pending`, `paused`, `stopped`, or `<action> failed`. The pause checkbox flips `enabled: false` in the registry; orchestrator tears down detectors while the registration stays so you can re-enable later. Pre-defined slots: `cam1`–`cam5` (symmetric — all 5 are profile-gated and managed by the orchestrator). Extend by duplicating a block in `docker-compose.yml` and adding to `AVAILABLE_SLOTS` in `services/dashboard/cameras.py` + `ALLOWED_PROFILES` env on the orchestrator.
+Add / edit / delete / pause cameras. Test RTSP URLs via the Test Connection button (runs ffprobe in the dashboard container). Per-camera detector toggles (Persons / Vehicles / Faces). On Save, the orchestrator sees the registry change via the `cameras:events` Redis pub/sub channel and brings the slot's services up automatically — no terminal command needed. A status pill on each camera row shows live state: `running`, `pending`, `paused`, `stopped`, or `<action> failed`. The pause checkbox flips `enabled: false` in the registry; orchestrator tears down detectors while the registration stays so you can re-enable later. Pre-defined slots: `cam1`–`cam20` (symmetric — all profile-gated and managed by the orchestrator). The real cap is GPU VRAM, not the slot count. To extend beyond 20: duplicate a `camN` block in `docker-compose.yml`, add the new slot to `AVAILABLE_SLOTS` in `services/dashboard/cameras.py`, and append it to `ALLOWED_PROFILES` env on the orchestrator. A future-work item is dynamic slot generation by the orchestrator itself, removing the static cap.
 
 ### AI Assistant (`ai.html`)
 Three-tab interface:
@@ -327,10 +327,10 @@ Three-tab interface:
 People count, inference time, GPU status, Redis memory cards, plus embedded Grafana dashboard with adjustable time range.
 
 ### Telegram Access Manager (`telegram.html`)
-Approve/revoke bot users with role-based access (admin/user). Access log viewer for all incoming bot interactions.
+If a bot token isn't configured yet, the page shows the **inline connect flow** — paste your @BotFather token, send `/start` to the bot, the dashboard captures your `chat_id` automatically. Once configured, the page becomes the user management UI: approve/revoke bot users with role-based access (admin/user), plus an access log viewer. A "🤖 Bot connection" card with a "Reconnect bot" button lets you swap to a different bot or re-pair from a different Telegram account.
 
 ### Login (`login.html`)
-Session-based authentication with blurred camera background. **On first login with the default `admin/admin`, the UI forces a password rotation before letting you into the dashboard.**
+Session-based authentication with blurred camera background. **On first login with the default `admin/admin`, the server refuses every route except `/api/auth/change-password` until you rotate.** The session token carries a `must_change` flag so the gate can't be bypassed by a curl client ignoring the UI. Minimum new password length is 8 characters; "admin" is explicitly rejected as a new password.
 
 ---
 
@@ -401,7 +401,7 @@ identities:cam1               ← Face recognizer publishes identity matches
 telegram:access_log           ← Bot commands: full audit trail of access attempts
 ```
 
-Per-camera streams use the slot id as suffix (`cam1`..`cam5`). The dashboard merges across all registered slots when you ask for "all cameras."
+Per-camera streams use the slot id as suffix (`cam1`..`cam20`). The dashboard merges across all registered slots when you ask for "all cameras."
 
 ### Redis Keys (state)
 
@@ -493,8 +493,11 @@ Shared code lives in `contracts/` and is mounted read-only into every service:
 
 - WebSocket `/ws/live` is authenticated; cookie-less connections are closed with code 4401.
 - Face-recognizer port 8081 is **not exposed on the host** — only reachable from inside the bridge net via the dashboard proxy at `/api/faces`.
-- Default `admin/admin` credentials force a password change on first login.
+- Default `admin/admin` credentials force a server-side gate: every route except `/api/auth/change-password` returns 403 until the password is rotated (8-char minimum, "admin" rejected).
+- **Brute-force gate on `/api/auth/login`**: 5 failed attempts from one IP in 5 minutes → 15-minute lockout returning HTTP 429 with `Retry-After`. In-memory; resets on container restart.
+- Session cookies are HMAC-SHA256-signed; the token now carries the `must_change` flag so the gate can't be bypassed by a non-browser client.
 - HTTP logging is set to WARNING for the `httpx` library so Telegram bot tokens don't leak into stdout.
+- **Redis is bound to `127.0.0.1:6379`** in docker-compose so LAN devices can't connect — internal-network services reach it via the `redis` hostname, host-network services use localhost. A 32-byte `REDIS_PASSWORD` is auto-generated by `scripts/install-linux.sh` on first install and required by every service.
 - Local LAN deployment assumed — Prometheus `/metrics` and Grafana are accessible without auth (acceptable for `localhost`-only; do not port-forward 8080/3000/9090 without adding a reverse proxy + auth).
 - Dashboard does **not** mount the Docker socket. Only the orchestrator does. Reduces blast radius if the dashboard is ever compromised.
 - The login page background image is server-side blurred (1/4 scale GaussianBlur σ=30 q=30) so it can't be used for surveillance from the unauthenticated `/api/login-bg` endpoint.
