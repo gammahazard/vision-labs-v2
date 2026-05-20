@@ -58,3 +58,9 @@ line_counts.txt
 
 # Backups (produced by scripts/backup.sh — contain face DB, auth tokens, etc.)
 vl-backup-*.tar.gz
+
+# Per-user Claude Code overrides — permissions, MCP env vars, local hooks.
+# May accumulate tokens / API keys over time. The shared project config
+# (.claude/settings.json) is intentionally NOT ignored so team-wide settings
+# can still be tracked when added.
+.claude/settings.local.json

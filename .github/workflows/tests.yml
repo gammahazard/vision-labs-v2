@@ -1,0 +1,48 @@
+# .github/workflows/tests.yml
+#
+# Runs the pytest suite on every push to main and every PR. Catches
+# regressions that would otherwise only surface when a user runs tests
+# locally — including the NameError-class bugs the AI-tools and
+# bot_commands smoke tests guard against (see CLAUDE.md §0).
+#
+# Intentionally NOT building container images here — publish-images.yml
+# handles that on tag push. This workflow is just Python deps + pytest so
+# every commit gets test feedback in ~2-3 minutes without burning CI
+# minutes on 3GB CUDA layers.
+#
+# SAFETY: no run: step references github.event.* — only hardcoded
+# commands, so no injection surface.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: services/dashboard/requirements.txt
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/dashboard/requirements.txt
+          pip install pytest
+
+      - name: Run pytest
+        run: pytest -q --tb=short
