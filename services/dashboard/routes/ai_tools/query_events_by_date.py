@@ -156,7 +156,17 @@ def _tool_query_events_by_date(args: dict) -> str:
             if t == 'person_identified':
                 name = evt.get('identity_name') or '<unknown>'
                 agg_identity_counts[name] = agg_identity_counts.get(name, 0) + 1
-        result = {'date': str(target_date), 'cameras_queried': cam_ids, 'total_events': len(all_events), 'by_type': agg_type_counts, 'by_identity': agg_identity_counts, 'unique_people_identified': len(agg_identity_counts), 'latest_events': all_events[-10:] if len(all_events) > 10 else all_events, 'journal_used': journal_used}
+        # "Detections" semantically means "things detected", not "events fired".
+        # Each tracked person/vehicle produces a *_appeared (or *_detected) event
+        # at session start and a *_left event at session end — so total_events
+        # roughly doubles the actual count of distinct sightings. Surface a
+        # `detection_count` that mirrors what a human means by "how many were
+        # detected": one entry per primary appearance event.
+        detection_count = (
+            agg_type_counts.get('person_appeared', 0)
+            + agg_type_counts.get('vehicle_detected', 0)
+        )
+        result = {'date': str(target_date), 'cameras_queried': cam_ids, 'total_events': len(all_events), 'detection_count': detection_count, 'detection_count_note': "detection_count = person_appeared + vehicle_detected (one entry per session). Use this when the user asks 'how many were detected/seen'. Use total_events only when the user explicitly asks for 'events' or 'all activity'.", 'by_type': agg_type_counts, 'by_identity': agg_identity_counts, 'unique_people_identified': len(agg_identity_counts), 'latest_events': all_events[-10:] if len(all_events) > 10 else all_events, 'journal_used': journal_used}
         if len(cam_ids) > 1:
             result['per_camera'] = per_camera
         return json.dumps(result)

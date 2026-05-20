@@ -123,7 +123,34 @@ def _tool_query_event_patterns(args: dict) -> str:
                 active_window = 'no activity'
                 quiet_hours = [f'{h:02d}:00' for h in range(24)]
             busiest = ranked[0] if ranked and ranked[0][1] > 0 else (0, 0)
-            return json.dumps({'analysis': 'hourly', 'scope': scope_label, 'cameras_queried': cam_ids, 'days_analyzed': days_back if not date_str else 1, 'total_events': len(events_raw), 'busiest_hour': f'{busiest[0]:02d}:00 ({busiest[1]} events)', 'top_hours': top_hours, 'active_window': active_window, 'quiet_hours_count': len(quiet_hours), 'hourly_breakdown': hourly_breakdown, 'by_type_per_hour': by_type_per_hour, 'by_identity_per_hour': by_identity_per_hour, 'per_camera_hourly': per_camera_hourly})
+            # Detection count per hour (one entry per session start, not per
+            # event). For people: person_appeared. For vehicles: vehicle_detected.
+            # Surfacing this so the LLM can answer "how many were detected at
+            # busiest hour" without double-counting the matching _left events.
+            detections_per_hour = {
+                f'{h:02d}:00': hourly_by_type.get(h, {}).get('person_appeared', 0)
+                               + hourly_by_type.get(h, {}).get('vehicle_detected', 0)
+                for h in range(24)
+            }
+            busiest_hour_detections = detections_per_hour.get(f'{busiest[0]:02d}:00', 0) if busiest[1] > 0 else 0
+            return json.dumps({
+                'analysis': 'hourly',
+                'scope': scope_label,
+                'cameras_queried': cam_ids,
+                'days_analyzed': days_back if not date_str else 1,
+                'total_events': len(events_raw),
+                'busiest_hour': f'{busiest[0]:02d}:00 ({busiest[1]} events)',
+                'busiest_hour_detections': busiest_hour_detections,
+                'busiest_hour_detection_note': "busiest_hour_detections counts person_appeared + vehicle_detected only (one entry per session start). Use this for 'how many detections in the busiest hour'.",
+                'top_hours': top_hours,
+                'active_window': active_window,
+                'quiet_hours_count': len(quiet_hours),
+                'hourly_breakdown': hourly_breakdown,
+                'detections_per_hour': detections_per_hour,
+                'by_type_per_hour': by_type_per_hour,
+                'by_identity_per_hour': by_identity_per_hour,
+                'per_camera_hourly': per_camera_hourly,
+            })
         elif analysis_type == 'daily':
             daily = defaultdict(int)
             daily_by_type = defaultdict(lambda: defaultdict(int))
