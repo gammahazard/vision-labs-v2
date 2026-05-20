@@ -31,6 +31,47 @@ from ._shared import (
 logger = logging.getLogger("dashboard.ai")
 
 
+def _load_jsonl_journal(target_date) -> list:
+    """Load every event written to /data/events/<YYYY-MM-DD>.jsonl.
+
+    The event poller writes one JSON object per line to this file as the
+    authoritative long-term record. The Redis events stream is capped at
+    MAX_EVENT_STREAM_LEN (default 5000 per camera), so on a busy day the
+    oldest events get trimmed from Redis — but they survive in JSONL.
+
+    Returns a list of dicts shaped like the Redis stream entries (so the
+    caller can merge them by event_id without special-casing). Silently
+    returns [] if the file doesn't exist or any line fails to parse.
+    """
+    journal_path = f"/data/events/{target_date}.jsonl"
+    if not os.path.isfile(journal_path):
+        return []
+    out = []
+    try:
+        with open(journal_path, "r") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (ValueError, json.JSONDecodeError):
+                    continue  # skip corrupted lines (partial writes from crash)
+                # Match the shape of (msg_id, data) used in the Redis branch.
+                # JSONL uses "id" for stream id, "camera" for cam_id, and
+                # has all other event fields at top level.
+                evt = dict(entry)
+                evt["event_id"] = evt.get("id") or evt.get("event_id") or ""
+                evt["camera"] = evt.get("camera") or ""
+                ts = evt.get("timestamp")
+                if ts is not None:
+                    evt["timestamp"] = str(ts)
+                out.append(evt)
+    except Exception:
+        return []
+    return out
+
+
 SCHEMA = {'type': 'function', 'function': {'name': 'query_events_by_date', 'description': "Query events filtered by date. **Defaults to camera='all', category='all'.** Use 'category' to filter — when user says 'only people / no vehicles / just faces', pass category='people'. Use 'event_type' to filter to ONE specific event type. Returns: total_events, by_type, by_identity, unique_people_identified, latest_events, per_camera with each camera's own by_type and by_identity. Use total_events for 'how many detections', by_identity for 'who was seen', per_camera.<cam>.by_identity for 'which camera saw which person'. NEVER invent identity counts.", 'parameters': {'type': 'object', 'properties': {'date': {'type': 'string', 'description': "Date to query in YYYY-MM-DD format. Use 'today' or 'yesterday' as shortcuts."}, 'event_type': {'type': 'string', 'description': f"Optional: filter by ONE event type. Known types: {KNOWN_EVENT_TYPES_DOC}. Use 'category' instead if user said 'people' or 'vehicles' generally."}, 'category': {'type': 'string', 'enum': ['people', 'vehicles', 'faces', 'actions', 'security', 'all'], 'description': "Filter by category. 'people' = person events only. 'vehicles' = vehicle events only. 'faces' = face events + person_identified. Default 'all'."}, 'camera': {'type': 'string', 'description': "Camera id to query (e.g. 'cam1', 'cam2'), or 'all' for every camera. Default = primary camera."}}, 'required': ['date']}}}
 
 
