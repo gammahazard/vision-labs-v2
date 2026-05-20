@@ -38,6 +38,9 @@ You verify exactly **one** doc claim against actual code. The orchestrator fills
 6. SELF-CITATION GATE (DO STEP A BEFORE STEP B)
    Step A: Read {{doc_path}} at {{doc_line}} ± 1. Confirm
            {{claim_text}} appears there verbatim (as a substring).
+           For multi-line claims, check the substring across the
+           concatenated text of lines {{doc_line}} - 1 through
+           {{doc_line}} + 1 (preserving newlines and original whitespace).
            If NOT → emit UNVERIFIED with reason "mapper hallucination:
            doc does not contain the quoted claim at the cited line".
    Step B: ONLY if Step A passes — Read {{expected_evidence_path}}
@@ -96,6 +99,8 @@ For DRIFT:
 - **Suggested action:** <one-line proposal per rule 9>
 ```
 
+> Note for both MATCH and DRIFT: when a claim is repo-wide (e.g. test counts, total file counts), use a directory path like `tests/` or `<repo>` in `Checked against`, with a parenthetical describing the command/aggregation used (e.g. `\`tests/\` (grep -rc 'def test_' tests/ = 302)`). The `<file>:<line>` format is for file-scoped claims.
+
 For UNVERIFIED:
 ```markdown
 ### UNVERIFIED — <one-line summary>
@@ -115,19 +120,19 @@ For UNVERIFIED:
 ### MATCH — AVAILABLE_SLOTS spans cam1-cam20 at services/dashboard/cameras.py:82
 
 - **Claim source:** `CONTEXT.md:82`
-- **Claim:** `AVAILABLE_SLOTS = [f"cam{n}" for n in range(1, 21)]` (services/dashboard/cameras.py:82)
+- **Claim:** - `AVAILABLE_SLOTS = [f"cam{n}" for n in range(1, 21)]` (services/dashboard/cameras.py:82)
 - **Type:** structural
 - **Checked against:** `services/dashboard/cameras.py:82`
 - **Evidence:** Line 82 reads `AVAILABLE_SLOTS = [f"cam{n}" for n in range(1, 21)]` — exact match.
 - **Suggested action:** none (claim matches code)
 ```
 
-**DRIFT example:**
+**DRIFT example** (hypothetical — illustrates the format when a count is stale; the actual current CONTEXT.md test count claim is "302 tests"):
 ```markdown
 ### warning | DRIFT — test count off by 23
 
 - **Claim source:** `CONTEXT.md:761`
-- **Claim:** 279 tests, 0 quarantined as of 2026-05-20
+- **Claim:** - 279 tests, 0 quarantined as of 2026-05-20. Run via `source .venv-test/bin/activate && pytest -q`.
 - **Type:** structural
 - **Checked against:** `tests/` (grep -rc 'def test_' tests/ = 302)
 - **Evidence:** Actual test count is 302; claim says 279.
@@ -138,8 +143,8 @@ For UNVERIFIED:
 ```markdown
 ### UNVERIFIED — /zones picker behavior cannot be statically verified
 
-- **Claim source:** `CHANGELOG.md:28`
-- **Claim:** /zones Telegram command now shows an inline camera picker when more than one camera is configured
+- **Claim source:** `CHANGELOG.md:29`
+- **Claim:** - `/zones` Telegram command now shows an inline camera picker when more than one camera is configured (matching `/snapshot` and `/clip`).
 - **Type:** behavioral
 - **Checked against:** n/a
 - **Reason:** behavioral — needs manual test (cannot infer runtime behavior from static code).
