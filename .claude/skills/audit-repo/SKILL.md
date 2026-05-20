@@ -67,11 +67,20 @@ Spawn four subagents in a **single message** with four Agent tool calls (paralle
 
 Each mapper returns a JSON array (schemas in the respective prompts). Validate each return:
 - If JSON is malformed, re-prompt that mapper ONCE with: "Your previous output was not valid JSON. Re-emit in the schema exactly. Do not add commentary."
-- If still malformed after one retry, mark that track as "mapper failed twice" and skip Stage 2 for that track. The other tracks proceed.
+- If still malformed after one retry, mark that track as "mapper failed twice" and skip Stage 2 for that track. The other tracks proceed. Write the track's report file (`audits/<track>.md`) with this single block at the top, after the standard frontmatter:
+  ```markdown
+  ## Mapper failure
+
+  ### error — <track> mapper returned malformed JSON twice
+
+  - **What happened:** Stage 1 mapper for the <track> track returned non-JSON output on both initial dispatch and a single retry.
+  - **Consequence:** No items extracted; Stage 2 verifier fan-out skipped for this track.
+  - **Suggested action:** Re-run `/audit-repo`. If failure repeats, inspect `.claude/skills/audit-repo/mappers/<track>.md` for prompt issues.
+  ```
 
 ### Stage 1.5 — soft brake check
 
-If the drift mapper returned **more than 150 claims**, surface a warning to the user before fanning out Stage 2: "Drift mapper extracted N > 150 claims. Proceed with verifier fan-out? (Y/n)". Wait for confirmation.
+If the drift mapper returned **more than 150 claims**, surface a warning to the user before fanning out Stage 2: "Drift mapper extracted N > 150 claims. Proceed with verifier fan-out? (Y/n)". Wait for confirmation. If the user responds 'n': skip Stage 2 fan-out for the drift track entirely. Still write `audits/drift.md` containing only the 'Manual verification needed' section populated from the behavioral claims; the report's structural-claims findings count becomes 0. Other tracks proceed normally.
 
 ### Stage 1.6 — route drift claims
 
@@ -88,7 +97,7 @@ For each track, spawn one Agent subagent per mapper item, using the correspondin
 - For each architectural node: load `verifiers/architecture.md`, substitute `{{node_name}}`, `{{primary_files}}`, dispatch.
 - For each schema contract: load `verifiers/schema-drift.md`, substitute `{{contract_id}}`, `{{producers}}`, `{{consumers}}`, dispatch.
 
-**Dispatch in batches of up to 30 parallel Agent calls per message.** If a track has more items than 30, split into rounds. Each round is parallel within itself.
+**Dispatch all four tracks' verifiers in a single global queue, capped at 30 parallel Agent calls per message round.** Cycle through rounds until all verifiers across all tracks have been dispatched. For example: if drift has 25 structural claims, quality has 20 file groups, architecture has 30 nodes, and schema-drift has 15 contracts (90 verifiers total), dispatch round 1 of 30 (any mix from any tracks), then round 2 of 30, then round 3 of 30, then wait for all to return before assembling reports. Do not batch within a single track only — global queue is the right shape because it minimizes wall-clock time.
 
 For each verifier:
 - If the subagent crashes or times out, emit a fallback block: `### UNVERIFIED — verifier crashed\n- **Input:** <the placeholder values>\n- **Reason:** verifier did not return a parsable block`.
@@ -106,15 +115,17 @@ For each track, build the report file by concatenating:
    Methodology: see `audits/SUMMARY.md`.
    ```
 
-2. **Summary block** (counts).
+2. **Summary block** — for each track, emit these counts as a bullet list under `## Summary`:
+   - Items extracted (e.g. "claims extracted", "file groups", "nodes mapped", "contracts")
+   - Subtype breakdown where applicable (drift only: structural vs behavioral)
+   - Outcome counts: MATCH / DRIFT / UNVERIFIED for drift; critical / warning / info finding counts for quality; flagged-note counts by severity for architecture; MATCH / DRIFT / INFO for schema-drift
+   The exact wording for each track's summary block is determined by the verifier output structure documented in the per-track verifier templates.
 
-3. **Severity-sorted findings body**. Sort order:
-   - critical blocks first
-   - then warning
-   - then info / DRIFT / mismatches (track-dependent)
-   - then UNVERIFIED
-   - For the drift report only, then "Manual verification needed" (the behavioral claims that skipped Stage 2)
-   - Lastly, `<details>` block wrapping all MATCH / "no finding" blocks (folded by default)
+3. **Severity-sorted findings body**. Sort by two keys:
+   - Primary: severity, in order `critical` → `warning` → `info`.
+   - Secondary (tiebreak within the same severity): outcome, in order `DRIFT` / `mismatch` / `finding` → `UNVERIFIED`.
+   For the drift report only, after the severity-sorted body comes a "Manual verification needed" section (the behavioral claims that skipped Stage 2).
+   Lastly, all MATCH / "no finding" blocks are wrapped in a single `<details>` element with `<summary>Show N verified-clean entries</summary>`, folded by default.
 
 4. Write to `audits/<track>.md`, overwriting any existing file.
 
