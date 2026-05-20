@@ -74,12 +74,6 @@
             const total = data.total_events ?? 0;
             eventsEl.textContent = total > 0 ? total.toLocaleString() : "--";
         }
-
-        // Alert Accuracy (no longer tracked — feedback system removed)
-        const accEl = document.getElementById("cardAccuracyValue");
-        if (accEl) {
-            accEl.textContent = "N/A";
-        }
     }
 
     function setCardStatus(cardId, status) {
