@@ -373,8 +373,26 @@ register_websocket(app)
 # ---------------------------------------------------------------------------
 # Static Files — Serve frontend
 # ---------------------------------------------------------------------------
-# Mount AFTER API routes so /api/* takes priority
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Mount AFTER API routes so /api/* takes priority.
+# HTML files have no ?v= query string so browsers happily cache them
+# indefinitely, which makes UI changes invisible until the user manually hard-
+# refreshes. Set Cache-Control: no-cache on HTML responses so the browser
+# always revalidates. Versioned assets (ai.js?v=N, conditions.js?v=N, etc.)
+# stay cacheable as before — their URL changes when we bump the version.
+from fastapi import Response
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+
+class NoCacheHtmlStaticFiles(_StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if isinstance(response, Response):
+            if path.endswith(".html") or path in ("", "/"):
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
+app.mount("/", NoCacheHtmlStaticFiles(directory="static", html=True), name="static")
 
 
 # ---------------------------------------------------------------------------
