@@ -10,7 +10,7 @@
     <!-- Inherit panel/button styling from the existing dashboard CSS so the
          Conditions and Faces panels look consistent. Grid-specific styles below
          override or add to it. -->
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/style.css?v=5">
     <style>
         :root {
             --bg-primary: #0a0e17;
@@ -539,11 +539,11 @@
     </script>
 
     <!-- Grid view logic (must run before the panel scripts so we don't block). -->
-    <script src="grid.js?v=1"></script>
+    <script src="js/dashboard/grid.js?v=2"></script>
 
     <!-- Conditions + Faces — both fetch global (non-camera-specific) data. -->
-    <script src="conditions.js?v=9"></script>
-    <script src="faces.js?v=10"></script>
+    <script src="js/dashboard/conditions.js?v=10"></script>
+    <script src="js/dashboard/faces.js?v=11"></script>
     <!-- Aggregate event feed across all cameras: explicitly mark this page
          as the "all" scope so events.js polls /api/events?camera=all.
          Page size is 100 with the "Load older" button enabled; the journal
@@ -553,13 +553,13 @@
         window.EVENT_FEED_PAGE_SIZE = 100;
         window.EVENT_FEED_LOAD_MORE = true;
     </script>
-    <script src="events.js?v=21"></script>
-    <script src="nav.js?v=3"></script>
+    <script src="js/dashboard/events.js?v=22"></script>
+    <script src="js/core/nav.js?v=4"></script>
     <!-- Account + Browse panels on the home page — both share their scripts
          with single.html so behavior matches one-to-one. -->
-    <script src="auth.js?v=6"></script>
-    <script src="settings.js?v=1"></script>
-    <script src="browse.js?v=1"></script>
+    <script src="js/core/auth.js?v=7"></script>
+    <script src="js/dashboard/settings.js?v=2"></script>
+    <script src="js/dashboard/browse.js?v=2"></script>
     <!-- Manual init: faces.js + events.js usually wait for app.js DOMContentLoaded;
          here we trigger them directly since app.js is not loaded on the grid page. -->
     <script>

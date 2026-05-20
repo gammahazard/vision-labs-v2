@@ -187,7 +187,7 @@ app.include_router(setup_router)
 _AUTH_EXEMPT = {
     "/login.html", "/api/auth/login", "/api/auth/status",
     "/api/login-bg",
-    "/style.css", "/auth.js", "/favicon.ico",
+    "/css/style.css", "/js/core/auth.js", "/favicon.ico", "/favicon.svg",
     "/metrics",
 }
 
@@ -239,8 +239,8 @@ async def auth_middleware(request: Request, call_next):
 # that would also leak the registry listing before setup completes.
 _SETUP_GATE_EXEMPT_EXACT = {
     "/setup.html",
-    "/setup.js",
-    "/setup.css",
+    "/js/pages/setup.js",
+    "/css/setup.css",
     "/api/cameras",            # bare list/POST (next-slot upsert during wizard)
     "/api/cameras/next-slot",  # which slot the wizard should fill next
     "/api/cameras/discover",   # ONVIF scan
