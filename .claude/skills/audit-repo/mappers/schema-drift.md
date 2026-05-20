@@ -8,6 +8,8 @@ Walk the repo and find every place data is written to or read from a shared back
 
 ## What to scan for
 
+**Scope:** scan `services/`, `contracts/`, and top-level `scripts/` if present. Skip `tests/` (FakeRedis stubs are not contracts), `docs/`, `services/dashboard/static/`, `models/`, `data/`, and anything gitignored.
+
 Use `Grep` (or `Bash grep`) to find call sites. Patterns:
 
 **Redis streams:**
@@ -17,15 +19,18 @@ Use `Grep` (or `Bash grep`) to find call sites. Patterns:
 **Redis hashes:**
 - Writes: `HSET`, `hset`
 - Reads: `HGET`, `hget`, `HGETALL`, `hgetall`, `HKEYS`, `hkeys`, `HEXISTS`, `hexists`
+- Mutations (treat as consumers since they reference a field name): `HDEL`, `hdel`
 
 **Redis keys (single-field, lower priority):**
-- Writes: `SETEX`, `setex`, `SET`, `r.set` (not `r.setex`)
-- Reads: `GET`, `r.get`
+- Writes: `r.setex(`, `ctx.r.setex(`, `r.set(`, `ctx.r.set(`, `self.r.set(`
+- Reads: `r.get(`, `ctx.r.get(`, `self.r.get(`
 
-**SQL (in `.py` or `.sql` files):**
-- DDL: `CREATE TABLE`
-- Writes: `INSERT INTO`
-- Reads: `SELECT`
+**SQL (in `*.py` or `*.sql` files only — not `*.md`, not `*.json`):**
+- DDL: `CREATE TABLE <name> (...)` — captures the schema. `contract_id` = `sql:<name>`. Fields = the column list inside the parentheses.
+- Writes: `INSERT INTO <name> (col1, col2, ...) VALUES (...)`. Fields = the column list.
+- Reads: `SELECT <col1>, <col2>, ... FROM <name>`. Fields = the column list. For `SELECT *`, fields = `["<unresolved>"]`.
+
+Group all call sites referencing the same `<name>` into one SQL contract. Skip statements inside comments and docstrings.
 
 ## How to extract fields
 
@@ -37,9 +42,20 @@ r.xadd("frames:cam1", {"frame": jpeg_bytes, "ts": now})
 
 Field names here are `frame` and `ts`. Same logic applies to `HSET` mappings.
 
+**HSET with `mapping=` keyword:** `r.hset` and `ctx.r.hset` calls usually use a `mapping=` keyword argument rather than a positional dict. Extract field names from the dict literal inside `mapping=`:
+
+```python
+ctx.r.hset(STATE_KEY, mapping={"num_people": str(n), "people": json.dumps(people)})
+# Fields: "num_people", "people"
+```
+
+If `mapping=` receives a variable (e.g. `mapping=state_dict`), trace the variable's construction within ±10 lines. If the dict is built incrementally or from dynamic keys, list `fields: ["<unresolved>"]`. **This pattern is the primary HSET form in this codebase** — make sure you handle it.
+
 For XREAD-style reads, the consumer typically processes the returned entry as a dict. Read ±10 lines to find which fields are accessed (e.g., `entry["frame"]` or `entry.get("ts")`).
 
 When you can't determine field names confidently (constructed dicts, variable-named keys, dynamic field access), include the call site but list `fields: ["<unresolved>"]`.
+
+When inspecting call-site context, use the `Read` tool — not `Bash cat`.
 
 ## Grouping into contracts
 
