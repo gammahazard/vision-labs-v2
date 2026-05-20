@@ -4,6 +4,20 @@ Operational notes for any AI assistant working on this codebase. Read before mak
 
 ---
 
+## 0. AST-based file splits silently drop helpers
+
+Watch out when mechanically splitting a monolith into a package via an AST script that walks top-level defs. The R3 split (`ai_tools.py` → `routes/ai_tools/`) moved every entrypoint listed in its `COMMAND_MAP`, but **adjacent helper functions used only by those entrypoints got dropped silently**. Concrete incident: `_load_jsonl_journal` was a free function `_tool_query_events_by_date` called by name. The splitter didn't follow the call graph, so the helper was left behind. The bug hid for a week because:
+
+- It only fires on **past-date** queries (today's data lives in Redis; only older dates fall through to `/data/events/<date>.jsonl`).
+- The existing aggregation test (`test_ai_tool_aggregations.py`) uses a fresh FakeRedis per test and never writes JSONL files, so the journal path was never exercised.
+- The failure surfaced as `{"error": "name '_load_jsonl_journal' is not defined"}` inside a tool result, which the chat handler swallowed as "I had trouble generating a response" — a soft-fail UX that masked the bug.
+
+**Mitigation:** `tests/test_ai_tools_no_nameerror.py` now calls every `_tool_*` entrypoint with realistic args. Any future R-style refactor that leaves a `NameError`/`ImportError` behind fails collection or that specific test.
+
+**Rule for next time:** when you split a file with an AST tool, also extract any function that's referenced from inside the kept set's source. Or do option B: run the new package's smoke test before committing.
+
+---
+
 ## 1. The build/runtime split is the #1 footgun
 
 **Per-service `.py` files are COPY'd into Docker images at build time.** Only `contracts/` is bind-mounted at runtime.
