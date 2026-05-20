@@ -35,3 +35,7 @@ Pillow>=10.0.0
 
 # Prometheus metrics exposition (monitoring integration)
 prometheus_client>=0.20.0
+
+# bcrypt for password hashing — replaces salted-SHA-256 with lazy migration
+# on next successful login (see routes/auth.py)
+bcrypt>=4.0.0

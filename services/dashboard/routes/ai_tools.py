@@ -769,9 +769,58 @@ async def _tool_query_unknowns() -> str:
         return json.dumps({"error": str(e)})
 
 
+def _load_jsonl_journal(target_date) -> list:
+    """Load every event written to /data/events/<YYYY-MM-DD>.jsonl.
+
+    The event poller writes one JSON object per line to this file as the
+    authoritative long-term record. The Redis events stream is capped at
+    MAX_EVENT_STREAM_LEN (default 5000 per camera), so on a busy day the
+    oldest events get trimmed from Redis — but they survive in JSONL.
+
+    Returns a list of dicts shaped like the Redis stream entries (so the
+    caller can merge them by event_id without special-casing). Silently
+    returns [] if the file doesn't exist or any line fails to parse.
+    """
+    import os as _os
+    journal_path = f"/data/events/{target_date}.jsonl"
+    if not _os.path.isfile(journal_path):
+        return []
+    out = []
+    try:
+        with open(journal_path, "r") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (ValueError, json.JSONDecodeError):
+                    continue  # skip corrupted lines (partial writes from crash)
+                # Match the shape of (msg_id, data) used in the Redis branch.
+                # JSONL uses "id" for stream id, "camera" for cam_id, and
+                # has all other event fields at top level.
+                evt = dict(entry)
+                evt["event_id"] = evt.get("id") or evt.get("event_id") or ""
+                evt["camera"] = evt.get("camera") or ""
+                # Restore timestamp as a string for downstream compatibility
+                ts = evt.get("timestamp")
+                if ts is not None:
+                    evt["timestamp"] = str(ts)
+                out.append(evt)
+    except Exception:
+        return []
+    return out
+
+
 def _tool_query_events_by_date(args: dict) -> str:
     """Query events filtered by date. Multi-camera aware — defaults to ALL cameras
-    when no camera is specified (analytical tool; cross-camera is the useful answer)."""
+    when no camera is specified (analytical tool; cross-camera is the useful answer).
+
+    Merges the Redis events stream with the JSONL journal at
+    /data/events/<date>.jsonl so requests for past dates still return data
+    even if the Redis stream has trimmed those events (default cap 5000 per
+    camera). Dedup is by event_id.
+    """
     from contracts.streams import EVENT_STREAM as _EVT_TMPL
 
     date_str = args.get("date", "today")
@@ -808,13 +857,25 @@ def _tool_query_events_by_date(args: dict) -> str:
     start_ms = int(day_start.timestamp() * 1000)
     end_ms = int(day_end.timestamp() * 1000)
 
+    # Load the on-disk JSONL journal once (it's per-date, not per-camera —
+    # contains events from every camera for that day). We'll filter per
+    # camera in the loop below.
+    journal_events = _load_jsonl_journal(target_date)
+    journal_used = bool(journal_events)
+    # Sanity-trim journal entries to the requested ms window — guards against
+    # a clock skew between writer and reader, and ignores stragglers.
+    journal_events = [
+        e for e in journal_events
+        if start_ms <= int(float(e.get("timestamp", 0)) * 1000) <= end_ms
+    ]
+
     try:
         per_camera = {}
         all_events = []
         for cid in cam_ids:
             evt_key = _camera_key(_EVT_TMPL, cid)
             events_raw = ctx.r.xrange(evt_key, min=f"{start_ms}-0", max=f"{end_ms}-0")
-            cam_events = []
+            cam_events_by_id: dict[str, dict] = {}
             for msg_id, data in events_raw:
                 evt = {k: v for k, v in data.items()}
                 evt["event_id"] = msg_id
@@ -823,7 +884,21 @@ def _tool_query_events_by_date(args: dict) -> str:
                     continue
                 if not _category_matches(evt.get("event_type", ""), category):
                     continue
-                cam_events.append(evt)
+                cam_events_by_id[msg_id] = evt
+            # Merge JSONL events for this camera. Dedup by event_id — Redis
+            # entries win when both sources have the same id.
+            for jevt in journal_events:
+                if jevt.get("camera") != cid:
+                    continue
+                if event_type and jevt.get("event_type") != event_type:
+                    continue
+                if not _category_matches(jevt.get("event_type", ""), category):
+                    continue
+                jid = jevt.get("event_id") or ""
+                if jid and jid not in cam_events_by_id:
+                    cam_events_by_id[jid] = jevt
+            # Sort by event_id (stream id == ms timestamp, so this is chronological)
+            cam_events = [cam_events_by_id[k] for k in sorted(cam_events_by_id.keys())]
             type_counts = {}
             identity_counts = {}
             for evt in cam_events:
@@ -858,6 +933,7 @@ def _tool_query_events_by_date(args: dict) -> str:
             "by_identity": agg_identity_counts,
             "unique_people_identified": len(agg_identity_counts),
             "latest_events": all_events[-10:] if len(all_events) > 10 else all_events,
+            "journal_used": journal_used,  # True if /data/events/<date>.jsonl contributed
         }
         if len(cam_ids) > 1:
             result["per_camera"] = per_camera

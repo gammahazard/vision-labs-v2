@@ -44,13 +44,26 @@ PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$(pwd)" | tr '[:upper:]' '[:lo
 
 # Volumes to back up. Note these are the SHORT names from docker-compose.yml;
 # docker actually stores them as "${PROJECT_NAME}_${name}".
+#
+# IMPORTANT — the "qnap-*" naming is misleading.
+# These are PLAIN LOCAL DOCKER VOLUMES by default, not QNAP-backed. The
+# QNAP overlay (docker-compose.qnap.yml, only used when QNAP_ENABLED=true)
+# swaps the same volume names for CIFS/NFS mounts. Until then your snapshots,
+# events, and Telegram media live on this host's disk under
+# /var/lib/docker/volumes/${PROJECT_NAME}_qnap-*/_data/. Backing these up
+# IS backing up your local data — there's no separate local store.
+#
+# qnap-clips and qnap-videos exist as named volumes but are mostly empty
+# (legacy ComfyUI image-gen output paths; the service was removed Phase 8.A).
+# Skipped here to keep the tarball small. Add them if you start using those
+# paths again.
 VOLUMES=(
-    "face-data"
-    "auth-data"
-    "redis-data"
-    "qnap-snapshots"
-    "qnap-events"
-    "qnap-telegram"
+    "face-data"       # faces.db + enrolled face photos
+    "auth-data"       # admin DB, AI chat history, setup wizard state
+    "redis-data"      # Redis AOF (camera registry, events stream, configs)
+    "qnap-snapshots"  # LOCAL by default — event + clip + vehicle snapshots
+    "qnap-events"     # LOCAL by default — daily JSONL event journals
+    "qnap-telegram"   # LOCAL by default — Telegram media archive
 )
 
 # Default output: timestamped, in current dir.

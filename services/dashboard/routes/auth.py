@@ -29,6 +29,13 @@ from fastapi.responses import JSONResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# secure=True on the session cookie causes browsers to refuse it over plain
+# HTTP, which would lock out the typical LAN-only setup (e.g. accessing the
+# dashboard at http://192.168.x.y:8080 from a phone). Only set secure=True
+# when we know there's a TLS terminator in front of us — operator opts in
+# via DASHBOARD_BEHIND_TLS=true.
+_COOKIE_SECURE = os.getenv("DASHBOARD_BEHIND_TLS", "false").lower() in ("1", "true", "yes")
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -125,16 +132,84 @@ def init_auth_db():
 # ---------------------------------------------------------------------------
 # Password Hashing
 # ---------------------------------------------------------------------------
-def _hash_password(password: str, salt: str) -> str:
-    """Hash a password with the given salt using SHA-256."""
+# bcrypt is the new format ($2b$... prefix). Legacy SHA-256 hashes (64 hex
+# chars, separate salt column) are still accepted on login so existing users
+# can log in once; the login handler then re-hashes their password as bcrypt
+# and overwrites the DB row. Lazy migration — no batch update needed.
+import bcrypt as _bcrypt
+
+
+def _is_bcrypt_hash(stored: str) -> bool:
+    return isinstance(stored, str) and stored.startswith(("$2a$", "$2b$", "$2y$"))
+
+
+def _hash_password_bcrypt(password: str) -> str:
+    """Hash a password with bcrypt. Returns the full $2b$... string which
+    embeds its own salt + cost factor; the legacy `salt` column becomes
+    unused for bcrypt entries (we keep it for SHA-256 compat)."""
+    return _bcrypt.hashpw(password.encode("utf-8"), _bcrypt.gensalt(rounds=12)).decode("utf-8")
+
+
+def _hash_password_sha256_legacy(password: str, salt: str) -> str:
+    """LEGACY — kept only so _verify_password can compute the legacy hash
+    when checking an old SHA-256 entry. New writes go through
+    _hash_password_bcrypt."""
     return hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
 
 
+def _hash_password(password: str, salt: str = "") -> str:
+    """Default to bcrypt for new writes. `salt` is ignored for bcrypt
+    (bcrypt manages its own salt). Kept as a kwarg for callsites that
+    used to pre-compute a salt — they can keep passing it; we just don't
+    use it."""
+    return _hash_password_bcrypt(password)
+
+
 def _verify_password(password: str, salt: str, stored_hash: str) -> bool:
-    """Verify a password against the stored hash."""
+    """Verify a password against the stored hash. Handles both formats:
+    bcrypt ($2b$...) and the legacy salted SHA-256. Used by login + change-
+    password endpoints. Login also opportunistically upgrades SHA-256 → bcrypt
+    on the next successful login (see _maybe_upgrade_to_bcrypt below)."""
+    if _is_bcrypt_hash(stored_hash):
+        try:
+            return _bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+        except (ValueError, TypeError):
+            return False
+    # Legacy path — salted SHA-256
     return hmac.compare_digest(
-        _hash_password(password, salt), stored_hash
+        _hash_password_sha256_legacy(password, salt), stored_hash
     )
+
+
+def _maybe_upgrade_to_bcrypt(username: str, password: str, current_hash: str) -> None:
+    """Called after a successful legacy-SHA-256 verification. Rewrites the
+    DB row with a fresh bcrypt hash so the next login hits the bcrypt fast
+    path. Failure is non-fatal — we already let the user in; the next login
+    will try again."""
+    if _is_bcrypt_hash(current_hash):
+        return  # already migrated
+    try:
+        new_hash = _hash_password_bcrypt(password)
+        # Salt column is unused for bcrypt entries; keep the existing value
+        # so a downgrade-and-rollback scenario can still parse the row.
+        db = _get_db()
+        try:
+            db.execute(
+                "UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ?",
+                (new_hash, time.time(), username),
+            )
+            db.commit()
+        finally:
+            db.close()
+        import logging
+        logging.getLogger("dashboard").info(
+            f"Migrated password hash for user {username!r} from SHA-256 to bcrypt"
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger("dashboard").warning(
+            f"bcrypt migration for {username!r} failed (will retry on next login): {e}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +291,11 @@ async def login(request: Request):
     if not row or not _verify_password(password, row[1], row[0]):
         return JSONResponse({"error": "Invalid credentials"}, status_code=401)
 
+    # Opportunistic password-hash upgrade: if the stored hash is the legacy
+    # SHA-256 format, rewrite it as bcrypt now that we know the plaintext is
+    # correct. Next login uses the bcrypt fast path. No-op if already bcrypt.
+    _maybe_upgrade_to_bcrypt(username, password, row[0])
+
     # Detect the factory-default admin/admin combo. We still issue a session
     # (so the user can call /api/auth/change-password), but flag the client so
     # the login UI forces a password change before letting them into the app.
@@ -233,6 +313,7 @@ async def login(request: Request):
         value=token,
         httponly=True,
         samesite="lax",
+        secure=_COOKIE_SECURE,
         max_age=86400,
         path="/",
     )
@@ -304,6 +385,7 @@ async def change_password(request: Request):
         value=new_token,
         httponly=True,
         samesite="lax",
+        secure=_COOKIE_SECURE,
         max_age=86400,
         path="/",
     )
