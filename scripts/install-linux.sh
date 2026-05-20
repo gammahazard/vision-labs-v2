@@ -9,13 +9,16 @@
 #   4. Adds the current user to the docker group
 #   5. Verifies GPU passthrough works in a container
 #   6. Copies .env.example -> .env if needed (prompts you to edit it after)
-#   7. Builds all service images (base layer first, then everything else)
+#   7. Pulls pre-built images from ghcr.io/gammahazard/vision-labs/* (default)
+#      OR builds locally with --build / BUILD_FROM_SOURCE=1
 #   8. Starts the stack with `docker compose up -d`
 #   9. Tells you where the dashboard is
 #
 # USAGE:
 #   Inside a cloned vision-labs checkout:
-#     bash scripts/install-linux.sh
+#     bash scripts/install-linux.sh                     # pulls from GHCR (fast)
+#     bash scripts/install-linux.sh --build             # builds locally (~15 min)
+#     IMAGE_TAG=v0.1.0 bash scripts/install-linux.sh    # pin a specific release
 #
 #   Idempotent — safe to re-run. Skips steps that are already done.
 #
@@ -37,6 +40,34 @@
 #   - Internet connection (apt + docker registry pulls)
 
 set -euo pipefail
+
+# Install mode: default to pulling pre-built images from GHCR. Users who've
+# forked or edited the code can pass --build (or set BUILD_FROM_SOURCE=1) to
+# force the local-build path instead.
+INSTALL_MODE="pull"
+for arg in "$@"; do
+    case "$arg" in
+        --build|--from-source) INSTALL_MODE="build" ;;
+        --pull|--from-registry) INSTALL_MODE="pull" ;;
+        -h|--help)
+            cat <<'EOF'
+Vision Labs Linux installer.
+
+Usage:
+    bash scripts/install-linux.sh             # pull pre-built images from GHCR (default, ~3-5 min)
+    bash scripts/install-linux.sh --build     # build locally (~10-15 min — use if you've modified code)
+
+Env vars:
+    IMAGE_TAG=v0.1.0    Pin a specific release tag (default: latest)
+    BUILD_FROM_SOURCE=1 Same as --build
+EOF
+            exit 0
+            ;;
+    esac
+done
+if [ "${BUILD_FROM_SOURCE:-0}" = "1" ]; then
+    INSTALL_MODE="build"
+fi
 
 # ANSI colour helpers — only when stdout is a TTY
 if [ -t 1 ]; then
@@ -202,9 +233,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 6: Build + run
+# Step 6: Pull or build, then run
 # ---------------------------------------------------------------------------
-heading "Step 5/5 — Build + start the stack"
+if [ "$INSTALL_MODE" = "build" ]; then
+    heading "Step 5/5 — Build + start the stack (local build)"
+else
+    heading "Step 5/5 — Pull pre-built images + start the stack"
+fi
 
 DOCKER_CMD="docker"
 if [ "${NEW_DOCKER_GROUP:-0}" = "1" ]; then
@@ -212,14 +247,40 @@ if [ "${NEW_DOCKER_GROUP:-0}" = "1" ]; then
     warn "(Using sudo for this run since you haven't logged out yet to pick up the docker group.)"
 fi
 
-log "Building the shared base image (takes ~3-5 min on first run)..."
-$DOCKER_CMD build -t vision-labs-base:cuda12.8 services/base
+# Compose overlay for the registry-pull path. The base file alone has `build:`
+# blocks for every service; this overlay nulls them and points at GHCR.
+COMPOSE_FILES="-f docker-compose.yml"
+if [ "$INSTALL_MODE" = "pull" ]; then
+    COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.registry.yml"
+    # Surface the chosen tag in .env so subsequent compose calls (e.g. orchestrator
+    # spawning new camera slots) inherit the same pin. Default empty -> :latest.
+    export IMAGE_TAG="${IMAGE_TAG:-latest}"
+    log "Image tag: ${IMAGE_TAG} (override with IMAGE_TAG=vX.Y bash scripts/install-linux.sh)"
 
-log "Building all service images (takes ~10-15 min on first run)..."
-$DOCKER_CMD compose build
+    # Persist EXTRA_COMPOSE_FILES + IMAGE_TAG in .env so the orchestrator
+    # container (started below by `compose up`) reads them too. Without this,
+    # the orchestrator would happily call `docker compose --profile cam2 up -d`
+    # with ONLY the base compose file — which still has build: blocks for the
+    # cam2 services — and would either silently rebuild or fail.
+    sed -i '/^[[:space:]]*#*[[:space:]]*EXTRA_COMPOSE_FILES=/d;/^[[:space:]]*#*[[:space:]]*IMAGE_TAG=/d' .env
+    printf '\n# Registry-pull install — orchestrator reads these so cam2-cam20 pull instead of build.\nEXTRA_COMPOSE_FILES=/workspace/docker-compose.registry.yml\nIMAGE_TAG=%s\n' "$IMAGE_TAG" >> .env
+fi
+
+if [ "$INSTALL_MODE" = "build" ]; then
+    log "Building the shared base image (takes ~3-5 min on first run)..."
+    $DOCKER_CMD build -t vision-labs-base:cuda12.8 services/base
+
+    log "Building all service images (takes ~10-15 min on first run)..."
+    $DOCKER_CMD compose $COMPOSE_FILES build
+else
+    log "Pulling pre-built images from ghcr.io/gammahazard/vision-labs/* (takes ~3-5 min, mostly bandwidth)..."
+    if ! $DOCKER_CMD compose $COMPOSE_FILES pull 2>&1; then
+        fail "Pull failed. If you see a 401/403, the GHCR packages may not be public yet — ask the maintainer, or pass --build to compile locally instead."
+    fi
+fi
 
 log "Starting the stack..."
-$DOCKER_CMD compose up -d
+$DOCKER_CMD compose $COMPOSE_FILES up -d
 
 # Give services 10 seconds to settle before reporting
 sleep 5

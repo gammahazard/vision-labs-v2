@@ -78,6 +78,14 @@ COMPOSE_PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "vision-labs")
 # Where the compose file lives AS THIS CONTAINER SEES IT (bind-mounted).
 CONTAINER_COMPOSE_FILE = "/workspace/docker-compose.yml"
 
+# Optional comma-separated list of additional compose files to layer on top.
+# Used so a registry-pull install can keep pulling images for cam2-cam20 instead
+# of falling back to local builds when the orchestrator brings new slots up.
+# Set by scripts/install-linux.sh when --pull (the default) is used.
+EXTRA_COMPOSE_FILES = [
+    p.strip() for p in os.getenv("EXTRA_COMPOSE_FILES", "").split(",") if p.strip()
+]
+
 # Profiles we are willing to up/down. Strict allowlist to bound blast radius.
 ALLOWED_PROFILES = {
     p.strip()
@@ -165,12 +173,14 @@ def _scrub_creds(text: str) -> str:
 # ---------------------------------------------------------------------------
 def _compose_base_cmd() -> list:
     """Compose CLI args common to every invocation."""
-    return [
-        "docker", "compose",
-        "-f", CONTAINER_COMPOSE_FILE,
+    cmd = ["docker", "compose", "-f", CONTAINER_COMPOSE_FILE]
+    for extra in EXTRA_COMPOSE_FILES:
+        cmd += ["-f", extra]
+    cmd += [
         "--project-directory", HOST_PROJECT_DIR,
         "-p", COMPOSE_PROJECT_NAME,
     ]
+    return cmd
 
 
 def _run_compose(extra_args: list, timeout: int) -> tuple[bool, str]:

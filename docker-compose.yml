@@ -3173,6 +3173,15 @@ services:
       - PWD=${PWD}
       - ALLOWED_PROFILES=cam1,cam2,cam3,cam4,cam5,cam6,cam7,cam8,cam9,cam10,cam11,cam12,cam13,cam14,cam15,cam16,cam17,cam18,cam19,cam20
       - RECONCILE_INTERVAL=10
+      # Comma-separated extra compose files to layer on every compose call.
+      # install-linux.sh writes this to .env as "/workspace/docker-compose.registry.yml"
+      # on a --pull install so cam2-cam20 keep pulling images instead of trying
+      # to build locally. Empty by default (local-build installs).
+      - EXTRA_COMPOSE_FILES=${EXTRA_COMPOSE_FILES:-}
+      # Pin the image tag for slot services brought up after install. Defaults
+      # to the same value the registry overlay resolves to; harmless when set
+      # on a local-build install (the overlay is just not loaded then).
+      - IMAGE_TAG=${IMAGE_TAG:-latest}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Mount the project dir read-only so the compose CLI can read the
