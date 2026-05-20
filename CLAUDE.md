@@ -6,25 +6,31 @@ Operational notes for any AI assistant working on this codebase. Read before mak
 
 ## 0. AST-based file splits silently drop helpers
 
-Watch out when mechanically splitting a monolith into a package via an AST script that walks top-level defs. The R3 split (`ai_tools.py` → `routes/ai_tools/`) moved every entrypoint listed in its `COMMAND_MAP`, but **adjacent helper functions used only by those entrypoints got dropped silently**. Concrete incident: `_load_jsonl_journal` was a free function `_tool_query_events_by_date` called by name. The splitter didn't follow the call graph, so the helper was left behind. The bug hid for a week because:
+Watch out when mechanically splitting a monolith into a package via an AST script that walks top-level defs. The R3 split (`ai_tools.py` → `routes/ai_tools/`) moved every entrypoint listed in its `COMMAND_MAP`, but **adjacent helper functions and module-level imports used only by those entrypoints got dropped silently**.
 
-- It only fires on **past-date** queries (today's data lives in Redis; only older dates fall through to `/data/events/<date>.jsonl`).
-- The existing aggregation test (`test_ai_tool_aggregations.py`) uses a fresh FakeRedis per test and never writes JSONL files, so the journal path was never exercised.
+**Incident 1: `_load_jsonl_journal` (2026-05-19).** A free function `_tool_query_events_by_date` called by name was left behind. Hid for a week because:
+- Only fires on **past-date** queries (today's data lives in Redis; only older dates fall through to `/data/events/<date>.jsonl`).
+- The aggregation test uses a fresh FakeRedis per test and never writes JSONL files, so the journal path was never exercised.
 - The failure surfaced as `{"error": "name '_load_jsonl_journal' is not defined"}` inside a tool result, which the chat handler swallowed as "I had trouble generating a response" — a soft-fail UX that masked the bug.
 
-**Mitigation:** `tests/test_ai_tools_no_nameerror.py` now calls every `_tool_*` entrypoint with realistic args. Any future R-style refactor that leaves a `NameError`/`ImportError` behind fails collection or that specific test.
+**Incident 2: bot_commands imports (2026-05-20).** The same R3-style split applied to `bot_commands.py` left six Telegram commands with missing module-level imports they used inside function bodies — `make_redis_client`, `REDIS_HOST/PORT`, `OLLAMA_*`, `SNAPSHOT_DIR`. They didn't fail at import time (the bare names are referenced inside `async def`), so the modules loaded clean. The first `NameError` surfaced only when a user invoked `/events` in Telegram and got "Failed to fetch events: name 'make_redis_client' is not defined". `/clip` separately lost two cross-module helpers (`_extract_clip_frames`, `_describe_scene_multi`) that live in `analyze.py`.
 
-**Rule for next time:** when you split a file with an AST tool, also extract any function that's referenced from inside the kept set's source. Or do option B: run the new package's smoke test before committing.
+**Mitigations:**
+- `tests/test_ai_tools_no_nameerror.py` calls every `_tool_*` entrypoint with realistic args. **A parallel `test_bot_commands_no_nameerror.py` would close the same gap for Telegram commands** — known follow-up.
+- Surface shared constants through `_shared.py` so each command's import list is short and consistent. New helpers go there, not in sibling modules.
+
+**Rule for next time:** when you split a file with an AST tool, also extract any function **and any module-level name** referenced from inside the kept set's source. Or do option B: write a no-NameError smoke test that exercises every entrypoint with stub args, before merging the split.
 
 ---
 
 ## 1. The build/runtime split is the #1 footgun
 
-**Per-service `.py` files are COPY'd into Docker images at build time.** Only `contracts/` is bind-mounted at runtime.
+**Per-service `.py` files are COPY'd into Docker images at build time.** Only `contracts/` (and the dashboard's `routes/` + `static/`) are bind-mounted at runtime.
 
 That means:
-- Edit `services/<name>/<name>.py` → **the running container does NOT pick it up.** You must rebuild the image (`docker compose build <name>`) and recreate the container.
-- Edit `contracts/*.py` → **the running container picks it up on next process restart** (it's mounted live). Restart the service, no rebuild.
+- Edit `services/<name>/<name>.py` for any service **except dashboard** → **the running container does NOT pick it up.** You must rebuild the image (`docker compose build <name>`) and recreate the container.
+- Edit `contracts/*.py` → **every container picks it up on next process restart** (mounted live). Restart the service, no rebuild.
+- Edit `services/dashboard/routes/**` → **dashboard picks it up on restart** (routes/ is bind-mounted; see the volume block in `docker-compose.yml`'s dashboard service). `docker compose restart dashboard` — ~5 s, no rebuild.
 - Edit static files (HTML/JS/CSS) → the dashboard container picks them up immediately because the entire `static/` dir is bind-mounted by `server.py`'s `StaticFiles`. Just hard-refresh.
 
 **Symptom we hit in May 2026:** added Redis password → dashboard worked (recently rebuilt), every detector + face-recognizer + orchestrator failed with `AuthenticationError`. Root cause: 42-hour-old images had pre-`make_redis_client` hardcoded `redis.Redis(host=..., port=...)` baked in. The bind-mounted new `contracts/redis_client.py` was irrelevant because nothing in the old service code called it.
@@ -134,7 +140,7 @@ These are pure noise in this codebase:
 
 ## 9. What goes in commit messages
 
-Subject line ≤ 70 chars, imperative mood. Body explains **why** plus any non-obvious **how**. No "Claude wrote this" / "🤖 Generated with" footers — that's been a standing rule the whole project.
+Subject line ≤ 70 chars, imperative mood. Body explains **why** plus any non-obvious **how**. `Co-Authored-By: Claude <…>` trailers are fine — they match the AI-assisted reality of the work.
 
 When a refactor crosses many files (R-series style), structure the body as:
 ```
@@ -160,11 +166,43 @@ Verified: <tests pass / dashboard restarts clean / endpoint responds 200>
 
 ---
 
-## 11. When in doubt
+## 11. CHANGELOG + releases
+
+`CHANGELOG.md` is the public record of every shipped change. Keep it current; it's the first thing a careful reader checks after the README.
+
+**On every PR / commit that ships user-visible behavior**, add a line under the `## [Unreleased]` section. Categories:
+- **Added** — new features, new commands, new tools, new env vars, new endpoints
+- **Fixed** — bugs squashed, including the NameError-class regressions from §0
+- **Changed** — behavior tweaks, default flips, prompt rewrites, doc reorganizations
+- **Removed** — features pulled, env vars retired
+- **Security** — anything CVE-shaped
+
+Refactors that don't change behavior do NOT need a CHANGELOG entry. The git log is enough for those.
+
+**Cutting a release:**
+1. Move the `[Unreleased]` block into a new `## [vX.Y.Z] — YYYY-MM-DD` heading.
+2. Add a fresh empty `[Unreleased]` above it.
+3. Update the link-references at the bottom (the `[vX.Y.Z]: …compare/…` lines).
+4. Commit the CHANGELOG update with a subject like `release: vX.Y.Z`.
+5. Tag with an annotation that mirrors the CHANGELOG section, then `git push origin vX.Y.Z`.
+6. The tag push triggers `.github/workflows/publish-images.yml`, which builds + pushes 9 images to `ghcr.io/gammahazard/vision-labs/*` (both `:vX.Y.Z` and `:latest`).
+7. **Only on first publish**, each new GHCR package defaults to private — flip to public via Packages → ⚙️ → "Change package visibility". Per-package, one time.
+
+Versioning is SemVer:
+- **Patch (`v0.1.X`)**: bugfix or doc-only release. No interface changes.
+- **Minor (`v0.X.0`)**: new features, new env vars, new endpoints. Backward compatible.
+- **Major (`v1.0.0+`)**: breaking changes to env, Redis schema, route paths, or session token format.
+
+Never cut a tag without user approval — it's a public, hard-to-reverse action.
+
+---
+
+## 12. When in doubt
 
 1. Run the test suite. 258 should pass.
 2. Restart the dashboard. Log should print "Dashboard ready at http://localhost:8080" and "Telegram poller started".
 3. Hit `/login.html` in a browser. It should return 200 (auth-exempt).
 4. Check `docker compose logs --since=30s | grep -iE "error|auth.*required"` is empty.
+5. If the change is user-visible, confirm `CHANGELOG.md` has the line under `[Unreleased]`.
 
 If all four pass, the stack is healthy.
