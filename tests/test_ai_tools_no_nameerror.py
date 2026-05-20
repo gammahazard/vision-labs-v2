@@ -136,7 +136,7 @@ def _call(fn, args=None):
     else:
         result = fn(args)
     if asyncio.iscoroutine(result):
-        result = asyncio.get_event_loop().run_until_complete(result)
+        result = asyncio.run(result)
     # Every tool returns a JSON string. Verifying it's a valid JSON object
     # catches the `json.dumps({"error": str(e)})` exception fallback that
     # tools use when something internal blew up.

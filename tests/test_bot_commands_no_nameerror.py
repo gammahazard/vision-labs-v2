@@ -257,7 +257,7 @@ def _run(coro, recorder: _Recorder):
             # them and render via send_text, where we still inspect for
             # regression markers below.
             pass
-    asyncio.get_event_loop().run_until_complete(_exercise())
+    asyncio.run(_exercise())
     recorder.assert_no_regression()
 
 
