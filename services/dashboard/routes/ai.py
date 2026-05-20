@@ -299,21 +299,30 @@ async def chat(req: ChatRequest):
             import re
             reply = re.sub(r"<think>.*?</think>\s*", "", reply, flags=re.DOTALL).strip()
 
-        # Programmatic enforcement: if the user asked for a DVR link/clip and
-        # the model wrote about a clip but didn't call find_dvr_segment, force
-        # one more tool round. Qwen 14B's tool-use discipline isn't strong
-        # enough to reliably call a 3rd tool even with hard system prompts,
-        # so we close the gap server-side.
+        # Programmatic enforcement: if the model's response MENTIONS a clip /
+        # DVR link / footage in any form but didn't actually call
+        # find_dvr_segment, force one more tool round. We check the RESPONSE
+        # text (not just the user's question) because Qwen sometimes
+        # fabricates "Open the clip" decorative text even when the user
+        # didn't explicitly ask for a recording. A response that says
+        # "open the clip" with no real URL is worse than no mention at all.
         import re as _re
         called_dvr = any(t["name"] == "find_dvr_segment" for t in tool_calls_log)
         mentions_clip_text = bool(_re.search(
-            r"(open the clip|view the (clip|recording|footage)|click here|see the (clip|footage))",
+            r"(open the clip|view the (clip|recording|footage)|click here|"
+            r"see the (clip|footage)|view the footage|dvr (tab|recording|clip)|"
+            r"watch (it|the (clip|footage|recording)))",
             reply, _re.IGNORECASE
         ))
         has_real_dvr_link = "/ai.html?tab=recordings" in reply
-        if (is_dvr_question and not called_dvr
-                and (mentions_clip_text or not has_real_dvr_link)
-                and tool_rounds < 5):
+        # Fire enforcement if: (a) user asked for DVR AND tool wasn't called, OR
+        # (b) the response mentions a clip/link in text but no real URL is
+        # present (catches fabrications regardless of user wording).
+        needs_enforcement = (
+            (is_dvr_question and not called_dvr) or
+            (mentions_clip_text and not has_real_dvr_link)
+        )
+        if needs_enforcement and tool_rounds < 5:
             logger.info(
                 "DVR enforcement: re-prompting model — user asked for a clip "
                 "but find_dvr_segment was not called."
