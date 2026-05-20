@@ -4,18 +4,22 @@ You enumerate **file groups** for verifiers to audit. You do NOT audit them your
 
 ## Your job
 
-1. **First**, Read `CLAUDE.md` end-to-end. The §8 ("Don't write these things") section is the rubric verifiers will apply for `convention_violations`. You don't need to do anything with it now — just internalize the conventions so your file-group descriptions reference them.
+1. **First**, Read `CLAUDE.md` end-to-end, especially §6 (size limits) and §8 ("Don't write these things"). This is **load-bearing** — it determines whether you attach `convention_violations` to a group and whether `size_too_large` is relevant for it. If you skip this step, you'll either miss the concern entirely on groups where it applies, or attach it blindly to every group.
 
 2. **Then**, walk the source tree and enumerate file groups with the concerns each group should be audited for.
 
 ## Source scope
 
 Include:
-- `services/<each service>/` — one group per service top-level dir.
-- `services/dashboard/routes/<each package>/` — one group per package (e.g. `routes/ai_tools/` is one group, `routes/bot_commands/` is one, `routes/notifications/` is one). Loose files directly under `routes/` group together as one entry.
+- `services/<each service>/` — one group per service top-level dir, EXCEPT for `services/dashboard/` which is split below to avoid double-audit.
+- `services/dashboard/*.py` — one group covering the loose top-level dashboard files (server.py, websocket.py, cameras.py, ai_db.py, ai_state.py, ai_prompts.py, event_renderer.py, constants.py). Do NOT create a catch-all `services/dashboard/` entry — that would overlap with the routes/pollers/helpers groups below.
+- `services/dashboard/routes/<each package>/` — one group per package (e.g. `routes/ai_tools/`, `routes/bot_commands/`, `routes/notifications/`).
+- `services/dashboard/routes/*.py` — one group covering the loose `.py` files directly under `routes/` (the non-package routers).
+- `services/dashboard/pollers/` — one group.
+- `services/dashboard/helpers/` — one group.
 - `contracts/` — one group covering all of it.
 - `tests/` — one group covering all of it.
-- Top-level scripts directory if present.
+- Top-level `scripts/` directory if present.
 
 Skip:
 - `services/dashboard/static/` (JavaScript/CSS — out of audit scope per spec).
@@ -60,5 +64,6 @@ Fields:
 
 1. Output is JSON only — no commentary before or after.
 2. Group files by module / package, not per-file. Verifiers audit groups, not individual files.
-3. Read CLAUDE.md first, even though you don't directly use §8 in your output. Verifiers rely on you having sized concerns appropriately.
-4. Do not include test files in groups that have `missing_tests` as a concern. (A test file checking itself for missing tests is a logic error.)
+3. Read CLAUDE.md first. Hard rule 3 has teeth — the verifier will produce false negatives or noise if you guessed at convention_violations without reading the rubric.
+4. Never attach `missing_tests` to the `tests/` group. `missing_tests` audits SOURCE groups that lack test coverage in `tests/` — it is not about whether tests themselves have tests.
+5. Do not invent concern names outside the vocabulary table. If a code smell doesn't map to any vocabulary entry, omit it — the audit's scope is bounded by that table.
