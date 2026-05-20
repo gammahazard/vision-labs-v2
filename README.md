@@ -2,9 +2,36 @@
 
 > **Real hardware. Real-time inference. Fully self-hosted.**
 
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![CUDA](https://img.shields.io/badge/CUDA-12.8-76B900?logo=nvidia&logoColor=white)
+![Ollama](https://img.shields.io/badge/Ollama-Qwen%203%2014B-000?logo=ollama&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO-v8-00FFFF)
+![InsightFace](https://img.shields.io/badge/InsightFace-buffalo__l-FF6F00)
+
 A self-hosted, multi-camera AI security platform that processes live RTSP feeds through person detection, face recognition, vehicle tracking, and an LLM-powered chat assistant — all running locally via Docker Compose with zero cloud dependencies.
 
 Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubuntu 24.04 inside WSL2 on Windows. Single-GPU works fine too — defaults are tuned for an 8–12 GB card; tiers are available for smaller and larger rigs.
+
+<!-- TODO add screenshots here once captured:
+     - docs/images/dashboard-grid.png  (multi-cam home grid)
+     - docs/images/single-view.png     (per-camera detail view + bboxes)
+     - docs/images/ai-chat.png         (Qwen chat tab + tool result)
+     - docs/images/dvr-tab.png         (DVR segment picker)
+     Run pngquant on each before committing — these will be the largest
+     thing in the repo otherwise.
+-->
+<!--
+## Screenshots
+
+| Multi-camera grid | Per-camera detail | AI chat |
+|---|---|---|
+| ![Grid](docs/images/dashboard-grid.png) | ![Single](docs/images/single-view.png) | ![AI](docs/images/ai-chat.png) |
+-->
+
 
 ---
 
