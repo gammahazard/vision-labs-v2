@@ -1,6 +1,6 @@
 # Vision Labs — Full Project Context
 
-> One-stop reference for a new session (human or LLM) to understand the project end-to-end. Last updated 2026-05-18.
+> One-stop reference for a new session (human or LLM) to understand the project end-to-end. Last updated 2026-05-20.
 
 This document is the canonical context for working in this repo. It assumes you can read source code, but tells you **where to look**, **what reads what**, and **what to be careful of**. For architectural reasoning ("why services are split this way") see ARCHITECTURE.md — this doc tracks operational details (current AI tool catalog, env vars, retention defaults). Historical planning docs live in `docs/history/`.
 
@@ -18,7 +18,7 @@ A self-hosted, GPU-accelerated, multi-camera AI security stack. Runs on a single
 - Telegram alerts with AI-generated scene descriptions and on-demand commands
 - Persistent face enrollment DB shared across all cameras
 - 1-hour MPEG-TS DVR segments with rolling retention
-- Local LLM chat assistant (Qwen 3 14B) with 18 callable tools
+- Local LLM chat assistant (Qwen 3 14B) with 19 callable tools
 
 **Hardware target:** NVIDIA GPU (CUDA 12.8+ for Blackwell support). Default config is single-GPU; dual-GPU split via `DETECTOR_GPU` / `CHAT_GPU` env vars. Tested on dual-card workstation (5070 Ti + 3090) running Ubuntu 24.04 under WSL2 on Windows. macOS not supported.
 
@@ -141,7 +141,7 @@ All paths under `services/`. Every service ID below is profile-gated unless note
   - Action classification via `contracts/actions.py` with debounce 10 frames + 2× sticky multiplier on the return path.
   - Identity sticky — once `TrackedPerson.identity_name` is set, only overwritten by non-empty new value.
   - Identity grace period — when `suppress_known=1` config, defers `person_appeared` for 4s; if face-recognizer identifies the person within the window, the event is suppressed entirely.
-  - Vehicle idle detection requires ≥5 center-history samples AND max displacement <30px AND no prior `idle_alerted` flag.
+  - Vehicle idle detection requires ≥5 center-history samples AND the current center stays within `max(8 px, bbox_w * 0.10)` of the **median** of the rolling 20-sample center history (per `TrackedVehicle.is_stationary` in `services/tracker/core/state.py`), AND no prior `idle_alerted` flag. The bbox-scaled threshold replaced an earlier absolute 30 px cap so distant/small vehicles don't oscillate the flag.
 
 ### 4.7 `recorder/` (per-cam, host-net)
 - ffmpeg `-c copy -f segment` (no transcode) into `/recordings/{camN}/YYYY-MM-DD/HH-MM.ts` (1-hour MPEG-TS segments).
@@ -220,7 +220,7 @@ Bind-mounted RO into every service at `/app/contracts`. The single source of tru
 | `config:apply` | pub/sub | dashboard routes/setup.py | orchestrator |
 | `orchestrator:audit` | stream (maxlen 500) | orchestrator | dashboard routes/cameras.py status badge |
 | `notify:last` | hash | dashboard `routes/notifications/_shared.py` | itself (cooldown persistence) |
-| `scene_analysis:{event_id}` | string (24h TTL) | dashboard notifications.describe_scene | routes/events.py /analysis endpoint |
+| `scene_analysis:{event_id}` | string (24h TTL) | dashboard `routes/notifications/scene.py` (describe_scene) | routes/events.py /analysis endpoint |
 | `telegram:users` | hash | dashboard routes/telegram_access.py | notifications._is_authorized |
 | `telegram:access_log` | stream (maxlen 500) | dashboard bot_commands | telegram.html access-log view |
 | `telegram:last_offset` | string | dashboard bot_commands | bot_commands startup |
@@ -229,8 +229,15 @@ Dataclasses (`FrameMessage`, `DetectionMessage`, `EventMessage`) at the bottom o
 
 ### 5.2 `contracts/actions.py`
 - 17 COCO keypoint indices defined at top (`NOSE=0`, `L_SHOULDER=5`, …, `R_ANKLE=16`).
-- `classify_action(keypoints) → {action, confidence, details}`. Resolution order: `arms_raised` (wrist y < shoulder y − 30; 0.8) → `lying_down` (torso wider than tall + height diff <50; 0.7) → `crouching` (knee angle <120°; 0.7) → `sitting` (knee at hip level OR ankles hidden + upright torso; 0.65) → `standing` (default; 0.6).
-- `MIN_KP_CONF = 0.3`. Only used by tracker.
+- `classify_action(keypoints, bbox=None) → {action, confidence, details}`. Resolution order (after the 2026 refactor that fixed false-sitting on basement cams):
+  - `arms_raised` — either wrist y < shoulder y minus `max(8 px, body_scale * ARMS_RAISED_RATIO[=0.10])`; confidence 0.8.
+  - `lying_down` — torso x-span > torso y-span × 1.5 AND y-span < `body_scale * LYING_TORSO_VERT_RATIO[=0.20]`; confidence 0.7.
+  - **`sitting` — moved BEFORE crouching.** Requires knees at hip level AND either (ankles visible below knees) for 0.75 confidence, or (ankles hidden + tight 40% torso check) for 0.6. Torso-only branch was REMOVED — that was the false-sitting bug on cameras with cropped feet.
+  - `crouching` — knee angle < `CROUCH_KNEE_ANGLE_DEG[=100]` (was 120; tightened so a chair-sitter at ~90° doesn't trip this branch when the sitting check skipped); confidence 0.7.
+  - `standing` (default; 0.6).
+- All pixel thresholds scale by `_body_scale()` (shoulder-hip vertical distance or bbox×0.40 fallback or 30 px floor) so the classifier works at any frame resolution / distance.
+- `MIN_KP_CONF = 0.3`. Defensive: short keypoint arrays are zero-padded to 17 entries so partial inputs don't crash.
+- Only used by tracker.
 
 ### 5.3 `contracts/time_rules.py`
 - Periods: `daytime` (sunrise+30m → sunset−30m), `twilight` (±30m around either), `night` (sunset+30m → midnight), `late_night` (midnight → sunrise−30m).
@@ -256,7 +263,9 @@ This is the biggest service. Read this section when working on UI, routes, or ba
 8. **auth_middleware** (line 204) validates `vl_session` cookie via `validate_session`. Redirects to `/login.html` (HTML routes) or returns 401 (API routes).
 9. **`_setup_exempt()`** gate (line 250) — if setup.json missing, only `/setup.html`, `/js/pages/setup.js`, `/css/setup.css`, `/api/setup/*`, `/api/auth/*`, `/static/*`, `/api/cameras*` are accessible. (After the 2026-05-19 static-folder reorg, JS/CSS now live under `/js/<group>/` and `/css/` subdirs respectively.)
 
-### 6.2 `routes/` — all 20 router files
+### 6.2 `routes/` — 18 router modules + 3 split packages
+
+The packages (`ai_tools/`, `bot_commands/`, `notifications/`) are former monoliths refactored on 2026-05-19; their public surface (router object, function names) is unchanged.
 
 Prefix shown in parens. Most routes auth-gated by middleware (not per-endpoint dep).
 
@@ -283,7 +292,12 @@ Prefix shown in parens. Most routes auth-gated by middleware (not per-endpoint d
 - **`telegram_access.py`** (`/api/telegram`) — `GET /users`, `POST /users` (approve), `DELETE /users/{uid}`, `GET /access-log?count=` (XREVRANGE, capped 200), `DELETE /access-log`.
 
 ### 6.3 `helpers/`
-- **`env_writer.py`** — `update_env(updates, path)` with strict allowlist `{DETECTOR_GPU, CHAT_GPU, CHAT_MODEL, VISION_MODEL, POSE_MODEL, VEHICLE_MODEL, TARGET_FPS}`. Strategy: `tempfile.mkstemp` + `os.replace`; **on EBUSY (errno 16) falls back to direct truncate-write** (because Docker bind-mounted files reject rename onto the mount target).
+- **`env_writer.py`** — `update_env(updates, path)` with strict allowlist (`ALLOWED_KEYS`):
+  - GPU/model: `DETECTOR_GPU`, `CHAT_GPU`, `CHAT_MODEL`, `VISION_MODEL`, `POSE_MODEL`, `VEHICLE_MODEL`, `TARGET_FPS`
+  - Location + retention: `LOCATION_TIMEZONE`, `LOCATION_NAME`, `LOCATION_REGION`, `LOCATION_LAT`, `LOCATION_LON`, `SNAPSHOT_RETENTION_DAYS`, `CLIP_RETENTION_DAYS`, `RETENTION_DAYS`
+  - Telegram (wizard-settable): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USERS`
+
+  Strategy: `tempfile.mkstemp` + `os.replace`; **on EBUSY (errno 16) falls back to direct truncate-write** (because Docker bind-mounted files reject rename onto the mount target).
 - **`geometry.py`** — `bbox_iou(a, b)`, `in_dead_zone(bbox, w, h, zone_cache)`. Used by WebSocket.
 - **`onvif_discovery.py`** — Unicast WS-Discovery (NOT multicast — multicast silently fails on WSL2). ThreadPool of 50 workers, 2s per-IP, 15s overall deadline. Safety cap 4096 hosts. `detect_local_cidr()` priority chain: (1) cameras:registry RTSP URL → host extraction, (2) `CAMERA_IP` env, (3) RTSP env vars, (4) UDP-socket trick to 8.8.8.8 — filters out Docker bridge ranges (172.17–172.31).
 
@@ -293,20 +307,33 @@ Prefix shown in parens. Most routes auth-gated by middleware (not per-endpoint d
 - **`reminders.py`** — `reminder_poller(_ai_db)` walks `reminders` table in ai.db, fires Telegram messages when due.
 - **`retention.py`** — Daily prune of `/data/snapshots` and `/data/events` (default 4 days; `SNAPSHOT_RETENTION_DAYS=0` disables).
 
-### 6.5 `static/` — HTML pages + JS
+### 6.5 `static/` — HTML pages + JS (reorganized 2026-05-19)
 
-| HTML | JS loaded (cache-bust) | Backend APIs hit |
+```
+static/
+├── *.html               (8 pages at root: index, single, ai, cameras,
+│                         monitoring, telegram, setup, login)
+├── favicon.svg
+├── css/                 (style.css shared, ai/monitoring/setup page-specific)
+└── js/
+    ├── core/            nav.js, auth.js — every authenticated page
+    ├── dashboard/       app, grid, events, faces, unknowns, zones, browse,
+    │                    conditions, settings — index + single share these
+    └── pages/           ai, cameras, monitoring, setup, telegram — 1:1 with HTML
+```
+
+| HTML | JS loaded | Backend APIs hit |
 |---|---|---|
-| `index.html` (home grid) | grid.js?v=1, conditions.js?v=7, faces.js?v=8, events.js?v=20, nav.js?v=3, auth.js?v=6, browse.js?v=1 | /api/cameras, /api/events, /api/conditions, /api/faces |
-| `single.html` (detail) | app.js?v=12, events.js?v=20, nav.js?v=3, faces.js?v=8, unknowns.js?v=8, zones.js?v=8, conditions.js?v=7, auth.js?v=6, browse.js?v=1 | WebSocket /ws/live?camera=, /api/config, /api/zones, /api/events, /api/faces, /api/unknowns |
-| `cameras.html` | cameras.js?v=5, nav.js?v=3 | /api/cameras*, /api/cameras/discover, /api/cameras/onvif-stream-uri, /api/cameras/test-rtsp, /api/cameras/{id}/status |
-| `ai.html` | ai.js?v=2, nav.js?v=3 | /api/ai/{config,status,history,chat,reset,vision*}, /api/recordings/* (DVR tab) |
-| `monitoring.html` | monitoring.js?v=1, nav.js?v=3 | /api/monitoring/health + embedded Grafana iframe |
-| `telegram.html` | telegram_access.js?v=1, nav.js?v=3 | /api/telegram/* |
-| `setup.html` | setup.js?v=5 | /api/setup/{detect-hardware,apply-config,discover-cameras,complete}, /api/cameras* |
+| `index.html` (home grid) | `js/dashboard/{grid,conditions,faces,events,settings,browse}.js` + `js/core/{nav,auth}.js` | /api/cameras, /api/events, /api/conditions, /api/faces |
+| `single.html` (detail) | `js/dashboard/{app,events,faces,unknowns,zones,conditions,browse}.js` + `js/core/{nav,auth}.js` | WebSocket /ws/live?camera=, /api/config, /api/zones, /api/events, /api/faces, /api/unknowns |
+| `cameras.html` | `js/pages/cameras.js` + `js/core/nav.js` | /api/cameras*, /api/cameras/discover, /api/cameras/onvif-stream-uri, /api/cameras/test-rtsp, /api/cameras/{id}/status |
+| `ai.html` | `js/pages/ai.js` + `js/core/nav.js` | /api/ai/{config,status,history,chat,reset,vision*}, /api/recordings/* (DVR tab) |
+| `monitoring.html` | `js/pages/monitoring.js` + `js/core/nav.js` | /api/monitoring/health + embedded Grafana iframe |
+| `telegram.html` | `js/pages/telegram.js` + `js/core/nav.js` | /api/notifications/status (decides connect vs manage panel), /api/telegram/*, /api/setup/telegram/* (connect flow reuses wizard endpoints) |
+| `setup.html` | `js/pages/setup.js` | /api/setup/{detect-hardware,apply-config,discover-cameras,telegram/*,complete}, /api/cameras*, /api/stats (verify step) |
 | `login.html` | (inline only) | /api/auth/login, /api/login-bg |
 
-**Cache-busting:** every `<script src="...js?v=N">` MUST be bumped when changing the JS. Browsers cache aggressively; missed bumps cause silent stale-code bugs (see Phase H gotcha — cameras.js?v=4 vs v=5).
+**Cache-busting:** every `<script src="...js?v=N">` and `<link href="...css?v=N">` MUST be bumped when changing the asset. Browsers cache aggressively; missed bumps cause silent stale-code bugs. Server.py's `NoCacheHtmlStaticFiles` class sends `Cache-Control: no-cache` on `.html` responses but `.js`/`.css` rely on the `?v=` query string.
 
 ### 6.6 `websocket.py`
 - Endpoint `/ws/live?camera=<id>` — accepted first (to send close frames), then `validate_session` on `vl_session` cookie. Closes with code 4401 if invalid.
@@ -567,7 +594,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 
 15. **Notification cooldown floor** — `_get_cooldown` floors any user-supplied value at 10s regardless of `notify_cooldown` config. Spam prevention.
 
-16. **Vehicle "stationary" check** — `TrackedVehicle.is_stationary` requires ≥5 center-history samples + max displacement <30px. So one parked vehicle = exactly one `vehicle_idle` event (gated by `idle_alerted` flag). No second alert on the same vehicle.
+16. **Vehicle "stationary" check** — `TrackedVehicle.is_stationary` requires ≥5 center-history samples, then compares the CURRENT center against the MEDIAN of the rolling 20-sample history; drift must be < `max(8 px, bbox_w * 0.10)`. (The bbox-scaled threshold replaced a fixed 30 px; the median replaced first-sample comparison so YOLO's per-frame bbox jitter on a parked car doesn't accumulate as drift.) One parked vehicle = exactly one `vehicle_idle` event (gated by `idle_alerted` flag); the flag clears the next time `is_stationary` is False, so a car that drives off + comes back gets a fresh idle alert.
 
 17. **HD bbox scaling** — pose detector runs on the small sub-stream. When attaching HD snapshots (`frame_hd:{cam}`), `draw_bbox_on_frame` checks `width >= 1000px` and scales bboxes from SD→HD using actual SD dimensions.
 
@@ -596,7 +623,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 ## 15. Recent architectural decisions
 
 ### Phase A (2026-05-17)
-- **Removed ComfyUI service + Generate tab.** Image-generation use case dropped. Static `generate.{js,css,html}` deleted. ARCHITECTURE.md still references these files (stale).
+- **Removed ComfyUI service + Generate tab.** Image-generation use case dropped. Static `generate.{js,css,html}` deleted. ARCHITECTURE.md was de-staled in the 2026-05-19 doc audit (no remaining generate.js / generate.css references).
 
 ### Phase B (2026-05-17)
 - **Single-GPU as default + hardware tiers.** `tiers/{small,mid,full}.env`. `DETECTOR_GPU` / `CHAT_GPU` env replace hardcoded device IDs. WSL2 GPU isolation fix: must set BOTH `NVIDIA_VISIBLE_DEVICES` AND `CUDA_VISIBLE_DEVICES`.
@@ -645,7 +672,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 ## 16. File index (where to look)
 
 ### Top of repo
-- `docker-compose.yml` — main compose file (15 always-on services + 30 profile-gated)
+- `docker-compose.yml` — main compose file. 10 always-on services + 6 per-cam services × 20 profile-gated slots = 120 profile-gated. ~104 KB.
 - `docker-compose.registry.yml` — overlay to pull pre-built images from GHCR
 - `docker-compose.qnap.yml` — overlay to flip qnap-* volumes to CIFS mounts
 - `.env` / `.env.example` — runtime config
@@ -662,17 +689,17 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 - `services/pose-detector/detector.py` — YOLOv8s-pose
 - `services/vehicle-detector/detector.py` — YOLOv8s (filtered classes)
 - `services/face-recognizer/{recognizer.py, face_db.py}` — InsightFace + SQLite
-- `services/tracker/tracker.py` — IoU tracker + events
+- `services/tracker/` — IoU tracker. `tracker.py` is a thin entrypoint shim; real code lives in `core/` (split 2026-05-19): `core/state.py` (TrackedVehicle, TrackedPerson), `core/manager.py` (PersonTracker orchestrator), `core/iou.py`, `core/main.py` (run loop), `core/config.py`.
 - `services/recorder/recorder.py` — ffmpeg .ts segments
 - `services/orchestrator/orchestrator.py` — Docker control
 - `services/dashboard/`
   - `server.py` — FastAPI app + startup
   - `websocket.py` — `/ws/live` handler
   - `cameras.py` — `AVAILABLE_SLOTS` + helpers
-  - `routes/` — 20 router files (see §6.2)
+  - `routes/` — 18 router files + 3 split packages (ai_tools/, bot_commands/, notifications/); see §6.2
   - `helpers/{env_writer,onvif_discovery,geometry}.py`
-  - `pollers/{events,ollama_warmup,reminders,retention}.py`
-  - `static/` — 8 HTML pages + JS (see §6.5)
+  - `pollers/{events,health,ollama_warmup,reminders,retention}.py`
+  - `static/` — 8 HTML pages + JS/CSS in subdirs (see §6.5)
   - `constants.py`, `event_renderer.py`, `ai_db.py`
 - `services/prometheus/prometheus.yml`
 - `services/grafana/{provisioning,dashboards}/`
@@ -691,7 +718,9 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 - `scripts/prometheus-clean-stale-cameras.sh` — tombstone stale-camera Prom labels
 
 ### Tests
-- `tests/test_vehicles.py` — vehicle event tests (updated to cam1 on 2026-05-18)
+- 258 tests, 0 quarantined as of 2026-05-19. Run via `source .venv-test/bin/activate && pytest -q`.
+- `tests/` files: `test_actions.py`, `test_ai_tool_aggregations.py`, `test_face_db.py`, `test_notifications.py`, `test_routes.py`, `test_scene_analysis.py`, `test_time_rules.py`, `test_tracker.py`, `test_vehicles.py`.
+- `FakeRedis` (in `test_vehicles.py`) is the standard stub. Tests use host Python 3.12; container is 3.11.
 
 ---
 

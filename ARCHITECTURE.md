@@ -88,7 +88,7 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 
 | Service | Container | Host port | GPU | Description |
 |---------|-----------|-----------|:---:|-------------|
-| **redis** | redis:7-alpine | 6379 | — | Central message bus, AOF persistence, 2GB maxmemory |
+| **redis** | redis:7-alpine | 127.0.0.1:6379 | — | Central message bus, AOF persistence, 2GB maxmemory. Bound to localhost only since 2026-05-19 — LAN devices can't reach Redis even if `REDIS_PASSWORD` is empty. Inside-network services use the `redis` hostname; host-network services connect via localhost |
 | **camera-ingester** | custom | host net | — | RTSP→JPEG frames, publishes sub-stream + HD to Redis. Hot-reloads `target_fps` from Redis config |
 | **pose-detector** | custom | — | GPU 0 | YOLOv8s-pose, publishes person bboxes + keypoints |
 | **vehicle-detector** | custom | — | GPU 0 | YOLOv8s, publishes vehicle bboxes |
@@ -96,9 +96,9 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 | **face-recognizer** | custom | *internal only (8081 not exposed)* | GPU 0 | InsightFace embedding, SQLite DB, REST API proxied through dashboard |
 | **dashboard** | custom | 8080 | — | FastAPI + WebSocket + static files + background tasks. WebSocket `/ws/live` requires session cookie |
 | **ollama** | ollama/ollama | 11434 | GPU 1 | LLM inference (Qwen 3 14B, MiniCPM-V) |
-| **recorder** | custom | host net | — | RTSP→`.ts` ffmpeg copy, 1-hour segments, 3-day retention. Runs by default to `./data/recordings/` (bind mount). `recorder-cam2`–`recorder-cam5` are profile-gated to their slot; `recorder.py` reads RTSP URL from `cameras:registry` if `RTSP_URL` env is empty (same fallback as the ingester) |
-| **orchestrator** | custom | — | — | Reconciles compose profiles against `cameras:registry`. Subscribes to `cameras:events` pub/sub channel + runs a periodic safety-net reconcile. Has the Docker socket; the dashboard does NOT. Writes every action to `orchestrator:audit` Redis stream. See Phase 7b decision in REFACTOR_PLAN.md |
-| **prometheus** | prom/prometheus | 9090 (host net) | — | Metrics collection, 30d retention |
+| **recorder** | custom | host net | — | RTSP→`.ts` ffmpeg copy, 1-hour segments, 3-day retention. Runs by default to `./data/recordings/` (bind mount). All `recorder-camN` (cam1..cam20) are profile-gated to their slot; `recorder.py` reads RTSP URL from `cameras:registry` if `RTSP_URL` env is empty (same fallback as the ingester) |
+| **orchestrator** | custom | — | — | Reconciles compose profiles against `cameras:registry`. Subscribes to `cameras:events` pub/sub channel + runs a periodic safety-net reconcile. Has the Docker socket; the dashboard does NOT. Writes every action to `orchestrator:audit` Redis stream. See Phase 7b decision in docs/history/REFACTOR_PLAN.md |
+| **prometheus** | prom/prometheus | 127.0.0.1:9090 (host net) | — | Metrics collection, 30d retention. `--web.listen-address=127.0.0.1:9090` so the admin API isn't reachable from the LAN |
 | **grafana** | grafana/grafana-oss | 3000 (host net) | — | Monitoring dashboards, provisioned from `services/grafana/dashboards/vision-labs.json` |
 | **redis-exporter** | redis_exporter | host net | — | Redis metrics → Prometheus |
 | **dcgm-exporter** | dcgm-exporter | host net | all | NVIDIA GPU metrics → Prometheus |
@@ -480,8 +480,12 @@ All alerts are sent to **every approved Telegram user** (multi-user support).
 3. Route to command handler
 4. Log to `telegram:access_log` stream + per-user audit files on NAS
 
-### Commands
-`/snapshot`, `/clip [N]`, `/status`, `/arm`, `/disarm`, `/who`, `/events [N]`, `/analyze`, `/help`, plus photo analysis (send any photo to get MiniCPM-V description).
+### Commands (17 total, one file per command under `routes/bot_commands/`)
+**User:** `/snapshot [cam]`, `/clip [Ns] [cam]`, `/status [cam]`, `/who [cam]`, `/events [N] [cam]`, `/zones [cam]`, `/timelapse [YYYY-MM-DD] [cam]`, `/analyze [cam] [prompt]`, `/ask <question>`, `/rules`, `/night`, `/faces`, `/cameras`, `/start`, `/help`.
+
+**Admin only (role=admin in `telegram:users`):** `/arm`, `/disarm`.
+
+Plus a photo handler that runs MiniCPM-V on any incoming image. Camera token parsing accepts id (`cam2`), friendly name (`basement`), unambiguous prefix (`base`), or `all`.
 
 ### Access Control
 - Users managed via dashboard Telegram Access Manager page
@@ -492,7 +496,7 @@ All alerts are sent to **every approved Telegram user** (multi-user support).
 
 ## DVR Recording
 
-### Service: `recorder` (and `recorder-cam2`, profile-gated)
+### Service: `recorder-camN` (one per slot, all profile-gated)
 - **Method**: ffmpeg RTSP → MPEG-TS copy (no transcode — very low CPU)
 - **Segments**: 1-hour `.ts` files
 - **Retention**: 3-day rolling cleanup (`RETENTION_DAYS=3`)
@@ -553,13 +557,15 @@ The `contracts/` directory is mounted read-only into every service container:
 
 ## Authentication
 
-- **Session-based**: cookie + server-side session store in SQLite (`/data/auth.db`). Cookie name `vl_session`, signed HMAC-SHA256 of `username:timestamp`, 24h validity
-- **Password hashing**: salted SHA-256 (`hashlib.sha256(f"{salt}:{password}").hexdigest()`)
-- **Middleware**: `auth_middleware` in `server.py` intercepts all HTTP requests except login, static assets, and API auth endpoints
-- **WebSocket auth**: `websocket_live` *also* validates the `vl_session` cookie and closes with code 4401 if invalid. HTTP middleware does not intercept WebSocket scopes, so the handler does this explicitly
-- **Forced password change**: when admin still has the default password `admin`, the login endpoint returns `must_change_password: true`. `login.html` swaps to a forced-rotation form before letting the user reach the dashboard
-- **Login page**: blurred camera snapshot background (no auth required for the blurred image itself)
-- **Default seed user**: `admin/admin` is created on first DB initialization; the forced rotation flow above prevents anyone from actually staying on the default
+- **Stateless sessions** — no server-side store. The `vl_session` cookie is a self-contained HMAC-SHA256-signed token: `username:must_change_flag:timestamp:signature`. SQLite (`/data/auth.db`) only holds the user table + the HMAC secret key.
+- **Password hashing**: bcrypt (cost 12). Legacy salted SHA-256 hashes are still accepted on login for upgrades from pre-2026-05 installs; on a successful SHA-256 verify, `_maybe_upgrade_to_bcrypt` rewrites the row with a fresh bcrypt hash. No batch migration, no downtime.
+- **Middleware**: `auth_middleware` in `server.py` intercepts all HTTP requests except a small `_AUTH_EXEMPT` set (login page, login API, blurred-bg, base CSS + auth.js, favicon, metrics).
+- **WebSocket auth**: `websocket_live` *also* validates the `vl_session` cookie and closes with code 4401 if invalid. HTTP middleware does not intercept WebSocket scopes, so the handler does this explicitly (after `ws.accept()`, which is required to send a close frame).
+- **Default-credentials gate (server-enforced)**: when the user logs in with `admin/admin`, the session token gets `must_change=1` baked in. The middleware refuses every route except `/api/auth/change-password` (and assets the login page needs) until the user rotates. A curl client that ignores the UI's rotation prompt still hits the 403. After a successful rotation, the change-password endpoint issues a new token with `must_change=0`.
+- **Password rules**: minimum 8 characters; the literal string `"admin"` is explicitly rejected on change-password.
+- **Brute-force gate** on `/api/auth/login`: in-memory per-IP counter. 5 failed attempts in 5 minutes → 15-minute lockout, returning HTTP 429 with `Retry-After`. Successful login clears the counter for that IP. Resets on container restart (acceptable for single-host LAN install).
+- **Login page**: blurred camera snapshot background (no auth required for the blurred image itself).
+- **Default seed user**: `admin/admin` is created on first DB initialization. The server-enforced rotation gate prevents staying on the default.
 
 ---
 
@@ -598,7 +604,15 @@ browsable from Windows Explorer without sudo.
     └── media/
 
 /data/auth.db                                     ← Docker volume auth-data
-                                                  ← SQLite: sessions, users, password rotation
+                                                  ← SQLite: users table (username, bcrypt hash)
+                                                  ← + app_config (HMAC secret_key persisted
+                                                  ←   for stable cookie signing across restarts)
+                                                  ← Sessions are NOT stored — tokens are HMAC-signed
+                                                  ←   self-contained `username:flag:ts:sig`.
+/data/ai.db                                       ← Docker volume auth-data (shares the volume)
+                                                  ← SQLite: ai_config (single row),
+                                                  ←   reminders (Telegram timed messages),
+                                                  ←   chat_history (last N messages, server-side)
 ```
 
 **Future QNAP migration:** when a QNAP shows up, swap individual volumes
@@ -641,7 +655,7 @@ becomes either a QNAP NFS mount or stays local with shorter retention.
 
 | Trigger | Effect |
 |---------|--------|
-| `docker compose up` (no profile) | Base file. Recorder runs (since `aa13d25`) with local bind mount + 3-day retention. The 6 `qnap-*` volumes are plain local Docker volumes. The `orchestrator` service starts here too and is responsible for activating the cam2-cam5 profiles based on the registry |
+| `docker compose up` (no profile) | Base file. The 6 `qnap-*` volumes are plain local Docker volumes. The `orchestrator` service starts here and is responsible for activating cam1..cam20 profiles based on the `cameras:registry` Redis hash |
 | `docker compose --profile camN up` (manual) | Manual activation of a slot — normally NOT needed since the orchestrator does this automatically when a camera is registered in the dashboard. Useful for debugging or first-run before the orchestrator is in place |
 | `docker compose -f docker-compose.yml -f docker-compose.qnap.yml up` | Overlay rewrites the 6 `qnap-*` volumes to CIFS mounts pointing at QNAP. Requires QNAP at `QNAP_IP` with a `vision-labs` share + 6 subfolders. Recordings stay local-disk by default until you swap that mount too |
 
@@ -697,8 +711,8 @@ services/
 │       │                # conditions, settings — the camera-view feature cluster
 │       └── js/pages/    # ai, cameras, monitoring, setup, telegram — 1:1 with HTML
                           # (Reorganized from a flat layout on 2026-05-19.)
-├── recorder/            # ffmpeg RTSP → .ts DVR. Always on for cam1; recorder-cam2..cam20
-│                        # are profile-gated and managed by the orchestrator. recorder.py
+├── recorder/            # ffmpeg RTSP → .ts DVR. All recorder-camN (cam1..cam20) are
+│                        # profile-gated and managed by the orchestrator. recorder.py
 │                        # reads RTSP URL from cameras:registry if RTSP_URL env is empty.
 ├── orchestrator/        # NEW (Phase 7b). Single-purpose sidecar with the Docker socket.
 │                        # Watches cameras:events + cameras:registry; runs
