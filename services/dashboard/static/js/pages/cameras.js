@@ -10,6 +10,15 @@
 
 const $ = (id) => document.getElementById(id);
 
+// When ONVIF returns a RTSP URL the camera password is inline:
+//   rtsp://admin:secretpass@192.168.1.14:554/h264Preview_01_sub
+// Display masked, swap back to real before sending to the API. Mirror of the
+// pattern in js/pages/setup.js.
+const _maskedToReal = new Map();  // masked URL → real URL
+function _maskRtspUrl(url) {
+    return url.replace(/(rtsp:\/\/[^:@/\s]+):([^@/\s]+)@/, (_m, prefix) => `${prefix}:••••••@`);
+}
+
 function showMsg(text, kind = 'ok') {
     const el = $('camMsg');
     el.textContent = text;
@@ -280,8 +289,15 @@ async function promptOnvifCreds(idx) {
             $('camId').value = '';
         }
         $('camName').value = `${cam.manufacturer || ''} ${cam.model || ''}`.trim() || cam.ip;
-        $('camRtspSub').value = sub || '';
-        $('camRtspMain').value = (main && main !== sub) ? main : '';
+        // Stash the real URLs so handleAddCamera/handleTestRtsp can recover
+        // them on submit; display masked so the password isn't on-screen.
+        const subMasked = sub ? _maskRtspUrl(sub) : '';
+        const mainStr = (main && main !== sub) ? main : '';
+        const mainMasked = mainStr ? _maskRtspUrl(mainStr) : '';
+        if (sub) _maskedToReal.set(subMasked, sub);
+        if (mainStr) _maskedToReal.set(mainMasked, mainStr);
+        $('camRtspSub').value = subMasked;
+        $('camRtspMain').value = mainMasked;
         showMsg(`✓ Got RTSP URLs from ${cam.ip}. Review the form below + click Save.`, 'ok');
         $('camName').scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (e) {
@@ -291,11 +307,12 @@ async function promptOnvifCreds(idx) {
 
 
 async function handleTestRtsp() {
-    const url = $('camRtspSub').value.trim();
-    if (!url) {
+    const visible = $('camRtspSub').value.trim();
+    if (!visible) {
         showMsg('Enter the sub-stream URL before testing', 'err');
         return;
     }
+    const url = _maskedToReal.get(visible) || visible;
     showMsg('Testing connection — give it 5-10 seconds...', 'ok');
     try {
         const res = await fetch('/api/cameras/test-rtsp', {
@@ -318,8 +335,12 @@ async function handleAddCamera(event) {
     event.preventDefault();
     const id = $('camId').value.trim();
     const name = $('camName').value.trim();
-    const rtsp_sub = $('camRtspSub').value.trim();
-    const rtsp_main = $('camRtspMain').value.trim();
+    const subVisible = $('camRtspSub').value.trim();
+    const mainVisible = $('camRtspMain').value.trim();
+    // Swap masked ONVIF-prefilled values back to the real URL with password.
+    // Manually-edited URLs miss the cache and pass through unchanged.
+    const rtsp_sub = _maskedToReal.get(subVisible) || subVisible;
+    const rtsp_main = _maskedToReal.get(mainVisible) || mainVisible;
     const lat = parseFloat($('camLat').value) || 0;
     const lon = parseFloat($('camLon').value) || 0;
 

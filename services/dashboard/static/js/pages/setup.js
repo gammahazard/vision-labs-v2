@@ -430,6 +430,21 @@ function closeOnvifModal() {
     _onvifSelected = null;
 }
 
+// When ONVIF returns RTSP URLs they include the camera credentials inline:
+//   rtsp://admin:secretpass@192.168.1.14:554/h264Preview_01_sub
+// We don't want secretpass visible on screen. Store the real URL keyed by
+// its masked display value so addCamera() can swap back on submit. If the
+// user types over the masked URL (e.g. fixing a typo), the lookup misses
+// and we just send what they typed — which is the right behavior because
+// they're explicitly overriding our auto-fill.
+const _maskedToReal = new Map();  // masked URL → real URL
+
+function _maskRtspUrl(url) {
+    // Replace the `:password@` portion with `:••••••@` for display only.
+    // Leaves user, host, port, path intact.
+    return url.replace(/(rtsp:\/\/[^:@/\s]+):([^@/\s]+)@/, (_m, prefix) => `${prefix}:••••••@`);
+}
+
 async function connectOnvif() {
     if (!_onvifSelected) return;
     const username = document.getElementById('onvifUsername').value.trim();
@@ -471,10 +486,19 @@ async function connectOnvif() {
         let main = urls.find(u => /main|01|high/i.test(u)) || urls[0];
         if (sub === main && urls.length > 1) main = urls.find(u => u !== sub);
 
+        // Stash the real URLs so addCamera() can recover them on submit, then
+        // display the MASKED versions so the camera password isn't visible
+        // on screen.
+        const subMasked = sub ? _maskRtspUrl(sub) : '';
+        const mainStr = (main && main !== sub) ? main : '';
+        const mainMasked = mainStr ? _maskRtspUrl(mainStr) : '';
+        if (sub) _maskedToReal.set(subMasked, sub);
+        if (mainStr) _maskedToReal.set(mainMasked, mainStr);
+
         document.getElementById('camName').value =
             `${_onvifSelected.manufacturer || ''} ${_onvifSelected.model || ''}`.trim() || _onvifSelected.ip;
-        document.getElementById('camRtspSub').value = sub || '';
-        document.getElementById('camRtspMain').value = (main && main !== sub) ? main : '';
+        document.getElementById('camRtspSub').value = subMasked;
+        document.getElementById('camRtspMain').value = mainMasked;
 
         // Open the manual form so the user can review + click Add
         document.querySelector('.manual-fallback').open = true;
@@ -487,7 +511,10 @@ async function connectOnvif() {
 }
 
 async function testRtsp() {
-    const url = document.getElementById('camRtspSub').value.trim();
+    const visible = document.getElementById('camRtspSub').value.trim();
+    // If this is one of our ONVIF-prefilled masked URLs, swap back to the
+    // real one before sending to ffprobe. Manual entries pass through as-is.
+    const url = _maskedToReal.get(visible) || visible;
     const resultEl = document.getElementById('rtspTestResult');
     if (!url) {
         resultEl.hidden = false;
@@ -521,8 +548,12 @@ async function testRtsp() {
 
 async function addCamera() {
     const name = document.getElementById('camName').value.trim();
-    const rtspSub = document.getElementById('camRtspSub').value.trim();
-    const rtspMain = document.getElementById('camRtspMain').value.trim();
+    const subVisible = document.getElementById('camRtspSub').value.trim();
+    const mainVisible = document.getElementById('camRtspMain').value.trim();
+    // Swap masked ONVIF-prefilled values back to real URLs before saving.
+    // Manually-typed URLs miss the cache lookup and pass through unchanged.
+    const rtspSub = _maskedToReal.get(subVisible) || subVisible;
+    const rtspMain = _maskedToReal.get(mainVisible) || mainVisible;
 
     if (!name || !rtspSub) {
         alert('Camera name and RTSP sub-stream URL are required.');
