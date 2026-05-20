@@ -159,12 +159,65 @@ async def chat(req: ChatRequest):
     system_prompt = build_system_prompt(config, system_context)
     messages = [{"role": "system", "content": system_prompt}]
 
-    # Add conversation history (from client). Keep this SHORT — long history
-    # is the #1 cause of Qwen regurgitating stale wrong answers instead of
-    # calling tools fresh. 6 messages = 3 user turns + 3 assistant replies.
-    for msg in req.history[-6:]:
-        if msg.get("role") in ("user", "assistant"):
-            messages.append({"role": msg["role"], "content": msg["content"]})
+    # Analytical questions ("busiest hour", "what time", "show me the clip from X")
+    # have to start fresh. Qwen 14B is weak at overriding a poisoned history —
+    # if a previous turn fabricated a "11pm-12am / 95 detections / click here"
+    # answer, the model parrots it on the next turn regardless of system-prompt
+    # rules telling it not to. So: for these specific question patterns, drop
+    # the conversation history entirely and rely on the current turn's tools.
+    msg_lower = (req.message or "").lower()
+    _ANALYTICAL_KEYWORDS = (
+        "busiest", "busy hour", "peak hour", "what hour", "which hour",
+        "what time", "time of day", "hourly", "hour-by-hour",
+    )
+    _DVR_KEYWORDS = (
+        "clip", "video", "recording", "footage", "dvr", "playback",
+    )
+    is_hourly_question = any(k in msg_lower for k in _ANALYTICAL_KEYWORDS)
+    is_dvr_question = any(k in msg_lower for k in _DVR_KEYWORDS)
+    drop_history = is_hourly_question or is_dvr_question
+
+    if not drop_history:
+        # Normal turn: include last 6 messages of history (3 turns each side).
+        for msg in req.history[-6:]:
+            if msg.get("role") in ("user", "assistant"):
+                messages.append({"role": msg["role"], "content": msg["content"]})
+    # When `drop_history` is True we deliberately send NO prior turns. The
+    # system prompt + the current user message + the live tool catalog are
+    # the only context. This is the only reliable way to stop the model
+    # from regurgitating fabricated hourly numbers / fake "click here" links
+    # from earlier in the conversation.
+
+    # If the question requires a specific tool that earlier turns might have
+    # skipped, inject a one-shot hard reminder right before the user's message.
+    # This is belt-and-braces alongside the dropped history.
+    hard_reminders: list[str] = []
+    if is_hourly_question:
+        hard_reminders.append(
+            "This question is about hour-of-day / busiest-time. "
+            "You MUST call query_event_patterns with analysis_type='hourly'. "
+            "query_events_by_date does NOT have hourly data — its `total_events` "
+            "and `by_type` are daily totals only. Read `busiest_hour`, `top_hours`, "
+            "`hourly_breakdown`, `by_identity_per_hour` from query_event_patterns' "
+            "response. Do NOT extrapolate hourly counts from daily totals."
+        )
+    if is_dvr_question:
+        hard_reminders.append(
+            "This question requests a DVR clip / recording / video. "
+            "You MUST call find_dvr_segment to get a real deep_link URL. "
+            "Render the URL it returns as a markdown link: "
+            "`[Open the clip](<deep_link>)`. NEVER write 'click here' without "
+            "a real URL behind it. If the user asked for 'the clip from "
+            "yesterday's busiest hour', chain TWO calls: first "
+            "query_event_patterns to find the hour, then find_dvr_segment "
+            "with that hour as `time`."
+        )
+    if hard_reminders:
+        messages.append({
+            "role": "system",
+            "content": "URGENT — read before answering the next user message:\n\n"
+                       + "\n\n".join(f"• {r}" for r in hard_reminders),
+        })
 
     # Add current message
     messages.append({"role": "user", "content": req.message})
