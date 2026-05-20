@@ -14,9 +14,8 @@ import cv2
 import numpy as np
 
 import routes as ctx
-from contracts.redis_client import make_redis_client
 
-from ._shared import logger, REDIS_HOST, REDIS_PORT
+from ._shared import logger
 
 def get_latest_frame(camera_id: str = "") -> bytes | None:
     """
@@ -140,7 +139,10 @@ def build_clip(duration: float = 5.0, fps: int = 10, camera_id: str = "") -> byt
     import time as _time
 
     try:
-        r_bin = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
+        # Use the shared binary-mode client (ctx.r_bin) instead of opening a
+        # fresh connection per call — every Telegram clip request used to
+        # leak a TCP connection to Redis, which accumulated over days.
+        r_bin = ctx.r_bin
         frames = []
         target_count = int(duration * fps)
         start = _time.monotonic()

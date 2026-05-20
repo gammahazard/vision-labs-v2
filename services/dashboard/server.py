@@ -35,7 +35,6 @@ import numpy as np
 import redis
 from contracts.redis_client import make_redis_client
 from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, Response
 
 # Import stream key definitions from contracts (single source of truth)

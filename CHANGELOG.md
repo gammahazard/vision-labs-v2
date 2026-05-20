@@ -15,6 +15,11 @@ Images for each tagged release are published to GitHub Container Registry at `gh
 
 ### Fixed
 - Pose + vehicle detectors used wall clock (`time.time()`) for inference duration, so NTP corrections on WSL2 host-resume could produce negative `inference_ms` values that pulled the Grafana "YOLO Inference Time" mean below zero (visible as -2s spikes / -7.25s means on hour-zoom views). Switched both detectors to `time.monotonic()`. Requires rebuilding the affected detector images.
+- `routes/notifications/frame.py` `build_clip()` opened a fresh Redis connection on every call instead of reusing the shared `ctx.r_bin`. Each Telegram clip + AI `capture_clip` request leaked a TCP connection; now uses the shared client.
+
+### Removed
+- Stale `from fastapi.staticfiles import StaticFiles` import in `services/dashboard/server.py` (the actual mount uses an aliased `_StaticFiles` import further down).
+- Stale CONTEXT.md reference to `routes/clips.py` as orphaned — file was already deleted; doc was lagging.
 
 ## [0.1.1] — 2026-05-20
 
