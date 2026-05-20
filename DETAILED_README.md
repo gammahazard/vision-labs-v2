@@ -123,17 +123,16 @@ docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
 # Should list all your GPUs (this is the same image the orchestrator
 # spawns for the setup wizard's hardware probe)
 
-# 5. Build and run
-#    OPTION A: build locally (~10-15 min, builds base + 7 service images)
-bash scripts/build.sh              # builds base image first, then everything else
-docker compose up -d
-#    OPTION B: pull pre-built images from GitHub Container Registry (fast)
-#    Note: this requires images to be published to GHCR — the overlay file
-#    is in place (`docker-compose.registry.yml`) but the CI workflow that
-#    actually pushes images is not yet wired up. Use OPTION A for now.
-#    docker compose -f docker-compose.yml -f docker-compose.registry.yml pull
-#    docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
-#    With NAS (overlay also works in both options above):
+# 5. Build and run — pick ONE of A or B
+#    OPTION A: pull pre-built images from GitHub Container Registry (~3-5 min, mostly pull bandwidth)
+docker compose -f docker-compose.yml -f docker-compose.registry.yml pull
+docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+#    Pin a release for reproducibility:
+#       IMAGE_TAG=v0.1.0 docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+#    OPTION B: build locally (~10-15 min, builds base + 7 service images — needed if you've forked + modified code)
+#    bash scripts/build.sh              # builds base image first, then everything else
+#    docker compose up -d
+#    With NAS (overlay stacks with either option above):
 docker compose -f docker-compose.yml -f docker-compose.qnap.yml --profile nas up
 
 # 6. Browse
@@ -178,10 +177,17 @@ Two paths from cloned repo to running stack:
 
 | Path | Time | When to use |
 |---|---|---|
-| `bash scripts/build.sh` then `docker compose up -d` | ~10-15 min first time | The currently-supported install path. Build base + 7 service images locally |
-| `docker compose -f docker-compose.yml -f docker-compose.registry.yml pull && up -d` | ~3-5 min (mostly pull bandwidth) | **Not yet wired up.** The compose overlay (`docker-compose.registry.yml`) is in place — it rewrites each service's `build:` block to `image: ghcr.io/<repo>/<svc>:${IMAGE_TAG:-latest}`. What's missing is the GitHub Actions workflow that actually pushes images to GHCR on tagged releases. Once that's added, this becomes a one-command install with no local build |
+| `docker compose -f docker-compose.yml -f docker-compose.registry.yml pull && up -d` | ~3-5 min (pull bandwidth) | **Default.** Pulls finished images from `ghcr.io/gammahazard/vision-labs/*`. Tags are cut by the `publish-images.yml` workflow on every `v*` git tag — both `:vX.Y.Z` and `:latest` are pushed. Pin a release with `IMAGE_TAG=v0.1.0 docker compose -f ... up -d` |
+| `bash scripts/build.sh` then `docker compose up -d` | ~10-15 min first time | Build base + 7 service images locally. Use this if you've forked and modified the code, or want to inspect each build layer |
 
-**What's needed to make Option B real** (future work for when the repo goes public): add `.github/workflows/build-images.yml` that runs `docker buildx build --push` for each service on `v*` git tags, publishing to `ghcr.io/<owner>/vision-labs-<svc>:<tag>`. The `IMAGE_TAG` env var in `docker-compose.registry.yml` already wires version pinning so users can do `IMAGE_TAG=v1.0.0 docker compose -f ... up -d`.
+**Cutting a new release** (maintainer workflow):
+```bash
+git tag -a v0.2.0 -m "v0.2.0 — release notes here"
+git push origin v0.2.0    # triggers .github/workflows/publish-images.yml
+```
+The workflow builds the shared base image first, then the 8 service images in parallel on `ubuntu-latest` runners. ~25-40 min wall-clock. On first publish you'll also need to flip each new package from private to public via GitHub → Packages → ⚙️ → "Change package visibility" (one-time, per package).
+
+**The registry overlay** (`docker-compose.registry.yml`) covers cam1-cam20 — every slot the base compose knows about. Each `build:` block is nulled out so compose pulls instead of building. Volumes, env vars, networks, healthchecks are all inherited from the base file; only the image source changes.
 
 ---
 
