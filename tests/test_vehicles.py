@@ -709,3 +709,102 @@ class TestTrackedVehicleStationary:
         event_types = [e["event_type"] for _, e in events]
         assert "vehicle_idle" not in event_types  # Moving → no idle
 
+
+# ===========================================================================
+# Ghost-buffer re-association (PersonTracker._try_ghost_match)
+# ===========================================================================
+class TestVehicleGhostBuffer:
+    """When a vehicle goes stale (vehicle_lost_timeout) it's moved into
+    `_ghost_vehicles`. A new same-class detection within
+    VEHICLE_GHOST_MAX_DIST_RATIO × bbox_width of the ghost's last center
+    re-associates instead of creating a new vehicle_id. Eliminates the
+    detected → left → detected triple-event for one car driving through
+    a dead-zone."""
+
+    def _new_tracker(self, fake_redis):
+        from tracker import PersonTracker
+        return PersonTracker(fake_redis, iou_threshold=0.3, lost_timeout=5.0)
+
+    def _seed_ghost(self, tracker, bbox=None, class_name="car",
+                    vehicle_id="v0001", ghost_ts=1.0):
+        """Put a TrackedVehicle directly into the ghost buffer."""
+        from tracker import TrackedVehicle
+        bbox = bbox or [100, 200, 300, 400]
+        veh = TrackedVehicle(
+            vehicle_id=vehicle_id,
+            bbox=bbox,
+            class_name=class_name,
+            confidence=0.9,
+            timestamp=ghost_ts,
+        )
+        tracker._ghost_vehicles[vehicle_id] = (veh, ghost_ts)
+        return veh
+
+    def test_empty_buffer_returns_none(self, fake_redis):
+        """No ghosts → no match, regardless of input."""
+        tracker = self._new_tracker(fake_redis)
+        assert tracker._try_ghost_match([100, 200, 300, 400], "car", 5.0) is None
+
+    def test_close_same_class_matches(self, fake_redis):
+        """Same class, center within max_dist (2 × bbox_width by default)
+        → returns the ghost's id."""
+        tracker = self._new_tracker(fake_redis)
+        self._seed_ghost(tracker, bbox=[100, 200, 300, 400])  # bbox_w = 200
+        # New detection 50px to the right (well within 2 * 200 = 400 px)
+        result = tracker._try_ghost_match([150, 200, 350, 400], "car", 5.0)
+        assert result == "v0001"
+
+    def test_different_class_does_not_match(self, fake_redis):
+        """Class mismatch: a car ghost must NOT re-associate with a truck.
+        Comment in code: 'cars don't morph into trucks mid-occlusion'."""
+        tracker = self._new_tracker(fake_redis)
+        self._seed_ghost(tracker, bbox=[100, 200, 300, 400], class_name="car")
+        # Truck detection at the same position
+        result = tracker._try_ghost_match([100, 200, 300, 400], "truck", 5.0)
+        assert result is None
+
+    def test_too_far_does_not_match(self, fake_redis):
+        """Center beyond bbox_width × VEHICLE_GHOST_MAX_DIST_RATIO → no match.
+        bbox_w = 200, ratio default 2.0 → max_dist = 400 px."""
+        tracker = self._new_tracker(fake_redis)
+        self._seed_ghost(tracker, bbox=[100, 200, 300, 400])  # center (200,300)
+        # Detection 500px to the right — center (700, 300) → dist 500 > 400
+        result = tracker._try_ghost_match([600, 200, 800, 400], "car", 5.0)
+        assert result is None
+
+    def test_picks_nearest_when_multiple_candidates(self, fake_redis):
+        """With two same-class ghosts in range, pick the closer one."""
+        tracker = self._new_tracker(fake_redis)
+        # Ghost A center (200, 300)
+        self._seed_ghost(tracker, bbox=[100, 200, 300, 400], vehicle_id="vA")
+        # Ghost B center (500, 300) — 100px to the right of new detection
+        self._seed_ghost(tracker, bbox=[400, 200, 600, 400], vehicle_id="vB")
+        # New detection center (410, 300) — closer to vB than vA
+        result = tracker._try_ghost_match([310, 200, 510, 400], "car", 5.0)
+        assert result == "vB"
+
+    def test_re_association_keeps_first_seen(self, fake_redis):
+        """When ghost is rehydrated via _process_vehicle_detections, the
+        vehicle's first_seen should NOT reset — the rolling duration is
+        the value of the ghost buffer."""
+        tracker = self._new_tracker(fake_redis)
+        # Push a vehicle through the normal path so the snapshot path is happy
+        det = [{"bbox": [100, 200, 300, 400], "class_name": "car",
+                "confidence": 0.9}]
+        tracker._process_vehicle_detections(det, 1000.0)
+        first_seen = list(tracker.tracked_vehicles.values())[0].first_seen
+        # Simulate vehicle going stale — drop it directly into ghost buffer
+        vid, veh = next(iter(tracker.tracked_vehicles.items()))
+        tracker._ghost_vehicles[vid] = (veh, 1010.0)
+        del tracker.tracked_vehicles[vid]
+        # Re-detect 1s later (within VEHICLE_GHOST_TTL=5s default)
+        det2 = [{"bbox": [120, 200, 320, 400], "class_name": "car",
+                 "confidence": 0.9}]
+        tracker._process_vehicle_detections(det2, 1011.0)
+        # The re-associated vehicle should keep the original first_seen
+        rehydrated = list(tracker.tracked_vehicles.values())[0]
+        assert rehydrated.first_seen == first_seen, (
+            f"Ghost re-association reset first_seen — duration counter "
+            f"will misreport ({rehydrated.first_seen} vs {first_seen})"
+        )
+

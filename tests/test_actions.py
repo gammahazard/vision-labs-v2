@@ -265,3 +265,90 @@ class TestEdgeCases:
         })
         result = classify_action(kps)
         assert result["action"] == "arms_raised"  # Arms checked first
+
+
+# ---------------------------------------------------------------------------
+# Regression: the "basement cam always called me sitting" bug
+# ---------------------------------------------------------------------------
+class TestSittingRequiresPositiveEvidence:
+    """The classifier used to fall through to "sitting" any time the torso
+    was visible but the ankles weren't (low-mounted cam, occluded feet, low
+    light). The torso-only branch was removed; sitting now requires either:
+      (a) knees visible at hip level + ankles visible below knees, OR
+      (b) knees visible clearly at hip level + ankles hidden (40% tighter).
+    Anything else falls through to standing. These tests pin that behaviour
+    so we don't accidentally reintroduce the false-positive."""
+
+    def test_standing_with_ankles_missing_is_not_sitting(self):
+        """The bug: standing person with feet cropped/occluded.
+
+        Person is upright (knees clearly BELOW hip, not at hip level), but
+        ankles dropped to 0 confidence — the situation a basement cam or
+        elevated outdoor cam routinely produces. Result must be 'standing',
+        not 'sitting'."""
+        kps = make_keypoints({
+            L_ANKLE: [280, 570, 0.0],  # not visible
+            R_ANKLE: [360, 570, 0.0],  # not visible
+        })
+        result = classify_action(kps)
+        assert result["action"] == "standing", (
+            f"Standing person with missing ankles must NOT classify as "
+            f"sitting. Got {result['action']}. Details: {result['details']}"
+        )
+
+    def test_standing_with_knees_missing_is_not_sitting(self):
+        kps = make_keypoints({
+            L_KNEE: [285, 460, 0.0],
+            R_KNEE: [355, 460, 0.0],
+            L_ANKLE: [280, 570, 0.0],
+            R_ANKLE: [360, 570, 0.0],
+        })
+        result = classify_action(kps)
+        assert result["action"] == "standing"
+
+    def test_sitting_in_chair_with_ankles_below_knees(self):
+        """Strong positive evidence: knees forward at hip level, ankles
+        below knees → confident sitting."""
+        # Default standing person has hips at y=350, knees at y=460,
+        # ankles at y=570 (torso ≈ 170 px). Bring knees up to hip level
+        # to simulate thighs near-horizontal, keep ankles below knees.
+        kps = make_keypoints({
+            L_KNEE: [285, 360, 0.9],   # knees at hip level (y≈350)
+            R_KNEE: [355, 360, 0.9],
+            L_ANKLE: [285, 470, 0.9],  # ankles still below knees
+            R_ANKLE: [355, 470, 0.9],
+        })
+        result = classify_action(kps)
+        assert result["action"] == "sitting"
+        assert result["confidence"] >= 0.7  # high — feet_forward confirmed
+
+    def test_sitting_with_ankles_hidden_uses_tighter_threshold(self):
+        """Knees clearly at hip level (within 40% of torso) AND ankles
+        hidden → lower-confidence sitting allowed."""
+        kps = make_keypoints({
+            L_KNEE: [285, 355, 0.9],   # very close to hip y=350
+            R_KNEE: [355, 355, 0.9],
+            L_ANKLE: [0, 0, 0.0],      # not visible
+            R_ANKLE: [0, 0, 0.0],
+        })
+        result = classify_action(kps)
+        assert result["action"] == "sitting"
+        assert result["confidence"] < 0.7  # lower than chair-with-ankles
+
+    def test_crouch_threshold_tighter_than_chair_pose(self):
+        """A chair-sitter has knee angle ≈ 90°. The crouch threshold was
+        loosened (120° → 100°) in the same fix; a 110° knee angle should
+        NOT trip the crouch branch."""
+        # Standing default has nearly-straight knee (~180°). Bend knees
+        # to ≈110° by moving the knee forward of the hip-ankle line.
+        kps = make_keypoints({
+            # Hip (290, 350), Knee (320, 460), Ankle (280, 570) gives
+            # knee angle ≈ 110° — between the old (120) and new (100) bar.
+            L_KNEE: [320, 460, 0.9],
+            R_KNEE: [350, 460, 0.9],
+        })
+        result = classify_action(kps)
+        assert result["action"] != "crouching", (
+            f"110° knee angle must not trip crouch (threshold tightened to "
+            f"<100°). Got {result['action']}. Details: {result['details']}"
+        )
