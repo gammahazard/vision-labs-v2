@@ -276,14 +276,17 @@ def run():
                             pass
 
                     # --- Run YOLO inference (vehicle classes only) ---
-                    t0 = time.time()
+                    # Monotonic clock — wall clock can step backward under NTP
+                    # correction on WSL2, producing negative inference_ms that
+                    # corrupts the Grafana panel.
+                    t0 = time.monotonic()
                     results = model.predict(
                         frame,
                         conf=current_confidence,
                         classes=VEHICLE_CLASSES,
                         verbose=False,
                     )
-                    inference_ms = (time.time() - t0) * 1000
+                    inference_ms = (time.monotonic() - t0) * 1000
 
                     # --- Build detection list ---
                     detections = []

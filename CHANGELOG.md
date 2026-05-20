@@ -11,6 +11,10 @@ Images for each tagged release are published to GitHub Container Registry at `gh
 - `install-linux.sh` defaults to pulling from GHCR; `--build` flag for forkers.
 - Orchestrator threads `EXTRA_COMPOSE_FILES` through every `docker compose` call so registry-pull installs keep pulling when adding cam2–cam20 from the dashboard.
 - README Quick install section now mentions `--build` + `IMAGE_TAG=vX.Y` pinning.
+- README architecture diagram converted to native GitHub Mermaid; added centered "Live metrics" section with a Grafana GIF.
+
+### Fixed
+- Pose + vehicle detectors used wall clock (`time.time()`) for inference duration, so NTP corrections on WSL2 host-resume could produce negative `inference_ms` values that pulled the Grafana "YOLO Inference Time" mean below zero (visible as -2s spikes / -7.25s means on hour-zoom views). Switched both detectors to `time.monotonic()`. Requires rebuilding the affected detector images.
 
 ## [0.1.1] — 2026-05-20
 

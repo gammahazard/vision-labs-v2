@@ -358,9 +358,12 @@ def run():
                         pass  # Keep current value on error
 
                 # Run YOLO inference
-                t_start = time.time()
+                # Use monotonic, not wall clock — time.time() can step backward
+                # under NTP corrections on WSL2 host-resume, producing negative
+                # inference_ms values that pull the Grafana mean below zero.
+                t_start = time.monotonic()
                 results = model(frame, conf=current_confidence, verbose=False)
-                inference_time = time.time() - t_start
+                inference_time = time.monotonic() - t_start
 
                 # Format detections (with keypoint quality filter)
                 detections = format_detections(
