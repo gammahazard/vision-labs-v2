@@ -1045,7 +1045,7 @@ async function _refreshDvrRetentionNote() {
         if (typeof snap === 'number') parts.push(`event snapshots <strong>${snap} days</strong>`);
         if (typeof clip === 'number') parts.push(`AI/Telegram clips <strong>${clip} days</strong>`);
         note.innerHTML = parts.length
-            ? `🗑️ Retention: ${parts.join(' · ')}. <span style="opacity:0.7;">Configure in .env (RETENTION_DAYS / SNAPSHOT_RETENTION_DAYS / CLIP_RETENTION_DAYS).</span>`
+            ? `🗑️ Retention: ${parts.join(' · ')}. <span style="opacity:0.7;">Change these in the Settings panel on the home page.</span>`
             : '';
     } catch (e) {
         note.textContent = '';
