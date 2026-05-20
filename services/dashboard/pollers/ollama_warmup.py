@@ -32,9 +32,15 @@ logger = logging.getLogger("dashboard.ollama_warmup")
 
 
 async def warm_ollama():
-    """Pull and warm the chat model. Saves the warm-up exchange to ai.db."""
+    """Pull and warm the chat model. Saves the warm-up exchange to ai.db.
+
+    Also pulls the vision model (MiniCPM-V) if VISION_MODEL is set, so first-
+    run Telegram alerts that need an auto-scene-description don't fail with
+    'model not found'. Vision model gets a download-only pass — no warm-up
+    chat, since it's only invoked on-demand from /analyze and alert handlers.
+    """
     import ollama as ollama_lib
-    from constants import CHAT_MODEL, OLLAMA_HOST, OLLAMA_KEEP_ALIVE
+    from constants import CHAT_MODEL, VISION_MODEL, OLLAMA_HOST, OLLAMA_KEEP_ALIVE
     from routes.ai import set_gpu_ready_flag
 
     host = OLLAMA_HOST
@@ -45,6 +51,9 @@ async def warm_ollama():
         # Signal "ready" so /api/ai/status reports a stable state rather than
         # an infinite "warming up" the UI would display.
         set_gpu_ready_flag(True)
+        # Vision model can still be pulled even when chat is disabled (some tiers
+        # turn off Qwen but keep MiniCPM-V for Telegram alert descriptions).
+        await _ensure_vision_model(host, VISION_MODEL)
         return
 
     await asyncio.sleep(10)  # Wait for other GPU services to finish CUDA init
@@ -104,3 +113,36 @@ async def warm_ollama():
                 _ai_db.save_message("assistant", "⚠️ Model is still loading — it will be ready when you send your first message.")
     except Exception as e:
         logger.warning(f"Failed to pull AI model: {e} (AI chat will be unavailable until model is pulled)")
+
+    # Pull the vision model on the same first-boot pass. Skipping warm-up:
+    # vision models are called only from /analyze and Telegram alert handlers
+    # (not the chat keep-alive loop), so forcing it into VRAM now would just
+    # evict the chat model we just loaded.
+    await _ensure_vision_model(host, VISION_MODEL)
+
+
+async def _ensure_vision_model(host: str, model: str):
+    """Download the vision model if it isn't already cached on this Ollama volume.
+
+    No-op when VISION_MODEL is empty (a tier with vision disabled, e.g. small).
+    Errors here are logged but never raised — vision is non-critical, the
+    detector pipeline keeps running without it.
+    """
+    if not model:
+        logger.info("VISION_MODEL is empty — vision scene descriptions disabled; skipping vision pull")
+        return
+    try:
+        import ollama as ollama_lib
+        client = ollama_lib.Client(host=host)
+        loop = asyncio.get_event_loop()
+        models = await loop.run_in_executor(None, client.list)
+        names = [m.model for m in models.models] if models.models else []
+        target = model.split(":")[0]
+        if any(target in name for name in names):
+            logger.info(f"Vision model '{model}' already available")
+            return
+        logger.info(f"Pulling vision model '{model}' (~5 GB, first-time download)...")
+        await loop.run_in_executor(None, client.pull, model)
+        logger.info(f"Vision model '{model}' downloaded successfully")
+    except Exception as e:
+        logger.warning(f"Failed to pull vision model '{model}': {e} (auto-scene-descriptions will be unavailable until pulled)")
