@@ -13,8 +13,7 @@ Each of these is one node:
 - Each loose `.py` file directly under `services/dashboard/routes/` — one node per file.
 - `services/dashboard/pollers/` as one node.
 - `services/dashboard/helpers/` as one node.
-- `services/dashboard/{cameras.py, server.py, websocket.py, ai_db.py, ai_state.py, ai_prompts.py, event_renderer.py, constants.py}` — one node per file (loose dashboard files).
-- `services/tracker/core/` — one node (the tracker's core package).
+- `services/dashboard/{cameras.py, server.py, websocket.py, ai_db.py, event_renderer.py, constants.py}` — one node per file (loose top-level dashboard files; `type` = `dashboard_internal`). NOTE: `routes/ai_state.py` and `routes/ai_prompts.py` are covered by the loose-route-files bullet above, not this one.
 
 ## Output schema
 
