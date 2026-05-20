@@ -53,11 +53,12 @@ For each concern in `{{concerns}}`, apply the corresponding check:
 For each file in `{{paths}}`:
 1. Read the file.
 2. List its `import` and `from X import Y` lines.
-3. For each imported name, grep the same file (excluding the import line itself) for usage. If zero hits → finding.
+3. For each imported name, grep the same file with **word-boundary match** (`grep -wn '<name>' <file>`, excluding the import line itself) for usage. If zero hits → finding. For `from X import Y, Z` forms, grep each name independently — a hit on `Y` does NOT vouch for `Z`. Substring matches do NOT count: `grep datetime` hitting `datetime.datetime` does not mean the `from datetime import datetime` import is used (the line is using the module form, not the imported class).
 4. Cite: the import line + the grep result ("no usage found in services/X/Y.py").
 
 ### `unused_functions`
 For each function `def foo(...)` defined in a file under `{{paths}}` and not prefixed with `_` (public):
+0. Read the file's decorators. If a function is decorated with `@router.*`, `@app.*`, or registered via `add_api_route(...)`, skip it — FastAPI invokes route handlers by URL match, not by name, so a repo-wide grep will never find a caller. Also skip functions defined in files that import `from fastapi import` at the top level if the function is otherwise unprefixed (they're presumed to be route-related).
 1. grep the entire repo for `foo` (use Bash + grep `-rn`).
 2. If zero hits outside the definition site → finding.
 3. Exclude functions named `main`, `app`, or starting with `_cmd_` / `_tool_` (those are entry points, often referenced by string).
@@ -83,7 +84,7 @@ Each is a finding.
 
 ### `security_smell`
 Scan files in `{{paths}}` for:
-- Hardcoded secret patterns: regex matches for `password\s*=\s*['"]\w`, `api_key\s*=\s*['"]`, `token\s*=\s*['"]`, anything that looks like a literal credential.
+- Hardcoded secret patterns: literal credentials assigned in source. Look for `password\s*=\s*['"]\S{8,}`, `api_key\s*=\s*['"]\S{16,}`, `token\s*=\s*['"]\S{16,}`, `REDIS_PASSWORD\s*=\s*['"]\S{8,}`. The `\S{N,}` minimum lengths cut false positives on `password = ""` (empty defaults) and `token = "x"` (placeholders). **Skip matches where the value is an `os.getenv(...)`, `os.environ[...]`, or `os.environ.get(...)` call — those are env-var reads, not hardcoded secrets.**
 - SQL string concat: `f"SELECT ... {var}"` or `"SELECT ... " + var`.
 - Shell concat: `subprocess.run(f"... {var}")` without `shell=False` + list args.
 - Auth bypass: any HTTP route handler that doesn't go through the existing auth path (compare against existing `validate_session` usage patterns in `routes/`).
@@ -91,7 +92,7 @@ Scan files in `{{paths}}` for:
 
 ### `resource_leak`
 Find:
-- `r = redis.Redis(...)` or similar that's not used with `with` and not stored in a long-lived attribute.
+- `r = redis.Redis(...)` OR `r = make_redis_client(...)` (the project's wrapper, defined in `contracts/redis_client.py`) — if not used with `with` and not stored as a long-lived attribute. The May 2026 `build_clip` Redis-client leak (CHANGELOG.md `[Unreleased]` Fixed) is exactly this class.
 - `open(...)` without `with`.
 - `Lock.acquire()` without a matching `release()` in `finally`.
 
@@ -124,17 +125,17 @@ Emit zero blocks if no findings in this group. Do NOT emit a "nothing found" pla
 
 ## Examples
 
-**dead_imports example:**
+**dead_imports example** (synthetic — illustrates output format; the path/line are placeholders):
 ```markdown
-### info — Unused import `from datetime import datetime` in routes/ai_tools/_shared.py
+### info — Unused import `from datetime import datetime` in example/module.py
 
 - **Concern:** dead_imports
-- **File:** `services/dashboard/routes/ai_tools/_shared.py:8`
+- **File:** `example/module.py:8`
 - **Excerpt:**
   ```python
   from datetime import datetime
   ```
-- **Suggested action:** Remove the import (grep across this file found 0 usages of `datetime`).
+- **Suggested action:** Remove the import (grep -wn datetime in `example/module.py` found 0 usages outside the import line).
 ```
 
 **security_smell example:**
