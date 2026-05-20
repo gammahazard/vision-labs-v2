@@ -51,6 +51,14 @@ Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubun
 
 The first-run wizard handles hardware detection, GPU tier recommendation, ONVIF camera discovery, location + retention, and Telegram pairing — about 90 seconds end-to-end.
 
+### Live metrics
+
+<p align="center">
+  <img src="docs/images/grafana-live.gif" alt="Grafana System Monitor with live inference, VRAM, and stream metrics" width="800" />
+</p>
+
+The embedded Grafana panel pulls from a Prometheus scrape of every service in the stack: YOLO inference latency per camera, Redis stream lengths, VRAM usage, GPU utilization + temperature + power, and Redis op rate. Captured here on real cam1/cam2 traffic.
+
 ---
 
 ## What you get
@@ -67,17 +75,28 @@ The first-run wizard handles hardware detection, GPU tier recommendation, ONVIF 
 
 ## Architecture at a glance
 
-```
-Camera (RTSP) ──▶ Ingester ──▶ Redis Streams ──▶ Detectors (pose + vehicle + face)
-                                              ──▶ Tracker ──▶ Events
-                                              ──▶ Dashboard (WebSocket + REST)
-                                                       │
-                                                       ├─▶ Browser
-                                                       ├─▶ Telegram Bot
-                                                       └─▶ AI Assistant (Ollama)
+```mermaid
+flowchart LR
+    Cam["📷 RTSP cameras<br/>cam1 – cam20"] --> Ing["camera-ingester<br/>(one per slot)"]
+    Ing -->|frames stream| R[(Redis Streams<br/>bus)]
+    R --> Pose["pose-detector<br/>YOLOv8s-pose"]
+    R --> Veh["vehicle-detector<br/>YOLOv8s"]
+    R --> Face["face-recognizer<br/>InsightFace buffalo_l"]
+    R --> Rec["recorder<br/>1h MPEG-TS"]
+    Pose & Veh & Face -->|detections| R
+    R --> Track[tracker]
+    Track -->|events| R
+
+    R --> Dash["dashboard<br/>FastAPI + WebSocket"]
+    Dash <-->|chat + 19 tools| Oll["Ollama<br/>Qwen 3 14B + MiniCPM-V"]
+    Dash --> Web["🌐 Browser"]
+    Dash --> Bot["📲 Telegram bot"]
+
+    Dash -.cameras:events pub/sub.-> Orch["orchestrator<br/>(holds Docker socket)"]
+    Orch -.docker compose --profile camN up/down.-> Ing
 ```
 
-Adding a camera in the UI = upsert into `cameras:registry` + a pub/sub trigger. The orchestrator hears it and brings the slot's services up via `docker compose --profile camN up -d`. The dashboard itself never touches the Docker socket.
+The dashboard never touches the Docker socket — only the orchestrator does. Adding a camera in the UI is just an upsert into `cameras:registry` + a pub/sub trigger; the orchestrator reconciles and brings the slot's services up via `docker compose --profile camN up -d`. Bounding the Docker permission to a single service is the most important security choice in this design.
 
 For the full data flow and per-service responsibilities, see **[DETAILED_README.md §3](DETAILED_README.md#3-service-map)** and **[CONTEXT.md](CONTEXT.md)**.
 
