@@ -10,7 +10,7 @@ scope: project-local skill in vision-labs/.claude/skills/audit-repo/
 
 ## 1. Purpose
 
-A project-local Claude Code skill, invoked via `/audit-repo`, that fans out subagents to audit the vision-labs codebase across four tracks: **documentation drift**, **code quality**, **architectural mapping**, and **schema/contract drift between services**. Each track produces a markdown report under `audits/` at the repo root.
+A project-local Claude Code skill, invoked via `/audit-repo`, that fans out subagents to audit the vision-labs codebase across four tracks: **documentation drift**, **code quality**, **architectural mapping**, and **schema/contract drift between services**. Each track produces a markdown report under `audits/` at the repo root, plus a unified `audits/SUMMARY.md` entry point with top-line counts, the highest-severity findings across all tracks, and methodology disclosure.
 
 The skill's single most important property is that **no finding is ever asserted without file:line evidence read in the same conversation**. Verifiers reread code before making claims; "general knowledge" of the codebase is explicitly disallowed.
 
@@ -55,6 +55,11 @@ Orchestrator assembles per-track reports verbatim + writes top summary + severit
    │
    ▼
 audits/drift.md, audits/quality.md, audits/architecture.md, audits/schema-drift.md
+   │
+   ▼
+Orchestrator re-reads the four track reports (or in-memory results) and
+produces a unified audits/SUMMARY.md with cross-track top findings,
+methodology block, and skill-wide skip list.
 ```
 
 ## 4. File layout
@@ -80,11 +85,14 @@ audits/drift.md, audits/quality.md, audits/architecture.md, audits/schema-drift.
 ### Files this skill produces (gitignored)
 
 ```
+audits/SUMMARY.md            ← cross-track entry point: methodology + scope + top findings
 audits/drift.md
 audits/quality.md
 audits/architecture.md
 audits/schema-drift.md
 ```
+
+`audits/SUMMARY.md` is the file a reader opens first. It contains methodology and the skill-wide scope statement once (not repeated in every per-track report), plus a severity-sorted top-10 cross-track finding list with links into the per-track reports.
 
 `audits/` is added to `.gitignore`. Reports are local diagnostics; if a user wants history they can keep them out of git or re-track per their preference.
 
@@ -107,9 +115,9 @@ audits/schema-drift.md
 **Contents:**
 - Frontmatter: `name: audit-repo`, `description: <wording that does NOT auto-trigger on casual mentions of "audit">`.
 - The five hard rules in a HARD-RULES block (so any agent reading this file gets the invariants).
-- The orchestration directive: spawn the 4 mappers in parallel using the Agent tool, wait, route, spawn verifiers in parallel, assemble.
+- The orchestration directive: spawn the 4 mappers in parallel using the Agent tool, wait, route, spawn verifiers in parallel, assemble per-track reports, then assemble the unified `SUMMARY.md`.
 - Explicit relative-path pointers to the 8 mapper/verifier files.
-- A reminder to the orchestrator that **its only job is fan-out and verbatim assembly**, not summarization.
+- A reminder to the orchestrator that **its only job is fan-out and verbatim assembly**, not summarization of finding *content* — the SUMMARY's top-10 list is mechanical severity-sort + extraction of finding titles, never paraphrase.
 
 **Reads:** Nothing at runtime; its body is instructions the main session executes.
 
@@ -303,7 +311,7 @@ Every verifier prompt opens with this preamble verbatim:
 
 ### Track-specific extras
 
-**Drift verifier rules 6-7:**
+**Drift verifier rules 6-9:**
 
 ```
 6. CONFIRM THE DOC SAYS WHAT WE THINK IT SAYS (self-citation gate)
@@ -318,6 +326,24 @@ Every verifier prompt opens with this preamble verbatim:
    If {{type}} is "behavioral", emit UNVERIFIED with reason
    "behavioral — needs manual test." Do not infer behavior from
    static code structure.
+
+8. SEVERITY ON EVERY DRIFT FINDING
+   critical = a feature/contract documented that does not exist
+              in code, or vice versa (will confuse users / breaks
+              an external promise)
+   warning  = wrong-count, wrong-type, wrong-path drift (line
+              number off, count off, file moved)
+   info     = typographic / formatting drift (a stale "around line N"
+              that's drifted by ±3 lines but still close to truth)
+   Default to a higher severity when unsure; auditor catching a real
+   bug at the cost of mild noise is the right trade-off.
+
+9. SUGGESTED ACTION ON EVERY DRIFT BLOCK
+   Emit a one-line `Suggested action` field proposing either side
+   ("update doc to match code" / "update code to match doc"). When
+   the verifier cannot determine which is the source of truth, say
+   so explicitly: "ambiguous — pick based on intent." Never silently
+   omit this field.
 ```
 
 **Quality auditor rules 6-7:**
@@ -338,7 +364,7 @@ Every verifier prompt opens with this preamble verbatim:
    Pick exactly one. Default to a lower severity when unsure.
 ```
 
-**Architecture tracer rules 6-7:**
+**Architecture tracer rules 6-8:**
 
 ```
 6. EVERY EDGE NEEDS A GREP HIT
@@ -349,9 +375,18 @@ Every verifier prompt opens with this preamble verbatim:
 7. PRODUCERS AND CONSUMERS BOTH NEED EVIDENCE
    "X is read by [Y, Z]" requires repo-wide grep showing the
    reads. Don't infer from naming.
+
+8. NOTES CARRY SEVERITY PREFIXES
+   The block itself is a mapping (not a finding), so no severity at
+   the block level. But the `Notes` field can contain flagged items
+   — when it does, prefix each note with [critical:], [warning:], or
+   [info:]. Examples:
+     [warning: size_too_large — 1240 lines, exceeds CLAUDE.md §6 1000-line guideline]
+     [info: no callers found in repo — possibly dead module]
+     [critical: imports from services.X, but services.X has been deleted]
 ```
 
-**Schema-drift verifier rules 6-7:**
+**Schema-drift verifier rules 6-8:**
 
 ```
 6. FIELD EVIDENCE IS LITERAL
@@ -362,6 +397,18 @@ Every verifier prompt opens with this preamble verbatim:
 7. CASE-SENSITIVE EXACT MATCH
    "keypoints" != "keyPoints" != "key_points". A field name
    mismatch is a DRIFT finding, not a soft-warning.
+
+8. SEVERITY ON EVERY SCHEMA-DRIFT FINDING
+   critical = a consumer reads a field name that no producer writes
+              (will hit KeyError / "field not in entry" at runtime;
+              this is the bot_commands-May-2026 class of bug)
+   warning  = a consumer reads a field that some producers write
+              but others don't (intermittent failure depending on
+              which producer last wrote)
+   info     = a producer writes a field that no consumer reads
+              (dead field — wasted Redis memory, not a bug)
+   MATCH (no severity) when all consumer-expected fields are
+   produced by all producers and there are no dead fields.
 ```
 
 ## 7. Output report structure
@@ -405,13 +452,16 @@ Idempotency hint: run /audit-repo again — bodies (modulo timestamp + SHA) shou
 ### Drift verifier finding block format
 
 ```markdown
-### MATCH | DRIFT | UNVERIFIED — <one-line summary>
+### <Severity> | <Outcome> — <one-line summary>
+(Severity is one of: critical, warning, info — omitted for MATCH.
+ Outcome is one of: MATCH, DRIFT, UNVERIFIED.)
 
 - **Claim source:** `<doc_path>:<doc_line>`
 - **Claim:** <claim_text>
 - **Type:** structural | behavioral
 - **Checked against:** `<file:line>` (or "n/a" if UNVERIFIED)
 - **Evidence:** <one line of what you found, or "behavioral — see manual-verify">
+- **Suggested action:** <one-line proposal — see drift verifier rule 9>
 ```
 
 ### Quality verifier finding block format
@@ -443,14 +493,96 @@ Idempotency hint: run /audit-repo again — bodies (modulo timestamp + SHA) shou
 ### Schema-drift verifier block format
 
 ```markdown
-### MATCH | DRIFT | INFO — <contract_id>
+### <Severity> | <Outcome> — <contract_id>
+(Severity per rule 8: critical / warning / info / omitted-for-MATCH.
+ Outcome: MATCH, DRIFT, or INFO.)
 
 - **Kind:** stream | hash | key | sql
 - **Producers:** <list with file:line + field names>
 - **Consumers:** <list with file:line + field names>
-- **Mismatched fields:** [<consumer field not in any producer>]
+- **Mismatched fields (critical/warning):** [<consumer field not in any producer, or written by only some>]
 - **Dead fields (info):** [<producer field not read by any consumer>]
 ```
+
+### `audits/SUMMARY.md` format
+
+Generated by the orchestrator AFTER all 4 per-track reports are written. The orchestrator either re-reads the 4 files or uses in-memory verifier results. The SUMMARY is the entry point: methodology and the skill-wide scope statement live here once, not in every per-track report.
+
+```markdown
+# /audit-repo summary — YYYY-MM-DD HH:MM UTC
+Commit: <SHA>
+
+## Methodology
+Verifiers Read evidence files before reporting; memory is not evidence.
+UNVERIFIED is a first-class outcome — used when claims are ambiguous,
+behavioral, or evidence is missing. Re-running /audit-repo should
+produce bodies that are byte-identical modulo timestamp + commit SHA;
+divergence between runs indicates a prompt bug, not new findings.
+See the spec at docs/superpowers/specs/2026-05-20-audit-repo-skill-design.md
+for the full set of verifier hard rules.
+
+## Scope
+**Audited in this run:**
+- `CONTEXT.md`, `CLAUDE.md`, `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`,
+  `DETAILED_README.md` (drift)
+- Every `.py` file under `services/`, `contracts/`, `tests/` (quality, architecture, schema-drift)
+- `docker-compose.yml` (size + slot enumeration only)
+
+**Not audited by this skill:**
+- Dockerfiles (no integrated linter)
+- `.github/workflows/*` (workflow syntax not checked here)
+- `services/*/requirements.txt` (no CVE / outdated-version pass)
+- `services/dashboard/static/**` JavaScript and CSS (not in Python audit lens)
+- Compose YAML beyond size + slot enumeration
+
+## Top-line counts
+- **Drift report:**        N1 claims (S structural, B behavioral). DRIFT: X1 critical, X2 warning, X3 info. UNVERIFIED: U1. Manual-verify: M1.
+- **Quality report:**      Q1 critical, Q2 warning, Q3 info findings across N2 file groups.
+- **Architecture report:** N3 nodes mapped. Flagged notes: A1 critical, A2 warning, A3 info.
+- **Schema-drift report:** S1 critical mismatches, S2 warning mismatches, S3 dead fields.
+
+## Top 10 findings (severity-sorted across all four tracks)
+1. **critical** [drift]    <one-line title>  → audits/drift.md "<block heading>"
+2. **critical** [schema]   <one-line title>  → audits/schema-drift.md "<block heading>"
+3. **warning**  [quality]  <one-line title>  → audits/quality.md "<block heading>"
+... up to 10 ...
+
+## Health snapshot (one line per track)
+- Drift:        <state>
+- Quality:      <state>
+- Architecture: <state>
+- Schema:       <state>
+
+## Next steps
+- Open audits/drift.md, audits/quality.md, audits/architecture.md, audits/schema-drift.md to see full findings + every block's evidence.
+- For DRIFT findings, decide whether the doc or the code is the source of truth (the per-block "Suggested action" line proposes both options).
+- For critical/warning quality findings, prioritize fixes; info-level is style.
+- For schema-drift findings, treat critical as runtime-bug class (same family as the May-2026 bot_commands NameError regression).
+- If this is the first run after installing the skill, also run the four meta-validation checks in §11 of the spec to confirm the skill is working.
+
+## Idempotency hint
+Run /audit-repo again. SUMMARY.md and the four track reports should
+have byte-identical bodies modulo timestamp + commit SHA. Divergence
+between runs indicates a prompt bug.
+```
+
+### Per-track report header (post-SUMMARY introduction)
+
+Because SUMMARY.md carries methodology + skill-wide scope, each per-track report's header is compact:
+
+```markdown
+# <Track> Audit — YYYY-MM-DD HH:MM UTC
+Commit: <SHA>
+Track scope: <one line specific to this track>
+Methodology: see `audits/SUMMARY.md`.
+
+## Summary
+(counts as before)
+
+## Findings ...
+```
+
+So the per-track skeleton shown above is updated to drop the "Methodology" and "Skill-wide scope" sections — they live in SUMMARY.md.
 
 ## 8. Data flow (full run)
 
@@ -481,14 +613,27 @@ T=~2-4m  Verifiers return finding blocks.
          Crashed/timeout verifiers → "UNVERIFIED — verifier crashed" block.
 
 T=~4m    Assemble per-track:
-         - frontmatter (commit_sha, timestamp, counts)
+         - frontmatter (commit_sha, timestamp, track scope line, counts)
          - severity-sorted body
          - manual-verify section (drift only)
          - folded MATCH/Info section
          - write audits/<track>.md (overwrites)
 
-T=~4m    User-facing message: "4 audit reports written. Drift: X DRIFT.
-         Quality: X critical / Y warning. Architecture: N nodes mapped.
+T=~4m    Assemble SUMMARY.md:
+         - frontmatter (commit_sha, timestamp)
+         - Methodology block (3 lines + pointer to spec)
+         - Scope block (skill-wide audited + not-audited list)
+         - Top-line counts pulled from the 4 per-track summaries
+         - Top-10 findings, severity-sorted across all tracks, with
+           track-tag + link to per-track block heading
+         - Health snapshot (one line per track)
+         - Next steps
+         - Idempotency hint
+         - Write audits/SUMMARY.md (overwrites)
+
+T=~4m    User-facing message: "5 audit reports written. Open
+         audits/SUMMARY.md first. Drift: X DRIFT. Quality:
+         X critical / Y warning. Architecture: N nodes mapped.
          Schema-drift: X mismatches."
 ```
 
@@ -503,6 +648,7 @@ T=~4m    User-facing message: "4 audit reports written. Drift: X DRIFT.
 | `audits/` doesn't exist | Orchestrator creates it before writing. |
 | `expected_evidence_path` doesn't exist | This is a real finding: verifier returns `UNVERIFIED — evidence file missing` (catches drift where docs reference a deleted file). |
 | `>150` claims from drift mapper | Soft brake — orchestrator asks user to proceed before fan-out (insurance against mapper hallucinating a wall of claims). |
+| SUMMARY.md assembly fails (orchestrator error parsing a track report, etc.) | Per-track reports are still good. Orchestrator writes a stub `audits/SUMMARY.md` with a one-line failure note + pointers to each per-track file. Stub is intentionally non-empty so future runs detect "the last run failed at the summary step." |
 
 ## 10. Cost expectations
 
@@ -541,8 +687,19 @@ The orchestrator emits an `Idempotency hint` line in every report's frontmatter 
 
 ## 13. Open items (not blocking design approval)
 
+**To resolve at implementation time:**
+
 - **Concrete prompt wording** for each mapper/verifier `.md` file — drafted during implementation, not here. The contracts in §5-7 are what implementation must satisfy.
 - **Soft-brake threshold (150 claims)** is a placeholder — could tune up/down after first few runs.
 - **Schema-drift mapper's field-name extraction heuristic** — vision-labs uses both positional and keyword forms of `r.xadd(...)`. Mapper needs to handle both. Specific parsing rules drafted at implementation time.
 - **Pre-existing markdown collapsibles vs frontmatter HTML** — current spec uses `<details>`. If markdown renderers vary, may switch to a different fold mechanism. Low priority.
-- **Whether to add a fifth "performance" track** in the future — deferred per design discussion (lowest signal, defer until concrete need surfaces).
+
+**Deferred to v2 (not in this skill yet):**
+
+- **Cross-track correlations** — when drift says "CONTEXT.md asserts tracker reads detections:pose" AND architecture says "tracker does NOT read detections:pose", these are the same bug. v1 lists both; v2 could correlate and emit a unified finding in SUMMARY.md's Top-10.
+- **Stable finding IDs** — `DRIFT-7a3f9b` as a hash of `(track, claim_text, file_path)` so the same finding has the same ID across runs. Lets the user say "is DRIFT-7a3f9b still open?" v1 has no IDs; v2 could add.
+- **Reproduction commands** per finding — literal `sed -n '82p' file.py` or `grep -n pattern file` invocations the reader can paste. v1 cites file:line only.
+- **False-positive suppression file** — a `.audit-ignore` style file where the user can mark "this DRIFT finding is intentional, skip on future runs." Not needed for solo vision-labs work; add if it becomes painful.
+- **Fifth "performance" track** — O(n²) loops, unbounded streams, memory growth. Deferred per design discussion (lowest signal-to-noise; revisit only on concrete need).
+
+**v2 enhancements should preserve all v1 invariants** — the "no finding without file:line evidence Read in this conversation" rule, the self-citation gate, the methodology/scope disclosure, the idempotency property. Adding features that weaken these defeats the purpose of the skill.
