@@ -146,3 +146,288 @@ services:
   recorder-cam5:
     image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
     build: !reset null
+
+  camera-ingester-cam6:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam6:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam6:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam6:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam6:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam6:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam7:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam7:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam7:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam7:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam7:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam7:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam8:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam8:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam8:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam8:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam8:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam8:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam9:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam9:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam9:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam9:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam9:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam9:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam10:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam10:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam10:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam10:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam10:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam10:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam11:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam11:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam11:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam11:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam11:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam11:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam12:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam12:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam12:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam12:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam12:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam12:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam13:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam13:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam13:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam13:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam13:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam13:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam14:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam14:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam14:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam14:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam14:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam14:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam15:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam15:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam15:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam15:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam15:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam15:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam16:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam16:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam16:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam16:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam16:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam16:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam17:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam17:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam17:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam17:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam17:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam17:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam18:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam18:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam18:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam18:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam18:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam18:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam19:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam19:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam19:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam19:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam19:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam19:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
+
+  camera-ingester-cam20:
+    image: ghcr.io/gammahazard/vision-labs/camera-ingester:${IMAGE_TAG:-latest}
+    build: !reset null
+  pose-detector-cam20:
+    image: ghcr.io/gammahazard/vision-labs/pose-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-detector-cam20:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-detector:${IMAGE_TAG:-latest}
+    build: !reset null
+  tracker-cam20:
+    image: ghcr.io/gammahazard/vision-labs/tracker:${IMAGE_TAG:-latest}
+    build: !reset null
+  face-recognizer-cam20:
+    image: ghcr.io/gammahazard/vision-labs/face-recognizer:${IMAGE_TAG:-latest}
+    build: !reset null
+  recorder-cam20:
+    image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
+    build: !reset null
