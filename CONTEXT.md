@@ -684,7 +684,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 The AST-driven splits walked top-level defs but did NOT follow the call graph or module-level name references. Two regression incidents:
 
 1. **`_load_jsonl_journal` lost from `query_events_by_date`** (2026-05-19) — past-date queries crashed silently inside tool results. Soft-failure UX masked the bug for a week. Fix: restored the helper + added `tests/test_ai_tools_no_nameerror.py` (21 tests, one per tool).
-2. **Six bot commands lost module-level imports** (2026-05-20) — `/events`, `/status`, `/analyze`, `/ask`, `/timelapse` lost `make_redis_client`, `REDIS_HOST/PORT`, `OLLAMA_*`, `SNAPSHOT_DIR`; `/clip` lost cross-module `_extract_clip_frames` + `_describe_scene_multi` from `analyze.py`. Surfaced as NameError when users invoked the commands. Fix: routed all shared constants through `bot_commands/_shared.py` and added each name to its consuming file's import list. **Known follow-up: write `test_bot_commands_no_nameerror.py` to mirror the ai_tools regression test.**
+2. **Six bot commands lost module-level imports** (2026-05-20) — `/events`, `/status`, `/analyze`, `/ask`, `/timelapse` lost `make_redis_client`, `REDIS_HOST/PORT`, `OLLAMA_*`, `SNAPSHOT_DIR`; `/clip` lost cross-module `_extract_clip_frames` + `_describe_scene_multi` from `analyze.py`. Surfaced as NameError when users invoked the commands. Fix: routed all shared constants through `bot_commands/_shared.py` and added each name to its consuming file's import list. Regression guard: `tests/test_bot_commands_no_nameerror.py` (added 2026-05-20) — captures `send_text` calls and asserts no regression-class error text leaks through the try/except wrappers that originally hid the bug.
 
 See CLAUDE.md §0 for the canonical lesson.
 
@@ -757,10 +757,9 @@ Qwen 3 14B is the model ceiling on a single-host install — no swap to larger m
 - `scripts/prometheus-clean-stale-cameras.sh` — tombstone stale-camera Prom labels
 
 ### Tests
-- 279 tests, 0 quarantined as of 2026-05-20. Run via `source .venv-test/bin/activate && pytest -q`.
-- `tests/` files: `test_actions.py`, `test_ai_tool_aggregations.py`, `test_ai_tools_no_nameerror.py` (R3-split regression guard for ai_tools), `test_face_db.py`, `test_notifications.py`, `test_routes.py`, `test_scene_analysis.py`, `test_time_rules.py`, `test_tracker.py`, `test_vehicles.py`.
+- 302 tests, 0 quarantined as of 2026-05-20. Run via `source .venv-test/bin/activate && pytest -q`.
+- `tests/` files: `test_actions.py`, `test_ai_tool_aggregations.py`, `test_ai_tools_no_nameerror.py` (R3-split regression guard for ai_tools), `test_bot_commands_no_nameerror.py` (R3-split regression guard for Telegram bot commands — includes a recorder that captures `send_text` calls and asserts no `"is not defined"`/`"has no attribute"`/`"cannot import name"` text leaks through a try/except-wrapped NameError), `test_face_db.py`, `test_notifications.py`, `test_routes.py`, `test_scene_analysis.py`, `test_time_rules.py`, `test_tracker.py`, `test_vehicles.py`.
 - `FakeRedis` (in `test_vehicles.py`) is the standard stub. Tests use host Python 3.12; container is 3.11.
-- Known follow-up: `test_bot_commands_no_nameerror.py` to mirror the ai_tools pattern after the 2026-05-20 bot_commands NameError fixes — would catch the same regression class.
 
 ---
 

@@ -12,6 +12,7 @@ Images for each tagged release are published to GitHub Container Registry at `gh
 - Orchestrator threads `EXTRA_COMPOSE_FILES` through every `docker compose` call so registry-pull installs keep pulling when adding cam2–cam20 from the dashboard.
 - README Quick install section now mentions `--build` + `IMAGE_TAG=vX.Y` pinning.
 - README architecture diagram converted to native GitHub Mermaid; added centered "Live metrics" section with a Grafana GIF.
+- `tests/test_bot_commands_no_nameerror.py` — exhaustive smoke check covering every Telegram bot command handler + the dispatcher. Mirrors `test_ai_tools_no_nameerror.py`. Captures outbound Telegram messages and fails on regression-class signatures (`is not defined`, `has no attribute`, `cannot import name`), catching both bare exceptions AND try/except-wrapped NameErrors — the exact failure mode that hid the v0.1.1 bot_commands regression in production. Verified by temporarily dropping `make_redis_client` from `events.py` imports — test fails with the literal production error string.
 
 ### Fixed
 - Pose + vehicle detectors used wall clock (`time.time()`) for inference duration, so NTP corrections on WSL2 host-resume could produce negative `inference_ms` values that pulled the Grafana "YOLO Inference Time" mean below zero (visible as -2s spikes / -7.25s means on hour-zoom views). Switched both detectors to `time.monotonic()`. Requires rebuilding the affected detector images.
