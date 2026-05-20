@@ -281,63 +281,157 @@
     </nav>
 
     <div class="tg-page">
-        <h1><span>🔐</span> Telegram Access Manager</h1>
-        <p class="tg-subtitle">Manage who can interact with the Telegram bot. Approved users receive alerts and can send
-            commands.</p>
+        <h1><span>🔐</span> Telegram</h1>
+        <p class="tg-subtitle" id="tgPageSubtitle">Loading…</p>
 
-        <!-- ─── Approved Users ─── -->
-        <div class="tg-card">
-            <div class="tg-card-header">
-                <span class="tg-card-title">✅ Approved Users</span>
-                <span class="tg-card-badge tg-badge-green" id="userCount">0 users</span>
-            </div>
+        <!-- ─── Connect panel: shown when no bot token is configured ─── -->
+        <div id="tgConnectPanel" hidden>
+            <div class="tg-card">
+                <div class="tg-card-header">
+                    <span class="tg-card-title">📲 Connect Telegram</span>
+                </div>
 
-            <!-- Add user form -->
-            <div class="tg-add-form" style="margin-bottom: 1rem;">
-                <input type="text" id="addUserId" placeholder="Telegram User ID" pattern="[0-9]*" inputmode="numeric">
-                <input type="text" id="addChatId" placeholder="Chat ID (auto-filled from log)">
-                <input type="text" id="addUserName" placeholder="Display name">
-                <input type="text" id="addUsername" placeholder="@username (optional)">
-                <button class="tg-btn tg-btn-primary" onclick="addUser()">Add User</button>
-            </div>
+                <p style="margin-bottom: 12px;">
+                    Telegram turns your phone into a remote for the whole
+                    stack. From anywhere with data:
+                </p>
+                <ul style="margin: 6px 0 16px 18px; line-height: 1.7;">
+                    <li>Get instant snapshots + AI scene descriptions when something is detected</li>
+                    <li>Pull a live photo from any camera: <code>/snapshot</code></li>
+                    <li>Grab a 5-40s video clip: <code>/clip 15 driveway</code></li>
+                    <li>Ask the AI assistant: <code>/ask was anyone in the backyard tonight?</code></li>
+                    <li>Check who's currently in frame (<code>/who</code>), arm/disarm alerts (<code>/arm</code>)</li>
+                </ul>
 
-            <!-- Users table -->
-            <table class="tg-table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>User ID</th>
-                        <th>Chat ID</th>
-                        <th>Role</th>
-                        <th>Approved</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="usersBody">
-                    <tr>
-                        <td colspan="6" class="tg-empty">Loading...</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+                <!-- Substep 1: paste bot token -->
+                <div id="tgcStepToken" class="tgc-substep">
+                    <h3 style="margin-bottom: 8px;">1. Create your bot</h3>
+                    <ol style="margin: 0 0 12px 18px; line-height: 1.7;">
+                        <li>Open Telegram (mobile or desktop)</li>
+                        <li>Search for <strong><code>@BotFather</code></strong> and start a chat</li>
+                        <li>Send <code>/newbot</code></li>
+                        <li>Pick a name and username when prompted</li>
+                        <li>BotFather replies with a token like <code>123456:ABC...</code> — paste it below</li>
+                    </ol>
+                    <label style="display: block; margin-top: 8px;">
+                        <span style="font-weight: 600;">Bot token</span>
+                        <input type="text" id="tgcToken"
+                               placeholder="123456789:AAH..."
+                               style="width: 100%; padding: 8px; border-radius: 4px; margin-top: 4px; background: #0f172a; border: 1px solid #374151; color: #f1f5f9;"
+                               autocomplete="off">
+                    </label>
+                    <div id="tgcTokenStatus" class="rtsp-test-result" hidden style="margin-top: 10px;"></div>
+                    <div style="margin-top: 12px;">
+                        <button class="tg-btn tg-btn-primary" onclick="tgcValidateToken()">Validate token →</button>
+                    </div>
+                </div>
 
-        <!-- ─── Access Log ─── -->
-        <div class="tg-card">
-            <div class="tg-card-header">
-                <span class="tg-card-title">📋 Access Log</span>
-                <div style="display: flex; gap: 0.5rem; align-items: center;">
-                    <span class="tg-card-badge tg-badge-amber" id="logCount">0 entries</span>
-                    <button class="tg-btn tg-btn-danger tg-btn-small" onclick="clearLog()">Clear</button>
+                <!-- Substep 2: discover chat_id by waiting for a message -->
+                <div id="tgcStepDiscover" class="tgc-substep" hidden>
+                    <h3 style="margin-bottom: 8px;">2. Send a message to your bot</h3>
+                    <p>
+                        Open Telegram and send <strong>any message</strong>
+                        (or just <code>/start</code>) to your bot:
+                        <strong id="tgcBotMention">@yourbot</strong>
+                    </p>
+                    <p>
+                        We'll wait up to 30 seconds, then capture your chat ID
+                        so the bot knows where to send alerts.
+                    </p>
+                    <div id="tgcDiscoverStatus" class="rtsp-test-result" style="margin-top: 10px;">⏳ Waiting for your message…</div>
+                    <div style="margin-top: 12px; display: flex; gap: 8px;">
+                        <button class="tg-btn" onclick="tgcCancel()">Cancel</button>
+                        <button class="tg-btn tg-btn-primary" id="tgcRetryBtn" onclick="tgcDiscoverChatId()" hidden>Find me again →</button>
+                    </div>
+                </div>
+
+                <!-- Substep 3: confirmation -->
+                <div id="tgcStepDone" class="tgc-substep" hidden>
+                    <h3 style="margin-bottom: 8px;">3. All set</h3>
+                    <p>
+                        Connected as <strong id="tgcConfirmedName">…</strong>.
+                        A test message has been sent to your Telegram —
+                        check your phone to confirm. The dashboard is
+                        restarting (~10 seconds) so the bot's command
+                        poller picks up the new token.
+                    </p>
+                    <div style="margin-top: 12px;">
+                        <button class="tg-btn tg-btn-primary" onclick="window.location.reload()">Refresh page →</button>
+                    </div>
                 </div>
             </div>
+        </div>
 
-            <div class="tg-log-scroll" id="logScroll">
-                <div class="tg-empty">Loading access log...</div>
+        <!-- ─── Management panel: shown once Telegram is configured ─── -->
+        <div id="tgManagePanel" hidden>
+            <!-- ─── Bot status ─── -->
+            <div class="tg-card">
+                <div class="tg-card-header">
+                    <span class="tg-card-title">🤖 Bot connection</span>
+                    <span class="tg-card-badge tg-badge-green">Configured</span>
+                </div>
+                <p style="margin: 0 0 12px 0; color: #94a3b8;">
+                    To swap to a different bot or re-pair from a different
+                    Telegram account, run the connection flow again — the new
+                    token replaces the current one on save.
+                </p>
+                <button class="tg-btn" onclick="tgcStartReconnect()">🔁 Reconnect bot</button>
+            </div>
+
+            <!-- ─── Approved Users ─── -->
+            <div class="tg-card">
+                <div class="tg-card-header">
+                    <span class="tg-card-title">✅ Approved Users</span>
+                    <span class="tg-card-badge tg-badge-green" id="userCount">0 users</span>
+                </div>
+
+                <!-- Add user form -->
+                <div class="tg-add-form" style="margin-bottom: 1rem;">
+                    <input type="text" id="addUserId" placeholder="Telegram User ID" pattern="[0-9]*" inputmode="numeric">
+                    <input type="text" id="addChatId" placeholder="Chat ID (auto-filled from log)">
+                    <input type="text" id="addUserName" placeholder="Display name">
+                    <input type="text" id="addUsername" placeholder="@username (optional)">
+                    <button class="tg-btn tg-btn-primary" onclick="addUser()">Add User</button>
+                </div>
+
+                <!-- Users table -->
+                <table class="tg-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>User ID</th>
+                            <th>Chat ID</th>
+                            <th>Role</th>
+                            <th>Approved</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersBody">
+                        <tr>
+                            <td colspan="6" class="tg-empty">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- ─── Access Log ─── -->
+            <div class="tg-card">
+                <div class="tg-card-header">
+                    <span class="tg-card-title">📋 Access Log</span>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <span class="tg-card-badge tg-badge-amber" id="logCount">0 entries</span>
+                        <button class="tg-btn tg-btn-danger tg-btn-small" onclick="clearLog()">Clear</button>
+                    </div>
+                </div>
+
+                <div class="tg-log-scroll" id="logScroll">
+                    <div class="tg-empty">Loading access log...</div>
+                </div>
             </div>
         </div>
     </div>
 
-    <script src="js/pages/telegram.js?v=2"></script>
+    <script src="js/pages/telegram.js?v=3"></script>
     <script src="js/core/nav.js?v=4"></script>
 </body>
 

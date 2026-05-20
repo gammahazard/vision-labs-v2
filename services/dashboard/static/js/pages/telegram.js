@@ -1,21 +1,187 @@
 /**
  * telegram_access.js — Frontend logic for the Telegram Access Manager.
  *
- * Manages:
- *  - Loading and displaying approved users
- *  - Adding / revoking users
- *  - Loading and auto-refreshing the access log
- *  - "Approve" flow from access log entries
+ * Two-mode page:
+ *   - If Telegram isn't configured (no TELEGRAM_BOT_TOKEN in .env), shows
+ *     the connection flow inline — the same 3 substeps the setup wizard
+ *     uses (validate token → poll for chat_id → save).
+ *   - If configured, shows the original Approved Users + Access Log UI.
  */
 
-// ── Load on page ready ──
+// ── Load on page ready: decide which panel to show ──
 document.addEventListener('DOMContentLoaded', () => {
-    loadUsers();
-    loadAccessLog();
-    // Auto-refresh access log every 15s
-    setInterval(loadAccessLog, 15000);
-    setInterval(loadUsers, 30000);
+    initializeTelegramPage();
 });
+
+async function initializeTelegramPage() {
+    const subtitle = document.getElementById('tgPageSubtitle');
+    let configured = false;
+    try {
+        const r = await fetch('/api/notifications/status');
+        const data = await r.json();
+        configured = !!data.configured;
+    } catch (e) {
+        // Network/Redis hiccup — show the connect panel so the user has
+        // something to do, even though the real state is unknown.
+        console.warn('Telegram status check failed:', e);
+    }
+
+    if (configured) {
+        subtitle.textContent = 'Manage who can interact with the Telegram bot. Approved users receive alerts and can send commands.';
+        document.getElementById('tgManagePanel').hidden = false;
+        loadUsers();
+        loadAccessLog();
+        setInterval(loadAccessLog, 15000);
+        setInterval(loadUsers, 30000);
+    } else {
+        subtitle.textContent = 'Telegram alerts are not yet connected. Pair your bot below to start receiving snapshots and using bot commands.';
+        document.getElementById('tgConnectPanel').hidden = false;
+        // Reset the substep visibility in case of page revisit
+        tgcShowSubstep('token');
+    }
+}
+
+
+// ─── Connect flow (mirrors the setup wizard's Telegram step) ───
+
+let _tgcToken = '';
+let _tgcBotUsername = '';
+
+function tgcShowSubstep(name) {
+    for (const sub of ['token', 'discover', 'done']) {
+        const el = document.getElementById('tgcStep' + sub.charAt(0).toUpperCase() + sub.slice(1));
+        if (el) el.hidden = (sub !== name);
+    }
+}
+
+async function tgcValidateToken() {
+    const token = document.getElementById('tgcToken').value.trim();
+    const status = document.getElementById('tgcTokenStatus');
+    if (!token) {
+        status.hidden = false;
+        status.className = 'rtsp-test-result err';
+        status.textContent = 'Paste the token first.';
+        return;
+    }
+    status.hidden = false;
+    status.className = 'rtsp-test-result';
+    status.textContent = '⏳ Checking with Telegram…';
+
+    try {
+        const r = await fetch('/api/setup/telegram/validate-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+        });
+        const data = await r.json();
+        if (!data.ok) {
+            status.className = 'rtsp-test-result err';
+            status.textContent = `✗ ${data.error || 'Token rejected by Telegram.'}`;
+            return;
+        }
+        _tgcToken = token;
+        _tgcBotUsername = data.username || '';
+        document.getElementById('tgcBotMention').textContent =
+            _tgcBotUsername ? `@${_tgcBotUsername}` : '(your bot)';
+        tgcShowSubstep('discover');
+        tgcDiscoverChatId();
+    } catch (e) {
+        status.className = 'rtsp-test-result err';
+        status.textContent = `✗ Network error: ${e}`;
+    }
+}
+
+async function tgcDiscoverChatId() {
+    const status = document.getElementById('tgcDiscoverStatus');
+    const retry = document.getElementById('tgcRetryBtn');
+    status.className = 'rtsp-test-result';
+    status.textContent = '⏳ Waiting for your message to the bot…';
+    retry.hidden = true;
+
+    try {
+        const r = await fetch('/api/setup/telegram/discover-chat-id', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: _tgcToken }),
+        });
+        const data = await r.json();
+        if (!data.ok) {
+            status.className = 'rtsp-test-result err';
+            status.textContent = `✗ ${data.error}`;
+            retry.hidden = false;
+            return;
+        }
+        await tgcSave(data);
+    } catch (e) {
+        status.className = 'rtsp-test-result err';
+        status.textContent = `✗ Network error: ${e}`;
+        retry.hidden = false;
+    }
+}
+
+async function tgcSave(discovered) {
+    const status = document.getElementById('tgcDiscoverStatus');
+    status.className = 'rtsp-test-result';
+    status.textContent = '⏳ Saving and sending a test message to confirm…';
+
+    try {
+        const r = await fetch('/api/setup/telegram/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                token: _tgcToken,
+                chat_id: discovered.chat_id,
+                user_id: discovered.user_id,
+            }),
+        });
+        const data = await r.json();
+        if (!data.ok) {
+            status.className = 'rtsp-test-result err';
+            status.textContent = `✗ ${data.error || 'Save failed.'}`;
+            return;
+        }
+        const who = discovered.first_name || discovered.username || `user ${discovered.user_id}`;
+        document.getElementById('tgcConfirmedName').textContent = who;
+        tgcShowSubstep('done');
+    } catch (e) {
+        status.className = 'rtsp-test-result err';
+        status.textContent = `✗ Network error: ${e}`;
+    }
+}
+
+function tgcCancel() {
+    // Reset to the token-input substep so the user can retry without
+    // reloading the page.
+    _tgcToken = '';
+    _tgcBotUsername = '';
+    document.getElementById('tgcToken').value = '';
+    document.getElementById('tgcTokenStatus').hidden = true;
+    tgcShowSubstep('token');
+    // If we got here from the reconnect button, the manage panel is still
+    // alive underneath — restore it so the user isn't stranded if they
+    // change their mind.
+    const manage = document.getElementById('tgManagePanel');
+    if (manage && manage.dataset.suspended === '1') {
+        document.getElementById('tgConnectPanel').hidden = true;
+        manage.hidden = false;
+        manage.dataset.suspended = '0';
+    }
+}
+
+// Reconnect flow from the manage panel: temporarily hide the manage UI,
+// show the connect substeps, and remember to restore on cancel.
+function tgcStartReconnect() {
+    const connect = document.getElementById('tgConnectPanel');
+    const manage = document.getElementById('tgManagePanel');
+    manage.hidden = true;
+    manage.dataset.suspended = '1';
+    connect.hidden = false;
+    tgcShowSubstep('token');
+    document.getElementById('tgcToken').value = '';
+    document.getElementById('tgcTokenStatus').hidden = true;
+    document.getElementById('tgPageSubtitle').textContent =
+        'Reconnecting Telegram. Cancel below to keep the current bot.';
+}
 
 
 // ─── Users CRUD ───
