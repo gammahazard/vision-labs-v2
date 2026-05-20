@@ -93,6 +93,53 @@ def _load_rtsp_from_registry():
         print(f"[ingester] Registry lookup failed (will fall back to env): {e}", flush=True)
 
 
+def _refresh_rtsp_from_registry(logger) -> bool:
+    """Re-read the camera registry and pick up a new RTSP URL if it changed.
+    Returns True if the URL changed (caller should reconnect immediately).
+
+    Unlike _load_rtsp_from_registry, this does NOT early-return when RTSP_URL
+    is already set — that's the whole point. Called from the reconnect loop
+    after a connection failure so a DHCP-driven IP change is recovered
+    automatically. Without this, a camera that gets a new lease would stay
+    silent until someone manually edits .env and restarts.
+
+    Skipped silently if RTSP_URL was originally set via env var (we have no
+    way to tell whether a registry value or the env was intended). This is
+    only useful for cameras where the URL lives in cameras:registry — the
+    common case for wizard-added cameras (cam1–cam5 slot model).
+    """
+    global RTSP_URL, RTSP_MAIN_URL
+    # If the env var was set explicitly (not "" placeholder), don't override
+    # — the operator may have a static IP and intentionally pinned the URL.
+    env_url = os.getenv("RTSP_URL", "")
+    if env_url:
+        return False
+    try:
+        import json
+        _r = make_redis_client(decode_responses=True, host=REDIS_HOST, port=REDIS_PORT)
+        raw = _r.hget("cameras:registry", CAMERA_ID)
+        if not raw:
+            return False
+        entry = json.loads(raw)
+        new_url = entry.get("rtsp_sub", "")
+        new_main = entry.get("rtsp_main", "")
+        changed = False
+        if new_url and new_url != RTSP_URL:
+            logger.warning(
+                f"RTSP URL changed in registry — was '{RTSP_URL}', now '{new_url}'. "
+                f"Reconnecting with the new URL (likely DHCP renewal or admin edit)."
+            )
+            RTSP_URL = new_url
+            changed = True
+        if new_main and new_main != RTSP_MAIN_URL:
+            RTSP_MAIN_URL = new_main
+            changed = True
+        return changed
+    except Exception as e:
+        logger.debug(f"Registry refresh failed: {e}")
+        return False
+
+
 _load_rtsp_from_registry()
 
 TARGET_FPS = int(os.getenv("TARGET_FPS", "5"))
@@ -314,6 +361,17 @@ def run():
             reconnect_delay = RECONNECT_DELAY_SECONDS  # Reset backoff on success
         except Exception as e:
             logger.error(f"Camera connection failed: {e}")
+            # DHCP resilience: before sleeping, check if the registry has a
+            # newer URL. A camera that got a new IP via DHCP renewal would
+            # otherwise be unreachable forever — the dashboard's camera-add
+            # page or the ONVIF rediscovery flow updates the registry, and
+            # this lets us pick that up without a service restart.
+            try:
+                if _refresh_rtsp_from_registry(logger):
+                    logger.info("URL changed — retrying immediately with the new value")
+                    continue  # skip the backoff sleep, retry now
+            except Exception:
+                pass
             logger.info(f"Retrying in {reconnect_delay}s...")
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, MAX_RECONNECT_DELAY)

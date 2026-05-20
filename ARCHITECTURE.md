@@ -1,18 +1,19 @@
 # Vision Labs — Architecture Reference
 
-> ⚠️ **HISTORICAL REFERENCE — NOT THE LIVING SPEC**
+> ℹ️ **Scope and conventions.** This document explains the *architectural reasoning*
+> behind Vision Labs — why services are split this way, why Redis Streams is the bus,
+> why GPU placement matters, etc. The structural picture is current as of 2026-05-20.
 >
-> This document was last fully revised on **May 10, 2026**, before the Phase G "symmetric multi-camera slot" refactor (May 18) and the AI tool overhaul (May 19). Many concrete details below — `front_door`-as-primary references, the "18 tools" count, snapshot/event behavior — are now stale.
+> For day-to-day operational details (AI tool catalog, env-var inventory, current
+> Telegram alert types, retention defaults), see **[CONTEXT.md](CONTEXT.md)** which
+> tracks closer to the running code.
 >
-> **For current state, see [CONTEXT.md](CONTEXT.md).** Use this file to understand the architectural *reasoning* and *design decisions* (why slot-based services, why service-per-camera, GPU split rationale), not to verify *what is currently deployed*.
->
-> Specifically stale-as-of-Phase-G / May-19:
-> - `front_door` is no longer a slot name — replaced by symmetric `cam1`–`cam5`. Replace `front_door` with `cam1` mentally when reading.
-> - Tool count is now **19**, not 18 (added `find_dvr_segment`).
-> - `capture_snapshot` now auto-runs MiniCPM-V (returns `vision_analysis`).
-> - `query_events_by_date` / `query_event_patterns` / `query_events` / `query_unknowns` / `query_notification_history` all gained aggregation fields (`by_identity`, `top_hours`, `by_type_per_hour`, etc.) and a `category` filter.
-> - Analytical tools default to `camera="all"` (was `"primary"`).
-> - ComfyUI / Generate tab removed entirely (Phase 8.A).
+> **Sample camera ids throughout this doc are `cam1`, `cam2`, etc.** All slots are
+> symmetric — there is no privileged "primary" camera in the runtime, though
+> `CAMERA_ID` env var resolves to `cam1` by default for non-camera-scoped tools.
+> Older drafts of this doc used the slot name `front_door`; that was renamed
+> to `cam1` in the Phase G refactor (May 18) along with a one-shot data
+> migration of 104 Redis keys, 718 events, and 1012 identities.
 
 ---
 
@@ -111,27 +112,27 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 
 ```
 1. camera-ingester:
-   - OpenCV reads RTSP sub-stream at TARGET_FPS (default 15 env, hot-reloaded from Redis config:front_door.target_fps)
+   - OpenCV reads RTSP sub-stream at TARGET_FPS (default 15 env, hot-reloaded from Redis config:cam1.target_fps)
    - Forces TCP transport (OPENCV_FFMPEG_CAPTURE_OPTIONS set BEFORE cv2 import)
    - JPEG encode each frame at JPEG_QUALITY (default 75)
-   - XADD to frames:front_door (capped at MAX_STREAM_LEN=1000)
+   - XADD to frames:cam1 (capped at MAX_STREAM_LEN=1000)
    - Separate thread: reads main stream at HD_TARGET_FPS (default 8),
-     SETEX frame_hd:front_door with 5s TTL
+     SETEX frame_hd:cam1 with 5s TTL
 
 2. pose-detector (consumer group "pose_detectors"):
    - XREADGROUP from frames stream
    - YOLOv8s-pose inference (~44ms on RTX 5070 Ti)
    - Filter: person class only, confidence > threshold
-   - SET detection_frame:pose:front_door = the frame JPEG used
-   - XADD detections:pose:front_door {detections: JSON, inference_ms}
+   - SET detection_frame:pose:cam1 = the frame JPEG used
+   - XADD detections:pose:cam1 {detections: JSON, inference_ms}
 
 3. vehicle-detector (consumer group "vehicle_detectors"):
    - Same pattern as pose-detector
    - Classes: car, truck, bus, motorcycle
    - Embeds `frame_bytes` directly in detection messages (load-bearing for tracker
      vehicle snapshots — captures the exact frame the bbox was computed from)
-   - SET detection_frame:vehicle:front_door = frame used
-   - XADD detections:vehicle:front_door
+   - SET detection_frame:vehicle:cam1 = frame used
+   - XADD detections:vehicle:cam1
 
 4. tracker (consumer groups "trackers" + "vehicle_trackers"):
    - XREADGROUP from detections:pose + detections:vehicle
@@ -140,8 +141,8 @@ Vision Labs is an **event-driven microservice system** running on a single host 
    - If person gone > lost_timeout: emit person_left
    - If face recognized: emit person_identified
    - If vehicle stationary > vehicle_idle_timeout: emit vehicle_idle
-   - HSET state:front_door with current scene snapshot
-   - XADD events:front_door {event_type, person_id, bbox, zone, ...}
+   - HSET state:cam1 with current scene snapshot
+   - XADD events:cam1 {event_type, person_id, bbox, zone, ...}
    - SETEX person_snapshot:{camera}:{ts} = frame JPEG (2h TTL)
    - SETEX vehicle_snapshot:{camera}:{ts} = frame JPEG (24h TTL)
 
@@ -150,24 +151,24 @@ Vision Labs is an **event-driven microservice system** running on a single host 
    - XREVRANGE frames stream to grab the matching frame
    - InsightFace detection + embedding extraction (CUDA via onnxruntime-gpu)
    - Compare against SQLite DB of enrolled faces (cosine similarity)
-   - HSET identity_state:front_door with matches
-   - If detection list is empty: DEL identity_state:front_door (avoids stale labels on empty scenes)
-   - XADD identities:front_door
+   - HSET identity_state:cam1 with matches
+   - If detection list is empty: DEL identity_state:cam1 (avoids stale labels on empty scenes)
+   - XADD identities:cam1
 
 6. dashboard WebSocket (/ws/live — authenticated, validates vl_session cookie):
-   - Read latest frame from detection_frame:pose:front_door
-   - Read state:front_door for current persons/vehicles
-   - Read identity_state:front_door for face labels
-   - Read zones:front_door for zone overlays
+   - Read latest frame from detection_frame:pose:cam1
+   - Read state:cam1 for current persons/vehicles
+   - Read identity_state:cam1 for face labels
+   - Read zones:cam1 for zone overlays
    - Draw bounding boxes, keypoints, face labels, zone overlays
    - JPEG encode at q=85 → base64 → send JSON via WebSocket
-   - Render rate hot-reloaded from config:front_door.target_fps (default 10)
+   - Render rate hot-reloaded from config:cam1.target_fps (default 10)
 ```
 
 ### Event Notification Flow
 
 ```
-1. tracker emits event to events:front_door
+1. tracker emits event to events:cam1
 2. dashboard _event_notification_poller (background thread):
    - XREAD events stream (blocking, in threadpool executor)
    - For each event:
@@ -286,7 +287,7 @@ camera (where it makes semantic sense — events, system status).
 | Module | Prefix | Purpose | Multi-camera |
 |--------|--------|---------|---|
 | `ai.py` | `/api/ai` | Chat, vision analysis, history, reminders, model status | n/a (per-message) |
-| `ai_tools.py` | — | 18 LLM tool definitions + executors; all tools accept `camera` arg via `_resolve_camera()` helper | ✅ all 18 tools |
+| `ai_tools.py` | — | 19 LLM tool definitions + executors; all tools accept `camera` arg via `_resolve_camera()` helper | ✅ all 19 tools |
 | `ai_prompts.py` | — | System prompt builder; injects camera registry list into LLM context | ✅ |
 | `ai_state.py` | — | Shared AI state (DB refs, GPU flag, pending media) | n/a |
 | `notifications.py` | `/api` | Telegram API helpers, scene analysis, snapshot drawing, `build_clip(camera_id=…)` | ✅ |
@@ -420,7 +421,7 @@ User message → build system prompt with live context
 
 ### System Context (injected each message)
 - Current date/time, location, weather
-- **Registered cameras list** (id=name, e.g. `cam1=front_door · cam2=basement`) so the LLM knows valid camera arg values
+- **Registered cameras list** (id=name, e.g. `cam1=cam1 · cam2=basement`) so the LLM knows valid camera arg values
 - People currently in frame across all cameras (from state keys)
 - Known faces list
 - Active zones (per camera)
@@ -428,7 +429,7 @@ User message → build system prompt with live context
 - Notification status
 - System health
 
-### 18 Tool Functions (all multi-camera-aware)
+### 19 Tool Functions (all multi-camera-aware)
 See `routes/ai_tools.py` — each returns a JSON string. Tools that touch
 per-camera data accept an optional `camera` arg:
 - `""` or absent → primary camera (env `CAMERA_ID`)
@@ -572,7 +573,7 @@ browsable from Windows Explorer without sudo.
 
 ```
 ./data/recordings/                                ← BIND MOUNT (./data/ on host)
-└── {camera_id}/                                  ← e.g. front_door/, cam2/
+└── {camera_id}/                                  ← e.g. cam1/, cam2/
     └── YYYY-MM-DD/
         └── HH-MM.ts                              ← MPEG-TS, ffmpeg copy (no transcode)
                                                   ← 1h segments, 3-day retention
@@ -692,7 +693,7 @@ services/
 │       ├── single.html  # Old per-camera dashboard (now at /single.html?camera=X)
 │       ├── cameras.html # Camera registry admin UI
 │       └── (existing JS/CSS modules — events.js, zones.js, faces.js, …)
-├── recorder/            # ffmpeg RTSP → .ts DVR. Always on for front_door; recorder-cam2..cam5
+├── recorder/            # ffmpeg RTSP → .ts DVR. Always on for cam1; recorder-cam2..cam5
 │                        # are profile-gated and managed by the orchestrator. recorder.py
 │                        # reads RTSP URL from cameras:registry if RTSP_URL env is empty.
 ├── orchestrator/        # NEW (Phase 7b). Single-purpose sidecar with the Docker socket.
@@ -705,7 +706,7 @@ services/
 
 ### Multi-camera state (Phase 7+ — fully shipped)
 - **Registry**: `cameras:registry` Redis hash — `{id, name, rtsp_sub, rtsp_main, gpu_id, enabled, detect_persons, detect_vehicles, detect_faces}`.
-- **Slot pool (Phase 7c)**: pre-defined service blocks for `cam2`, `cam3`, `cam4`, `cam5` in `docker-compose.yml`, each profile-gated. `front_door` runs unconditionally as the primary.
+- **Slot pool (Phase 7c)**: pre-defined service blocks for `cam2`, `cam3`, `cam4`, `cam5` in `docker-compose.yml`, each profile-gated. `cam1` runs unconditionally as the primary.
 - **Auto-orchestration (Phase 7b)**: the `orchestrator` service watches `cameras:registry` + the `cameras:events` pub/sub channel and reconciles compose profiles automatically — adding a camera in the dashboard spawns its services within ~10s, no terminal command needed. Writes every action to `orchestrator:audit` so the UI can show live status badges. The dashboard intentionally does NOT have the Docker socket; the orchestrator does, with a strict allowlist of profiles it may up/down (`ALLOWED_PROFILES`).
 - **Per-camera detector flags**: each detector reads `detect_persons` / `detect_vehicles` / `detect_faces` from its registry entry at startup and exits cleanly (Exit 0, restart policy `on-failure`) if its detector is disabled. Saves GPU.
 - **WebSocket**: `/ws/live?camera=<id>` — each grid tile opens its own connection per camera.
@@ -719,3 +720,48 @@ contracts/
 ├── actions.py           # Keypoint action classification
 └── time_rules.py        # Time periods, zone alert rules, PIP test
 ```
+
+---
+
+## Recent additions (post-2026-05-18)
+
+Beyond the structural picture above, the following operationally significant additions
+have shipped. These are documented here so a reader of the architecture doc doesn't
+have to discover them in the code:
+
+**Stream-health events (B1)** — `camera-ingester` emits `stream_stale` and
+`stream_recovered` events on `events:{cam}` when the RTSP feed dies (no decoded
+frame for ≥30s) and resumes. The dashboard's event poller routes both through
+Telegram automatically. Single emit per stale period via a module-level flag.
+
+**Recorder-health events (B2)** — `recorder` emits `recorder_error` after 3
+consecutive ffmpeg sessions <30s each (sustained crash) and `recorder_recovered`
+when a session runs ≥5 min. Same Telegram path as B1.
+
+**Resource pressure poller (B3)** — `services/dashboard/pollers/health.py` runs
+every 60s, alerts when `/data` disk or Redis memory crosses 85% (hysteresis clears
+at 75%). Bypasses per-event-type config gating — these alerts always fire.
+
+**JSONL event-journal fallback (C1)** — `query_events_by_date` merges Redis
+xrange with `/data/events/<date>.jsonl`. When the events stream hits its
+`MAX_EVENT_STREAM_LEN` cap (default 5000) and trims older entries, the journal
+fills the gap. Dedup by event_id; Redis wins on collisions.
+
+**bcrypt migration (C2)** — `routes/auth.py` accepts both bcrypt (`$2b$…`) and
+legacy salted SHA-256 hashes on login. After a successful SHA-256 verify,
+`_maybe_upgrade_to_bcrypt` rewrites the row with a fresh bcrypt hash. No batch
+migration, no downtime.
+
+**DHCP resilience (D2)** — On RTSP connect failure, `camera-ingester` re-reads
+`cameras:registry` via `_refresh_rtsp_from_registry`. If the URL changed (admin
+edit OR wizard update reflecting a new DHCP lease), reconnect immediately with
+the new value instead of looping on the stale one.
+
+**LLM tool-data attach (D1)** — `/api/ai/chat` now returns `tool_calls: [{name,
+args, result}]` alongside `reply`. The frontend renders a collapsible "show
+tool data" toggle under each assistant message that used tools, so the user
+can verify counts/identities against the raw tool output. Mitigation for
+Qwen 3 14B hallucinations on aggregate queries.
+
+For day-to-day operational details on AI tools, see [CONTEXT.md §9](CONTEXT.md).
+For the full audit + remediation log, see PHASES.md.

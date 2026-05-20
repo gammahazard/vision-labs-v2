@@ -201,7 +201,11 @@ async def chat(req: ChatRequest):
             asyncio.to_thread(_chat_turn), timeout=60.0
         )
 
-        # Handle tool calls if any
+        # Handle tool calls if any. We capture each (name, args, result_json)
+        # so the response can include the raw tool data — the user can flip
+        # a "show tool data" toggle to verify the AI's claims against ground
+        # truth (mitigation for Qwen hallucinations on count/identity questions).
+        tool_calls_log: list[dict] = []
         tool_rounds = 0
         while response.message.tool_calls and tool_rounds < 5:
             tool_rounds += 1
@@ -218,6 +222,15 @@ async def chat(req: ChatRequest):
                 messages.append({
                     "role": "tool",
                     "content": result,
+                })
+                # Stash for the API response. Cap each result at 8 KB so a
+                # huge tool dump (e.g. 50 events worth of fields) doesn't
+                # bloat the chat history beyond reason.
+                truncated = result if len(result) <= 8192 else result[:8192] + "...[truncated]"
+                tool_calls_log.append({
+                    "name": tool_name,
+                    "args": tool_args if isinstance(tool_args, dict) else {},
+                    "result": truncated,
                 })
 
             # Get the next response with tool results
@@ -266,7 +279,7 @@ async def chat(req: ChatRequest):
         # Save assistant response server-side
         ai_state._ai_db.save_message("assistant", reply)
 
-        return {"reply": reply}
+        return {"reply": reply, "tool_calls": tool_calls_log}
 
     except asyncio.TimeoutError:
         ai_state.collect_media(request_id)

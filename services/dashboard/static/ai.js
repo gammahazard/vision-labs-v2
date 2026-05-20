@@ -252,6 +252,58 @@ function renderAllMessages() {
     scrollToBottom();
 }
 
+// Build a collapsible <details> with the raw tool-call data, attach it to
+// the most recent assistant message bubble. Each tool's result is escaped
+// + pretty-printed if it's valid JSON. Click "Show tool data" to expand.
+function _appendToolDataToggle(toolCalls) {
+    const container = document.getElementById('chatMessages');
+    if (!container) return;
+    // Find the LAST assistant message (just appended) and append inside
+    // its bubble so the toggle is visually associated with the answer.
+    const msgs = container.querySelectorAll('.message.assistant');
+    const lastMsg = msgs[msgs.length - 1];
+    const last = lastMsg ? lastMsg.querySelector('.message-bubble') : null;
+    if (!last) return;
+
+    const details = document.createElement('details');
+    details.className = 'tool-data-toggle';
+    details.style.cssText = 'margin-top:6px;font-size:0.8em;opacity:0.85;';
+    const summary = document.createElement('summary');
+    summary.textContent = `🔍 Show tool data (${toolCalls.length} call${toolCalls.length > 1 ? 's' : ''})`;
+    summary.style.cssText = 'cursor:pointer;color:#94a3b8;user-select:none;';
+    details.appendChild(summary);
+
+    for (const call of toolCalls) {
+        const block = document.createElement('div');
+        block.style.cssText = 'margin:6px 0;padding:6px 8px;background:rgba(0,0,0,0.25);border-left:3px solid #6366f1;border-radius:4px;';
+        const hdr = document.createElement('div');
+        let argStr = '';
+        try { argStr = JSON.stringify(call.args || {}); } catch (_) { argStr = String(call.args || ''); }
+        hdr.innerHTML = `<code style="color:#bfdbfe;">${_escapeHtml(call.name)}</code><code style="color:#94a3b8;">(${_escapeHtml(argStr)})</code>`;
+        block.appendChild(hdr);
+
+        const body = document.createElement('pre');
+        body.style.cssText = 'margin:4px 0 0;padding:6px;font-size:0.85em;color:#cbd5e1;background:rgba(0,0,0,0.4);border-radius:3px;overflow-x:auto;max-height:300px;white-space:pre-wrap;word-break:break-word;';
+        // Pretty-print if JSON, raw otherwise
+        let pretty = call.result || '';
+        try { pretty = JSON.stringify(JSON.parse(call.result), null, 2); } catch (_) { /* keep raw */ }
+        body.textContent = pretty;
+        block.appendChild(body);
+        details.appendChild(block);
+    }
+
+    last.appendChild(details);
+}
+
+function _escapeHtml(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+
 function addMessage(role, content) {
     chatHistory.push({ role, content });
     appendMessageElement(role, content, true);
@@ -362,6 +414,13 @@ async function sendMessage() {
         if (resp.ok) {
             const data = await resp.json();
             addMessage('assistant', data.reply || 'I had trouble generating a response. Please try again.');
+            // If the AI called any tools, attach a collapsible "show tool data"
+            // panel under the last assistant message. Lets the user verify the
+            // AI's claims against ground truth — the cure for hallucinations
+            // on count/identity questions.
+            if (Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
+                _appendToolDataToggle(data.tool_calls);
+            }
         } else {
             const err = await resp.json().catch(() => ({}));
             showError(err.error || `Error ${resp.status}`);
