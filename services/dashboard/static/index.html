@@ -276,6 +276,11 @@
                         <span class="condition-label">Timezone</span>
                         <span class="condition-value" id="condTimezone" title="Used for all date/time math in the system">--</span>
                     </div>
+                    <div class="condition-item" style="grid-column: span 2;">
+                        <span class="condition-icon">⏰</span>
+                        <span class="condition-label">Local Time</span>
+                        <span class="condition-value" id="condClock" title="Live clock in the configured timezone — verify this matches the wall clock to confirm system time is accurate">--</span>
+                    </div>
                     <div class="condition-item">
                         <span class="condition-icon">🌅</span>
                         <span class="condition-label">Sunrise</span>
@@ -485,7 +490,7 @@
     <script src="grid.js?v=1"></script>
 
     <!-- Conditions + Faces — both fetch global (non-camera-specific) data. -->
-    <script src="conditions.js?v=8"></script>
+    <script src="conditions.js?v=9"></script>
     <script src="faces.js?v=10"></script>
     <!-- Aggregate event feed across all cameras: explicitly mark this page
          as the "all" scope so events.js polls /api/events?camera=all.

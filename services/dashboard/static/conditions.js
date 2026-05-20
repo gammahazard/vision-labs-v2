@@ -19,6 +19,32 @@ const conditionsPeriod = document.getElementById("conditionsPeriod");
 const nightWatchIcon = document.getElementById("nightWatchIcon");
 const condDate = document.getElementById("condDate");
 const condTimezone = document.getElementById("condTimezone");
+const condClock = document.getElementById("condClock");
+
+// Live clock — ticks every second in the timezone returned by the API.
+// Browser's own clock provides the seconds; the IANA zone name formats it.
+// If the displayed time is wrong, either the operator's NTP / system clock
+// is off, OR LOCATION_TIMEZONE in .env doesn't match their actual location.
+let _serverTimezone = null;  // set by the /api/conditions response below
+
+function _tickClock() {
+    if (!condClock || !_serverTimezone) return;
+    try {
+        const now = new Date();
+        const fmt = new Intl.DateTimeFormat("en-US", {
+            timeZone: _serverTimezone,
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true,
+        });
+        condClock.textContent = fmt.format(now);
+    } catch (e) {
+        // If timezone string is invalid, browser throws — fall back to local
+        condClock.textContent = new Date().toLocaleTimeString();
+    }
+}
+setInterval(_tickClock, 1000);
 const condSunrise = document.getElementById("condSunrise");
 const condSunset = document.getElementById("condSunset");
 const condDayLength = document.getElementById("condDayLength");
@@ -117,6 +143,13 @@ async function loadConditions() {
             const offset = data.tz_offset ? `, ${data.tz_offset}` : "";
             const suffix = abbr ? ` (${abbr}${offset})` : "";
             condTimezone.textContent = `${data.timezone}${suffix}`;
+        }
+
+        // Pin the timezone for the live clock and tick it right away so the
+        // user doesn't see "--" for a second.
+        if (data.timezone) {
+            _serverTimezone = data.timezone;
+            _tickClock();
         }
 
         // Weather data (only shown if API key is configured)
