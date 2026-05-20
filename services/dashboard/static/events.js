@@ -196,10 +196,14 @@ function _renderEventFilterBar() {
                        transition:all 0.15s ease;
                        -webkit-tap-highlight-color:transparent;">${f.label}</button>
     `).join("");
-    // Camera filter dropdown — populated from /api/cameras (async, see below).
-    // Only renders if the page is showing aggregate events (Recent Activity on
-    // index.html). The single-camera detail view doesn't need it.
-    const cameraDropdownHtml = window.EVENT_FEED_CAMERA === undefined || window.EVENT_FEED_CAMERA === ""
+    // Camera filter dropdown — only renders when the feed is showing events
+    // from multiple cameras. On index.html, EVENT_FEED_CAMERA is "all" (set
+    // line ~495 there) which is the aggregate mode. On single.html it's the
+    // specific cam id (cam1 / cam2 / ...) — no dropdown needed because the
+    // page is already scoped to one camera.
+    const _feedCam = window.EVENT_FEED_CAMERA;
+    const _isAggregateMode = _feedCam === undefined || _feedCam === "" || _feedCam === "all";
+    const cameraDropdownHtml = _isAggregateMode
         ? `<select id="eventCameraFilter" aria-label="Filter by camera"
                   style="padding:5px 8px;font-size:12px;border-radius:14px;cursor:pointer;
                          border:1px solid rgba(96,165,250,0.35);

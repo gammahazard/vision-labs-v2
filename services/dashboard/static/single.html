@@ -335,21 +335,21 @@
                     </p>
                 </div>
                 <!-- Notification Preferences -->
-                <div class="setting notification-pref">
+                <div class="setting notification-pref" id="personAlertsPref">
                     <label class="toggle-row">
                         <span>🚨 Person alerts</span>
                         <input type="checkbox" id="notifyPersonToggle" checked
                             onchange="updateNotifPref('notify_person', this.checked ? '1' : '0')">
                     </label>
                 </div>
-                <div class="setting notification-pref">
+                <div class="setting notification-pref" id="vehicleAlertsPref">
                     <label class="toggle-row">
                         <span>🚗 Vehicle alerts</span>
                         <input type="checkbox" id="notifyVehicleToggle" checked
                             onchange="updateNotifPref('notify_vehicle', this.checked ? '1' : '0')">
                     </label>
                 </div>
-                <div class="setting notification-pref">
+                <div class="setting notification-pref" id="suppressKnownPref">
                     <label class="toggle-row">
                         <span>🤫 Suppress known people</span>
                         <input type="checkbox" id="suppressKnownToggle"
@@ -358,7 +358,7 @@
                     <p class="setting-hint">Skip alerts for people already identified by name</p>
                 </div>
                 <!-- Cooldown Sliders -->
-                <div class="setting notification-pref">
+                <div class="setting notification-pref" id="personCooldownPref">
                     <label class="setting-label">⏱️ Person alert cooldown
                         <span id="notifyCooldownValue" class="setting-value">60s</span>
                     </label>
@@ -367,7 +367,7 @@
                         onchange="updateNotifPref('notify_cooldown', this.value)">
                     <p class="setting-hint">Minimum seconds between person alerts (10–300)</p>
                 </div>
-                <div class="setting notification-pref">
+                <div class="setting notification-pref" id="vehicleCooldownPref">
                     <label class="setting-label">⏱️ Vehicle alert cooldown
                         <span id="vehicleCooldownValue" class="setting-value">120s</span>
                     </label>
@@ -533,6 +533,50 @@
         }
         console.error("updateConfig not loaded yet; check script order in single.html");
     }
+
+    // Hide toggles that don't apply to this camera's enabled detectors.
+    // E.g. if detect_vehicles=false on cam2, the "Vehicle alerts" toggle and
+    // its cooldown slider just confuse the user — they look like they
+    // control something but the vehicle detector isn't even running.
+    async function _hideIrrelevantNotifPrefs() {
+        try {
+            const camId = new URLSearchParams(window.location.search).get("camera") || "";
+            const resp = await fetch("/api/cameras");
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const cams = data.cameras || [];
+            // If no ?camera param, find the primary
+            const cam = camId
+                ? cams.find(c => c.id === camId)
+                : (cams.find(c => c.is_primary) || cams[0]);
+            if (!cam) return;
+            // Defaults are TRUE — only hide if explicitly disabled
+            const hasPersons  = cam.detect_persons  !== false;
+            const hasVehicles = cam.detect_vehicles !== false;
+            const hasFaces    = cam.detect_faces    !== false;
+
+            const hide = (id) => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = "none";
+            };
+            if (!hasPersons) {
+                hide("personAlertsPref");
+                hide("personCooldownPref");
+                hide("suppressKnownPref");  // suppress_known is a person-alert filter
+            }
+            if (!hasVehicles) {
+                hide("vehicleAlertsPref");
+                hide("vehicleCooldownPref");
+            }
+            if (!hasFaces) {
+                // suppress_known relies on face recognition — hide if no face detection
+                hide("suppressKnownPref");
+            }
+        } catch (e) {
+            /* silent fallback — keep all toggles visible */
+        }
+    }
+    document.addEventListener("DOMContentLoaded", _hideIrrelevantNotifPrefs);
 </script>
 
 <!-- app.js sets window.CAMERA_ID from ?camera URL param; the module scripts

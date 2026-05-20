@@ -108,7 +108,7 @@ VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))   # low
 # × bbox_width of the ghost's last center re-associates instead of creating a
 # new vehicle. Eliminates "detected → left → detected" triple-event for a
 # single car driving through a dead-zone.
-VEHICLE_GHOST_TTL = float(os.getenv("VEHICLE_GHOST_TTL", "30.0"))
+VEHICLE_GHOST_TTL = float(os.getenv("VEHICLE_GHOST_TTL", "5.0"))
 VEHICLE_GHOST_MAX_DIST_RATIO = float(os.getenv("VEHICLE_GHOST_MAX_DIST_RATIO", "2.0"))
 CONFIG_RELOAD_INTERVAL = int(os.getenv("CONFIG_RELOAD_INTERVAL", "10"))    # check config every N detection messages
 ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))    # frames a new action must be stable for
