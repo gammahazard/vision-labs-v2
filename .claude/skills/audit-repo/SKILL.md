@@ -80,7 +80,7 @@ Each mapper returns a JSON array (schemas in the respective prompts). Validate e
 
 ### Stage 1.5 — soft brake check
 
-If the drift mapper returned **more than 150 claims**, surface a warning to the user before fanning out Stage 2: "Drift mapper extracted N > 150 claims. Proceed with verifier fan-out? (Y/n)". Wait for confirmation. If the user responds 'n': skip Stage 2 fan-out for the drift track entirely. Still write `audits/drift.md` containing only the 'Manual verification needed' section populated from the behavioral claims; the report's structural-claims findings count becomes 0. Other tracks proceed normally.
+If the drift mapper returned **more than 150 claims**, surface a warning to the user before fanning out Stage 2: "Drift mapper extracted N > 150 claims. Proceed with verifier fan-out? (Y/n)". Wait for confirmation. If the user responds 'n': skip Stage 2 fan-out for the drift track entirely. Still write `audits/drift.md` containing only the 'Manual verification needed' section populated from the behavioral claims; the report's structural-claims findings count becomes 0. Other tracks proceed normally. Before passing the drift array to Stage 1.6, strip any entries that contain a `_brake` key (these are mapper housekeeping signals, not claims, and would otherwise leak into the structural/behavioral routing and report counts).
 
 ### Stage 1.6 — route drift claims
 
