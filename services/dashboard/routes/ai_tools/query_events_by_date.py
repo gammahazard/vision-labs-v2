@@ -195,6 +195,11 @@ def _tool_query_events_by_date(args: dict) -> str:
                 f"{vehicles_detected} vehicles. Raw event total: {len(all_events)}."
             )
 
+        # Cap latest_events at 3 (was 10). Long JSON arrays consume Qwen's
+        # attention budget — when the response is 150+ lines of raw event
+        # JSON, the model loses track of the summary field at the top.
+        # 3 examples is enough for "show me what happened recently"
+        # questions; the full feed is one route call away (/api/events).
         result = {
             'date': str(target_date),
             'cameras_queried': cam_ids,
@@ -210,7 +215,7 @@ def _tool_query_events_by_date(args: dict) -> str:
             'by_type': agg_type_counts,
             'by_identity': agg_identity_counts,
             'unique_people_identified': people_identified_unique,
-            'latest_events': all_events[-10:] if len(all_events) > 10 else all_events,
+            'latest_events': all_events[-3:] if len(all_events) > 3 else all_events,
             'journal_used': journal_used,
         }
         if len(cam_ids) > 1:

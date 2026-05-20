@@ -129,12 +129,21 @@
                 <!-- Messages rendered by JS -->
             </div>
 
-            <!-- Suggestion chips (shown when chat is empty) -->
+            <!-- Suggestion chips (shown when chat is empty).
+                 These are deliberately SINGLE-purpose questions. Compound
+                 questions ("how many + busiest hour + DVR link") confuse
+                 the local LLM and produce wrong numbers. Ask one thing at
+                 a time and the answers stay accurate. -->
+            <p style="text-align:center; color:var(--text-secondary,#888); font-size:0.85em; margin:0 0 8px 0;">
+                💡 Tip: ask one thing at a time. Compound questions get muddled.
+            </p>
             <div class="suggestion-chips" id="suggestionChips">
                 <button class="suggestion-chip" onclick="useSuggestion(this)">📷 What's happening on camera right now?</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">👥 How many people were detected yesterday?</button>
                 <button class="suggestion-chip" onclick="useSuggestion(this)">🕒 What was the busiest hour yesterday?</button>
-                <button class="suggestion-chip" onclick="useSuggestion(this)">👥 How many people were identified yesterday?</button>
-                <button class="suggestion-chip" onclick="useSuggestion(this)">🎬 Show me the DVR clip from yesterday's busiest hour</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">🧑 Who was identified yesterday?</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">🚗 How many vehicles passed by yesterday?</button>
+                <button class="suggestion-chip" onclick="useSuggestion(this)">🎬 Show me the clip from 6pm yesterday on cam1</button>
                 <button class="suggestion-chip" onclick="useSuggestion(this)">👤 Show me enrolled faces</button>
                 <button class="suggestion-chip" onclick="useSuggestion(this)">⚙️ What's the system status?</button>
             </div>
