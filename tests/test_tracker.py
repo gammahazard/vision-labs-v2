@@ -142,34 +142,50 @@ class TestTrackedPerson:
         assert cy == 200.0
 
 
-@pytest.mark.stale  # direction smoothing refactored — recompute thresholds + rewrite
 class TestDirection:
+    """`direction` was refactored to mean-of-halves with a bbox-width-scaled
+    threshold (max(8 px, bbox_w * 0.10)) — fixes single-sample jitter that
+    used to flip the answer frame-to-frame. Needs ≥ 4 samples now.
+
+    All tests below use bbox width = 100 px → threshold = 10 px."""
+
     def test_direction_unknown_few_frames(self):
-        """Direction is 'unknown' when fewer than 3 positions."""
+        """Direction is 'unknown' when fewer than 4 positions."""
         p = TrackedPerson("p1", [100, 100, 200, 300], 1000.0)
         assert p.direction == "unknown"
+        # 2 samples — still under 4
         p.update([105, 100, 205, 300], 1001.0)
+        assert p.direction == "unknown"
+        # 3 samples — still under 4
+        p.update([108, 100, 208, 300], 1002.0)
         assert p.direction == "unknown"
 
     def test_direction_stationary(self):
-        """Direction is 'stationary' when center moves < 20px."""
+        """Center drift < 10 px (bbox_w * 0.10) over the window → stationary."""
         p = TrackedPerson("p1", [100, 100, 200, 300], 1000.0)
+        # 4 samples, each shifted only 2 px — first half mean vs last half
+        # mean differs by ≈ 4 px, well below the 10 px threshold.
         p.update([102, 100, 202, 300], 1001.0)
         p.update([104, 100, 204, 300], 1002.0)
+        p.update([106, 100, 206, 300], 1003.0)
         assert p.direction == "stationary"
 
     def test_direction_right(self):
-        """Direction is 'right' when center moves right > 20px."""
+        """Mean of last half > mean of first half by > 10 px → right."""
         p = TrackedPerson("p1", [100, 100, 200, 300], 1000.0)
+        # 4 samples shifting 30 px each → first-half mean ≈ 165, last-half
+        # mean ≈ 245 → dx ≈ +80 (well over the 10 px threshold).
         p.update([130, 100, 230, 300], 1001.0)
         p.update([160, 100, 260, 300], 1002.0)
+        p.update([190, 100, 290, 300], 1003.0)
         assert p.direction == "right"
 
     def test_direction_left(self):
-        """Direction is 'left' when center moves left > 20px."""
+        """Mean of last half < mean of first half by > 10 px → left."""
         p = TrackedPerson("p1", [200, 100, 300, 300], 1000.0)
         p.update([170, 100, 270, 300], 1001.0)
         p.update([140, 100, 240, 300], 1002.0)
+        p.update([110, 100, 210, 300], 1003.0)
         assert p.direction == "left"
 
     def test_bbox_history_capped(self):

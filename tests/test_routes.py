@@ -104,19 +104,24 @@ def fake_redis():
 
 
 @pytest.fixture
-def setup_routes(fake_redis):
-    """Set up the routes context module with fake Redis and return the app."""
+def setup_routes(fake_redis, monkeypatch):
+    """Set up the routes context module with fake Redis and return the app.
+
+    Phase G symmetric refactor moved every stream key to per-camera
+    (events:cam1, frames:cam1, …). Routes that iterate cameras hit the
+    `cameras` registry module; we stub it to a single test camera."""
     import routes as ctx
     ctx.r = fake_redis
     ctx.logger = __import__("logging").getLogger("test")
     ctx.FACE_API_URL = "http://localhost:8081"
-    ctx.EVENT_STREAM = "events:test_cam"
-    ctx.FRAME_STREAM = "frames:test_cam"
-    ctx.DETECTION_STREAM = "detections:pose:test_cam"
-    ctx.STATE_KEY = "state:test_cam"
-    ctx.CONFIG_KEY = "config:pipeline"
-    ctx.IDENTITY_KEY = "identity_state:test_cam"
-    ctx.ZONE_KEY = "zones:test_cam"
+    ctx.CAMERA_ID = "cam1"
+    ctx.EVENT_STREAM = "events:cam1"
+    ctx.FRAME_STREAM = "frames:cam1"
+    ctx.DETECTION_STREAM = "detections:pose:cam1"
+    ctx.STATE_KEY = "state:cam1"
+    ctx.CONFIG_KEY = "config:cam1"
+    ctx.IDENTITY_KEY = "identity_state:cam1"
+    ctx.ZONE_KEY = "zones:cam1"
     ctx.AUTH_DB_PATH = ""  # Set per-test if needed
 
     ctx.DEFAULT_CONFIG = {
@@ -125,6 +130,16 @@ def setup_routes(fake_redis):
         "lost_timeout": "5",
         "target_fps": "8",
     }
+
+    # Stub the cameras registry so routes that iterate over enabled
+    # cameras see exactly one test camera.
+    import cameras as _cam
+    monkeypatch.setattr(_cam, "enabled_camera_ids", lambda: ["cam1"])
+    monkeypatch.setattr(
+        _cam, "list_enabled_cameras",
+        lambda: [{"id": "cam1", "name": "test", "detect_vehicles": True}],
+    )
+    monkeypatch.setattr(_cam, "camera_friendly_name", lambda cid: "test")
 
     return ctx
 
@@ -366,7 +381,6 @@ class TestConfigRoutes:
         assert resp.json()["config"]["confidence_thresh"] == "0.8"
         assert resp.json()["config"]["target_fps"] == "15"
 
-    @pytest.mark.stale  # ALLOWED_CONFIG_KEYS expanded after Phase G/I — recompute fixture
     def test_post_config_updates_allowed_keys(self, config_client, setup_routes):
         resp = config_client.post("/api/config", json={
             "confidence_thresh": "0.75",
@@ -374,8 +388,9 @@ class TestConfigRoutes:
         })
         assert resp.status_code == 200
         config = resp.json()["config"]
-        assert config["confidence_thresh"] == "0.75"
-        assert config["target_fps"] == "12"
+        # Validator coerces both to float then str() — "12" becomes "12.0".
+        assert float(config["confidence_thresh"]) == 0.75
+        assert float(config["target_fps"]) == 12.0
 
     def test_post_config_rejects_unknown_keys(self, config_client, fake_redis, setup_routes):
         config_client.post("/api/config", json={
@@ -412,16 +427,15 @@ class TestEventRoutes:
         assert resp.status_code == 200
         assert resp.json()["events"] == []
 
-    @pytest.mark.stale  # EVENT_STREAM key template changed (now per-camera); fixture needs update
     def test_list_events_returns_data(self, event_client, fake_redis, setup_routes):
         client, _ = event_client
-        fake_redis._streams[setup_routes.EVENT_STREAM] = [
+        fake_redis._streams["events:cam1"] = [
             ("1000-0", {
                 "event_type": "person_appeared",
                 "person_id": "p1",
                 "timestamp": "1000",
                 "action": "standing",
-                "camera_id": "test_cam",
+                "camera_id": "cam1",
             }),
             ("2000-0", {
                 "event_type": "person_left",
@@ -429,7 +443,7 @@ class TestEventRoutes:
                 "timestamp": "2000",
                 "duration": "60",
                 "direction": "left",
-                "camera_id": "test_cam",
+                "camera_id": "cam1",
             }),
         ]
         resp = client.get("/api/events?count=10")

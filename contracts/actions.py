@@ -119,7 +119,11 @@ def _body_scale(kps: list, bbox: list[float] | None) -> float:
       3. 30 px last-resort floor — every threshold also has its own
          absolute minimum so we never compare against literally zero.
     """
-    if (_kp_visible(kps[L_SHOULDER]) and _kp_visible(kps[R_SHOULDER]) and
+    # Tolerate short keypoint arrays — production always passes 17 COCO
+    # points, but the public docstring promises "any length" so callers
+    # with incomplete data shouldn't crash.
+    if len(kps) > max(L_SHOULDER, R_SHOULDER, L_HIP, R_HIP) and (
+            _kp_visible(kps[L_SHOULDER]) and _kp_visible(kps[R_SHOULDER]) and
             _kp_visible(kps[L_HIP]) and _kp_visible(kps[R_HIP])):
         s_mid = _midpoint(kps[L_SHOULDER], kps[R_SHOULDER])
         h_mid = _midpoint(kps[L_HIP], kps[R_HIP])
@@ -163,7 +167,14 @@ def classify_action(keypoints: list[list],
     if not keypoints:
         return {"action": "unknown", "confidence": 0, "details": {}}
 
-    kps = keypoints
+    # Pad short arrays with zero-confidence placeholders so each branch's
+    # `_kp_visible(kps[INDEX])` lookups never IndexError. Production
+    # pose-detector always emits all 17 COCO points, but the public
+    # docstring promises "any length" and the classifier shouldn't crash
+    # if a future caller passes a partial.
+    kps = list(keypoints)
+    if len(kps) < 17:
+        kps = kps + [[0, 0, 0.0]] * (17 - len(kps))
     details = {}
     scale = _body_scale(kps, bbox)
     details["body_scale_px"] = round(scale, 1)

@@ -107,19 +107,25 @@ def fake_redis():
 
 
 @pytest.fixture
-def setup_routes(fake_redis):
-    """Set up the routes context module with fake Redis."""
+def setup_routes(fake_redis, monkeypatch):
+    """Set up the routes context module with fake Redis.
+
+    After the Phase G symmetric refactor, every stream key is per-camera
+    (events:cam1, frames:cam1, …). The dashboard reads the camera list
+    from the `cameras` registry module; we stub it to a deterministic
+    1-camera list so tests don't depend on a real Redis registry."""
     import routes as ctx
     ctx.r = fake_redis
     ctx.logger = __import__("logging").getLogger("test_vehicles")
     ctx.FACE_API_URL = "http://localhost:8081"
-    ctx.EVENT_STREAM = "events:test_cam"
-    ctx.FRAME_STREAM = "frames:test_cam"
-    ctx.DETECTION_STREAM = "detections:pose:test_cam"
-    ctx.STATE_KEY = "state:test_cam"
-    ctx.CONFIG_KEY = "config:pipeline"
-    ctx.IDENTITY_KEY = "identity_state:test_cam"
-    ctx.ZONE_KEY = "zones:test_cam"
+    ctx.CAMERA_ID = "cam1"
+    ctx.EVENT_STREAM = "events:cam1"
+    ctx.FRAME_STREAM = "frames:cam1"
+    ctx.DETECTION_STREAM = "detections:pose:cam1"
+    ctx.STATE_KEY = "state:cam1"
+    ctx.CONFIG_KEY = "config:cam1"
+    ctx.IDENTITY_KEY = "identity_state:cam1"
+    ctx.ZONE_KEY = "zones:cam1"
     ctx.AUTH_DB_PATH = ""
     ctx.DEFAULT_CONFIG = {
         "confidence_thresh": "0.6",
@@ -127,6 +133,15 @@ def setup_routes(fake_redis):
         "lost_timeout": "5",
         "target_fps": "8",
     }
+    # Stub the cameras registry so routes that iterate over enabled
+    # cameras (events, metrics, etc.) see exactly one test camera.
+    import cameras as _cam
+    monkeypatch.setattr(_cam, "enabled_camera_ids", lambda: ["cam1"])
+    monkeypatch.setattr(
+        _cam, "list_enabled_cameras",
+        lambda: [{"id": "cam1", "name": "test", "detect_vehicles": True}],
+    )
+    monkeypatch.setattr(_cam, "camera_friendly_name", lambda cid: "test")
     return ctx
 
 
@@ -161,14 +176,17 @@ def browse_client(setup_routes, tmp_path):
 # ===========================================================================
 # Event API — Vehicle field presence
 # ===========================================================================
-@pytest.mark.stale  # EVENT_STREAM key template moved to per-camera; fixture writes to wrong key
 class TestEventApiVehicleFields:
-    """Verify GET /api/events returns vehicle-specific fields."""
+    """Verify GET /api/events returns vehicle-specific fields.
+
+    After Phase G the route enumerates cameras via the registry and reads
+    `events:<cam_id>` for each — the fixture stubs that to ['cam1'] and
+    these tests seed events:cam1 directly."""
 
     def test_vehicle_event_has_vehicle_class(self, event_client, fake_redis, setup_routes):
         """vehicle_detected events must include vehicle_class in API response."""
         client, _ = event_client
-        fake_redis._streams[setup_routes.EVENT_STREAM] = [
+        fake_redis._streams["events:cam1"] = [
             ("5000-0", {
                 "event_type": "vehicle_detected",
                 "person_id": "",
@@ -176,7 +194,7 @@ class TestEventApiVehicleFields:
                 "vehicle_class": "truck",
                 "vehicle_confidence": "0.87",
                 "snapshot_key": "vehicle_snapshot:cam1:1708000000",
-                "camera_id": "test_cam",
+                "camera_id": "cam1",
                 "zone": "driveway",
                 "alert_triggered": "True",
             }),
@@ -193,13 +211,13 @@ class TestEventApiVehicleFields:
     def test_person_event_has_empty_vehicle_fields(self, event_client, fake_redis, setup_routes):
         """Person events should still work and have empty vehicle fields."""
         client, _ = event_client
-        fake_redis._streams[setup_routes.EVENT_STREAM] = [
+        fake_redis._streams["events:cam1"] = [
             ("3000-0", {
                 "event_type": "person_appeared",
                 "person_id": "p42",
                 "timestamp": "1708000000",
                 "action": "standing",
-                "camera_id": "test_cam",
+                "camera_id": "cam1",
             }),
         ]
         resp = client.get("/api/events?count=10")
@@ -213,12 +231,12 @@ class TestEventApiVehicleFields:
     def test_mixed_events_vehicle_and_person(self, event_client, fake_redis, setup_routes):
         """Both person and vehicle events in same stream handled correctly."""
         client, _ = event_client
-        fake_redis._streams[setup_routes.EVENT_STREAM] = [
+        fake_redis._streams["events:cam1"] = [
             ("1000-0", {
                 "event_type": "person_appeared",
                 "person_id": "p1",
                 "timestamp": "1000",
-                "camera_id": "test_cam",
+                "camera_id": "cam1",
             }),
             ("2000-0", {
                 "event_type": "vehicle_detected",
@@ -227,7 +245,7 @@ class TestEventApiVehicleFields:
                 "vehicle_class": "car",
                 "vehicle_confidence": "0.95",
                 "snapshot_key": "vehicle_snapshot:cam1:2000",
-                "camera_id": "test_cam",
+                "camera_id": "cam1",
             }),
         ]
         resp = client.get("/api/events?count=10")
@@ -295,12 +313,16 @@ class TestBrowseDays:
 class TestBrowseDaySnapshots:
     """Tests for GET /api/browse/days/{date} snapshot listing."""
 
-    @pytest.mark.stale  # snapshot subdir layout changed to per-camera; fixture path wrong
     def test_list_snapshots_for_day(self, browse_client):
-        """Lists snapshots for a given day with parsed time and class."""
+        """Lists snapshots for a given day with parsed time and class.
+
+        Phase G moved snapshot storage to a per-camera subdir layout
+        ({VEHICLE_SNAPSHOT_DIR}/{camera_id}/{date}/{file}). The serve URL
+        now includes the camera segment: /api/browse/snapshot/<cam>/<date>/<file>.
+        Snapshots written at the legacy flat path map to a '_legacy' segment."""
         client, vehicle_dir = browse_client
 
-        day = vehicle_dir / "2025-02-20"
+        day = vehicle_dir / "cam1" / "2025-02-20"
         day.mkdir(parents=True)
         (day / "14-30-55_car.jpg").write_bytes(b"\xff\xd8fake")
         (day / "15-00-10_motorcycle.jpg").write_bytes(b"\xff\xd8fake")
@@ -312,7 +334,8 @@ class TestBrowseDaySnapshots:
         # Sorted newest first
         assert snaps[0]["time"] == "15:00:10"
         assert snaps[0]["vehicle_class"] == "motorcycle"
-        assert snaps[0]["url"] == "/api/browse/snapshot/2025-02-20/15-00-10_motorcycle.jpg"
+        assert snaps[0]["url"] == "/api/browse/snapshot/cam1/2025-02-20/15-00-10_motorcycle.jpg"
+        assert snaps[0]["camera"] == "cam1"
         assert snaps[1]["time"] == "14:30:55"
         assert snaps[1]["vehicle_class"] == "car"
 
@@ -587,9 +610,13 @@ class TestTrackerVehicleEvent:
 # ===========================================================================
 # TrackedVehicle — is_stationary, center_history, snapshot_bbox
 # ===========================================================================
-@pytest.mark.stale  # is_stationary rewrote to median-of-rolling-window; rewrite per Batch D
 class TestTrackedVehicleStationary:
-    """Unit tests for TrackedVehicle.is_stationary and related state."""
+    """Unit tests for TrackedVehicle.is_stationary and related state.
+
+    is_stationary compares the CURRENT center against the MEDIAN of the
+    rolling 20-sample history (~4s at 5 FPS). Threshold scales with bbox
+    width: max(8 px, bbox_w * 0.10). The default test bbox is 200 px wide
+    → threshold = 20 px. Requires ≥ 5 samples; fewer always returns False."""
 
     def _make_vehicle(self, bbox=None, timestamp=0.0):
         """Create a TrackedVehicle with default values."""
@@ -608,7 +635,7 @@ class TestTrackedVehicleStationary:
         veh = self._make_vehicle()
         # Feed same bbox 9 more times (1 from __init__ + 9 = 10 total)
         for i in range(1, 10):
-            veh.update([100, 200, 300, 400], 0.9, float(i))
+            veh.update([100, 200, 300, 400], "car", 0.9, float(i))
         assert len(veh.center_history) == 10
         assert veh.is_stationary is True
 
@@ -616,17 +643,15 @@ class TestTrackedVehicleStationary:
         """Vehicle shifting 50px per frame → is_stationary == False."""
         veh = self._make_vehicle()
         for i in range(1, 10):
-            # Shift x1,x2 by 50px each frame
             shifted_bbox = [100 + i * 50, 200, 300 + i * 50, 400]
-            veh.update(shifted_bbox, 0.9, float(i))
+            veh.update(shifted_bbox, "car", 0.9, float(i))
         assert veh.is_stationary is False
 
     def test_not_stationary_with_few_frames(self):
         """< 5 frames → always False (not enough data)."""
         veh = self._make_vehicle()
-        # Only 1 center from __init__, add 2 more = 3 total
-        veh.update([100, 200, 300, 400], 0.9, 1.0)
-        veh.update([100, 200, 300, 400], 0.9, 2.0)
+        veh.update([100, 200, 300, 400], "car", 0.9, 1.0)
+        veh.update([100, 200, 300, 400], "car", 0.9, 2.0)
         assert len(veh.center_history) == 3
         assert veh.is_stationary is False
 
@@ -634,7 +659,7 @@ class TestTrackedVehicleStationary:
         """Exactly 5 frames at same position → is_stationary == True."""
         veh = self._make_vehicle()
         for i in range(1, 5):  # 1 from init + 4 = 5 total
-            veh.update([100, 200, 300, 400], 0.9, float(i))
+            veh.update([100, 200, 300, 400], "car", 0.9, float(i))
         assert len(veh.center_history) == 5
         assert veh.is_stationary is True
 
@@ -642,36 +667,34 @@ class TestTrackedVehicleStationary:
         """After 25 updates, center_history should be capped at 20."""
         veh = self._make_vehicle()
         for i in range(1, 26):  # 1 from init + 25 = 26 attempts
-            veh.update([100, 200, 300, 400], 0.9, float(i))
+            veh.update([100, 200, 300, 400], "car", 0.9, float(i))
         assert len(veh.center_history) == 20
 
-    def test_stationary_boundary_29px_is_stationary(self):
-        """Center drift of exactly 29px → is_stationary == True (< 30px)."""
+    def test_stationary_boundary_under_threshold(self):
+        """bbox_w=200 → threshold = 20 px. Current-vs-median drift of 19 px
+        is below threshold → still stationary."""
         veh = self._make_vehicle(bbox=[100, 200, 300, 400])
-        # Center starts at (200, 300). Shift bbox so center drifts by 29px
-        # horizontally: new center = (229, 300) → drift = 29px
+        # 5 same-position updates so the median sits at (200, 300)
         for i in range(1, 6):
-            veh.update([100, 200, 300, 400], 0.9, float(i))
-        # Final frame: shift center by 29px
-        veh.update([129, 200, 329, 400], 0.9, 6.0)
+            veh.update([100, 200, 300, 400], "car", 0.9, float(i))
+        # Shift current bbox so its center is 19 px to the right of median
+        veh.update([119, 200, 319, 400], "car", 0.9, 6.0)
         assert veh.is_stationary is True
 
-    def test_stationary_boundary_31px_is_not_stationary(self):
-        """Center drift of 31px → is_stationary == False (>= 30px)."""
+    def test_stationary_boundary_over_threshold(self):
+        """Drift of 21 px exceeds the 20 px threshold → not stationary."""
         veh = self._make_vehicle(bbox=[100, 200, 300, 400])
         for i in range(1, 6):
-            veh.update([100, 200, 300, 400], 0.9, float(i))
-        # Final frame: shift center by 31px
-        veh.update([131, 200, 331, 400], 0.9, 6.0)
+            veh.update([100, 200, 300, 400], "car", 0.9, float(i))
+        # Final frame: shift current bbox center by 21 px (just over)
+        veh.update([121, 200, 321, 400], "car", 0.9, 6.0)
         assert veh.is_stationary is False
 
     def test_snapshot_bbox_preserved_after_update(self):
         """snapshot_bbox should stay at initial bbox even after updates."""
         veh = self._make_vehicle(bbox=[100, 200, 300, 400])
-        # snapshot_bbox is set to initial bbox
         assert veh.snapshot_bbox == [100, 200, 300, 400]
-        # Update with different bbox
-        veh.update([110, 210, 310, 410], 0.9, 1.0)
+        veh.update([110, 210, 310, 410], "car", 0.9, 1.0)
         # snapshot_bbox should not change from update()
         assert veh.snapshot_bbox == [100, 200, 300, 400]
         # bbox should be the latest

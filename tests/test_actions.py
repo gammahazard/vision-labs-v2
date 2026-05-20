@@ -178,32 +178,46 @@ class TestArmsRaised:
         result = classify_action(kps)
         assert result["action"] != "arms_raised"
 
-    @pytest.mark.stale  # threshold changed in scaled-pixel refactor; rewrite for body-scale ratio
     def test_arms_slightly_above_not_raised(self):
-        """Arms only slightly above shoulder (within 30px margin) should NOT trigger."""
+        """Arms only slightly above shoulder should NOT trigger.
+
+        ARMS_RAISED_RATIO = 0.10 of body scale. Default keypoints have
+        shoulder y=180, hip y=350 → body scale ≈ 170 → trigger threshold
+        = max(8, 170*0.10) = 17 px. A wrist 10 px above shoulder is
+        below threshold → not raised."""
         kps = make_keypoints({
-            L_WRIST: [250, 160, 0.9],  # Only 20px above shoulder — below 30px threshold
-            R_WRIST: [390, 160, 0.9],
+            L_WRIST: [250, 170, 0.9],  # Only 10 px above shoulder y=180
+            R_WRIST: [390, 170, 0.9],
         })
         result = classify_action(kps)
         assert result["action"] != "arms_raised"
 
 
 class TestLyingDown:
-    @pytest.mark.stale  # LYING_TORSO_VERT_RATIO refactor changed the threshold
     def test_horizontal_torso(self):
-        """Person lying on their side (horizontal torso) is classified as lying_down."""
+        """Person lying on their side (horizontal torso) is classified as lying_down.
+
+        Lying check needs:
+          - torso_width > torso_height * LYING_HORIZ_OVER_VERT (1.5×)
+          - torso_height < scale * LYING_TORSO_VERT_RATIO (0.20)
+
+        Body scale defaults to torso (shoulder-hip y-distance). When the
+        torso is nearly horizontal that's almost zero, so scale falls
+        back to bbox-derived (40% of bbox height). We pass a bbox here
+        to make the fallback scale large enough that 5-px y-diff fits
+        the threshold."""
         kps = make_keypoints({
             # Shoulders and hips at same height but spread horizontally
             L_SHOULDER: [100, 300, 0.9],
             R_SHOULDER: [200, 300, 0.9],
-            L_HIP: [300, 310, 0.9],       # Nearly same y, far x
-            R_HIP: [400, 310, 0.9],
+            L_HIP: [400, 305, 0.9],       # 5 px y-diff, big x-span
+            R_HIP: [500, 305, 0.9],
             # Move wrists down so arms_raised doesn't trigger
             L_WRIST: [80, 320, 0.8],
             R_WRIST: [420, 320, 0.8],
         })
-        result = classify_action(kps)
+        # bbox y-span 400 → scale = 160 → lying y-max = max(10, 160*0.2) = 32 px
+        result = classify_action(kps, bbox=[80, 100, 520, 500])
         assert result["action"] == "lying_down"
 
 
@@ -241,12 +255,14 @@ class TestEdgeCases:
         result = classify_action(None)
         assert result["action"] == "unknown"
 
-    @pytest.mark.stale  # classifier now indexes into keypoint list defensively; behavior changed
     def test_too_few_keypoints(self):
-        """Fewer than 17 keypoints returns unknown."""
+        """Short keypoint arrays must not crash. Production always passes 17
+        but the public API tolerates any length — missing indices are
+        treated as invisible keypoints and the classifier falls through
+        to 'standing' (the default when nothing positive triggers)."""
         kps = [[0, 0, 0.9]] * 10  # Only 10 keypoints
         result = classify_action(kps)
-        assert result["action"] == "unknown"
+        assert result["action"] in ("standing", "unknown")
 
     def test_all_low_confidence(self):
         """All keypoints with low confidence falls back to standing."""
