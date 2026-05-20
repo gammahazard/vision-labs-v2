@@ -45,7 +45,9 @@ Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubun
 
 ### Setup walkthrough
 
-![Setup wizard](docs/images/setup-flow.gif)
+<p align="center">
+  <img src="docs/images/setup-flow.gif" alt="Setup wizard walkthrough" width="800" />
+</p>
 
 The first-run wizard handles hardware detection, GPU tier recommendation, ONVIF camera discovery, location + retention, and Telegram pairing — about 90 seconds end-to-end.
 

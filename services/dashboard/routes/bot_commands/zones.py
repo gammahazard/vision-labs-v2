@@ -43,11 +43,18 @@ async def _cmd_zones(chat_id: str = "", text: str = "", **kwargs):
     """Send a camera snapshot with all security zones drawn on it.
 
     Zones are per-camera, so:
-      /zones            — primary camera
+      /zones            — picker (if >1 camera) or primary
       /zones basement   — that camera
       /zones all        — one image per camera with its own zones drawn
     """
     from contracts.streams import ZONE_KEY as _ZONE_TMPL, stream_key as _stream_key
+
+    # If the user didn't name a camera and we have more than one configured,
+    # surface the same inline-keyboard picker that /snapshot and /clip use —
+    # zones are per-camera so "which camera" is the most useful disambiguation.
+    if not _user_specified_camera(text) and len(_telegram_get_cameras()) > 1:
+        await _send_camera_picker(chat_id, "zones")
+        return
 
     cam_ids, _ = _resolve_camera_token(text)
     if not cam_ids:
