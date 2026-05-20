@@ -331,8 +331,13 @@ async def chat(req: ChatRequest):
                     "know the busiest hour from query_event_patterns, pass "
                     "it as the `time` arg (formatted HH:MM, e.g. 20:00). "
                     "Camera should be the one with the highest count from "
-                    "top_hours[0].per_camera. Then rewrite your reply with "
-                    "the markdown link `[Open the clip](<deep_link>)`."
+                    "top_hours[0].per_camera.\n\n"
+                    "Then respond again, keeping ALL the content of your "
+                    "previous reply (detection counts, busiest-hour numbers, "
+                    "top hours, etc.) VERBATIM, and appending the markdown "
+                    "link `[Open the clip in the DVR tab](<deep_link>)` at "
+                    "the end. Do NOT shorten or replace your earlier "
+                    "answer — only ADD the link."
                 ),
             })
             response = await asyncio.wait_for(
