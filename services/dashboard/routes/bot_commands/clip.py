@@ -38,6 +38,10 @@ from ._shared import (
     _camreg,
 )
 
+# Vision-analysis helpers live in analyze.py (they originated together in the
+# legacy monolithic bot_commands.py; the R3 split moved them with /analyze).
+from .analyze import _extract_clip_frames, _describe_scene_multi
+
 
 async def _cmd_clip(chat_id: str = "", text: str = "",
                     user_id: str = "", username: str = "", **kwargs):

@@ -41,6 +41,16 @@ from routes.notifications import (
     REDIS_HOST, REDIS_PORT,
 )
 
+# Ollama config — used by /ask (chat) and /analyze (vision).
+# CHAT_MODEL is aliased to OLLAMA_MODEL to match the name used inside the
+# legacy bot_commands.py the R3 split came from.
+from constants import (
+    OLLAMA_HOST,
+    OLLAMA_KEEP_ALIVE,
+    VISION_MODEL,
+    CHAT_MODEL as OLLAMA_MODEL,
+)
+
 import cameras as _camreg
 
 logger = logging.getLogger("dashboard.notifications")
@@ -52,6 +62,9 @@ _TELEGRAM_OFFSET_KEY = "telegram:last_offset"
 
 # Telegram audit trail directory (per-user command logs + media)
 TELEGRAM_LOG_DIR = os.environ.get("TELEGRAM_LOG_DIR", "/data/telegram")
+
+# Snapshot directory (must match routes/events.py — both consumers read the same tree)
+SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", "/data/snapshots")
 
 
 def _log_telegram_command(username: str, user_id: str, command: str,

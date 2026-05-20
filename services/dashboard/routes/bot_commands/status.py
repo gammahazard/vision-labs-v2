@@ -36,6 +36,7 @@ from ._shared import (
     _send_camera_picker, _resolve_camera_token, _get_user_role,
     _send_long_text,
     _camreg,
+    make_redis_client, REDIS_HOST, REDIS_PORT,
 )
 
 
