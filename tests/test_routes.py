@@ -575,9 +575,11 @@ class TestNotificationRoutes:
 
     def test_notification_status_unconfigured(self, notif_client, monkeypatch):
         """When no bot token is set, status should report unconfigured."""
-        import routes.notifications as notif_mod
-        monkeypatch.setattr(notif_mod, "TELEGRAM_BOT_TOKEN", "")
-        monkeypatch.setattr(notif_mod, "TELEGRAM_CHAT_ID", "")
+        # is_configured() lives in routes.notifications._shared after the
+        # R6 split, so patch the constants there (not on the package facade).
+        from routes.notifications import _shared
+        monkeypatch.setattr(_shared, "TELEGRAM_BOT_TOKEN", "")
+        monkeypatch.setattr(_shared, "TELEGRAM_CHAT_ID", "")
 
         resp = notif_client.get("/api/notifications/status")
         assert resp.status_code == 200
@@ -585,9 +587,9 @@ class TestNotificationRoutes:
 
     def test_notification_status_configured(self, notif_client, monkeypatch):
         """When bot token and chat ID are set, status should report configured."""
-        import routes.notifications as notif_mod
-        monkeypatch.setattr(notif_mod, "TELEGRAM_BOT_TOKEN", "12345:ABC")
-        monkeypatch.setattr(notif_mod, "TELEGRAM_CHAT_ID", "67890")
+        from routes.notifications import _shared
+        monkeypatch.setattr(_shared, "TELEGRAM_BOT_TOKEN", "12345:ABC")
+        monkeypatch.setattr(_shared, "TELEGRAM_CHAT_ID", "67890")
 
         resp = notif_client.get("/api/notifications/status")
         assert resp.status_code == 200
