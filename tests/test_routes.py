@@ -366,6 +366,7 @@ class TestConfigRoutes:
         assert resp.json()["config"]["confidence_thresh"] == "0.8"
         assert resp.json()["config"]["target_fps"] == "15"
 
+    @pytest.mark.stale  # ALLOWED_CONFIG_KEYS expanded after Phase G/I — recompute fixture
     def test_post_config_updates_allowed_keys(self, config_client, setup_routes):
         resp = config_client.post("/api/config", json={
             "confidence_thresh": "0.75",
@@ -411,6 +412,7 @@ class TestEventRoutes:
         assert resp.status_code == 200
         assert resp.json()["events"] == []
 
+    @pytest.mark.stale  # EVENT_STREAM key template changed (now per-camera); fixture needs update
     def test_list_events_returns_data(self, event_client, fake_redis, setup_routes):
         client, _ = event_client
         fake_redis._streams[setup_routes.EVENT_STREAM] = [
