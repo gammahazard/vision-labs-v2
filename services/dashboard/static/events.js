@@ -106,12 +106,18 @@ const EVENT_FILTERS = [
     { key: "alerts",   label: "🚨 Alerts",   types: ["unauthorized_access"] },
 ];
 let _activeFilterKey = "all";
+let _activeCameraFilter = "all";  // "all" or a camera id like "cam1"
 let _searchQuery = "";  // lower-cased; "" = no filter
 
 function _eventMatchesFilter(eventType) {
     const f = EVENT_FILTERS.find(x => x.key === _activeFilterKey);
     if (!f || !f.types) return true;
     return f.types.includes(eventType);
+}
+
+function _eventMatchesCamera(itemEl) {
+    if (_activeCameraFilter === "all") return true;
+    return itemEl.dataset.cameraId === _activeCameraFilter;
 }
 
 function _eventMatchesSearch(itemEl) {
@@ -134,7 +140,9 @@ function _applyFilterToDom() {
     let visible = 0;
     for (const ch of eventList.children) {
         if (!ch.classList || !ch.classList.contains("event-item")) continue;
-        const match = _eventMatchesFilter(ch.dataset.eventType) && _eventMatchesSearch(ch);
+        const match = _eventMatchesFilter(ch.dataset.eventType)
+                   && _eventMatchesCamera(ch)
+                   && _eventMatchesSearch(ch);
         ch.style.display = match ? "" : "none";
         if (match) visible++;
     }
@@ -177,7 +185,7 @@ function _setActiveFilter(key) {
 function _renderEventFilterBar() {
     const bar = document.getElementById("eventFilterBar");
     if (!bar || bar.dataset.rendered === "1") return;
-    bar.innerHTML = EVENT_FILTERS.map(f => `
+    const pillsHtml = EVENT_FILTERS.map(f => `
         <button type="button" role="tab" class="event-filter-pill${f.key === _activeFilterKey ? " active" : ""}"
                 data-filter-key="${f.key}"
                 aria-selected="${f.key === _activeFilterKey}"
@@ -188,11 +196,41 @@ function _renderEventFilterBar() {
                        transition:all 0.15s ease;
                        -webkit-tap-highlight-color:transparent;">${f.label}</button>
     `).join("");
+    // Camera filter dropdown — populated from /api/cameras (async, see below).
+    // Only renders if the page is showing aggregate events (Recent Activity on
+    // index.html). The single-camera detail view doesn't need it.
+    const cameraDropdownHtml = window.EVENT_FEED_CAMERA === undefined || window.EVENT_FEED_CAMERA === ""
+        ? `<select id="eventCameraFilter" aria-label="Filter by camera"
+                  style="padding:5px 8px;font-size:12px;border-radius:14px;cursor:pointer;
+                         border:1px solid rgba(96,165,250,0.35);
+                         background:rgba(96,165,250,0.06);
+                         color:#cbd5e1;margin-left:6px;">
+              <option value="all">📷 All cameras</option>
+           </select>`
+        : "";
+    bar.innerHTML = pillsHtml + cameraDropdownHtml;
     bar.dataset.rendered = "1";
     bar.addEventListener("click", (e) => {
         const btn = e.target.closest(".event-filter-pill");
         if (btn) _setActiveFilter(btn.dataset.filterKey);
     });
+    const camSel = document.getElementById("eventCameraFilter");
+    if (camSel) {
+        camSel.addEventListener("change", () => {
+            _activeCameraFilter = camSel.value || "all";
+            _applyFilterToDom();
+        });
+        // Populate camera list async — non-blocking
+        fetch("/api/cameras").then(r => r.json()).then(data => {
+            const cams = data.cameras || [];
+            for (const c of cams) {
+                const opt = document.createElement("option");
+                opt.value = c.id;
+                opt.textContent = `📷 ${c.name || c.id}`;
+                camSel.appendChild(opt);
+            }
+        }).catch(() => { /* dropdown stays at "All cameras" */ });
+    }
 }
 
 /**

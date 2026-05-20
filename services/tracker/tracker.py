@@ -103,6 +103,13 @@ MAX_EVENT_STREAM_LEN = int(os.getenv("MAX_EVENT_STREAM_LEN", "5000"))      # cap
 VEHICLE_IDLE_TIMEOUT = float(os.getenv("VEHICLE_IDLE_TIMEOUT", "90.0"))    # seconds stationary before idle alert
 VEHICLE_LOST_TIMEOUT = float(os.getenv("VEHICLE_LOST_TIMEOUT", "10.0"))    # seconds before dropping a tracked vehicle
 VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))   # lower than person IoU — parked cars don't move much
+# When a vehicle goes stale, hold its identity in a ghost buffer for this many
+# seconds. A new detection of the same class within VEHICLE_GHOST_MAX_DIST_RATIO
+# × bbox_width of the ghost's last center re-associates instead of creating a
+# new vehicle. Eliminates "detected → left → detected" triple-event for a
+# single car driving through a dead-zone.
+VEHICLE_GHOST_TTL = float(os.getenv("VEHICLE_GHOST_TTL", "30.0"))
+VEHICLE_GHOST_MAX_DIST_RATIO = float(os.getenv("VEHICLE_GHOST_MAX_DIST_RATIO", "2.0"))
 CONFIG_RELOAD_INTERVAL = int(os.getenv("CONFIG_RELOAD_INTERVAL", "10"))    # check config every N detection messages
 ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))    # frames a new action must be stable for
 ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "1")) # once set, require N×multiplier to change away (1 = no stickiness)
@@ -433,6 +440,12 @@ class PersonTracker:
         self.frame_height = 480  # Updated from detection messages
         self._identity_load_time = 0  # Timestamp of last identity load
         self.tracked_vehicles: dict[str, TrackedVehicle] = {}  # vehicle_id → TrackedVehicle
+        # Ghost vehicles — recently-lost vehicles kept alive for re-association
+        # so a single car driving through a dead-zone doesn't fire detected →
+        # left → detected (three events for one car). Keyed by vehicle_id,
+        # value is (TrackedVehicle, timestamp_when_ghosted). Expired ghosts
+        # emit vehicle_left at expiry time, not the moment they went stale.
+        self._ghost_vehicles: dict[str, tuple] = {}
         self._next_vehicle_id = 1  # Simple incrementing ID counter
         self.vehicle_idle_timeout = VEHICLE_IDLE_TIMEOUT  # Hot-reloadable via Redis config
         self.suppress_known = False  # Hot-reloadable: skip alerts for identified people
@@ -586,6 +599,24 @@ class PersonTracker:
                     best_iou = iou
                     best_match_id = vid
 
+            # Try ghost re-association before treating as a brand-new vehicle.
+            # A ghost is a recently-lost vehicle (within VEHICLE_GHOST_TTL).
+            # If the new detection is close enough in space + same class, we
+            # revive it under its original ID and DO NOT emit vehicle_detected
+            # again — this is the same car re-emerging from a dead-zone or a
+            # brief occlusion.
+            if not best_match_id:
+                ghost_id = self._try_ghost_match(bbox, class_name, timestamp)
+                if ghost_id:
+                    veh, _ = self._ghost_vehicles.pop(ghost_id)
+                    veh.update(bbox, class_name, confidence, timestamp)
+                    self.tracked_vehicles[ghost_id] = veh
+                    logger.info(
+                        f"vehicle {ghost_id} re-associated from ghost buffer "
+                        f"(class={class_name}, no new vehicle_detected emitted)"
+                    )
+                    continue  # skip new-vehicle branch below
+
             if best_match_id:
                 # --- Existing vehicle: update state ---
                 veh = self.tracked_vehicles[best_match_id]
@@ -631,14 +662,49 @@ class PersonTracker:
                 # two vehicles arrived within 3 seconds of each other.
                 self._emit_vehicle_detected_event(veh, timestamp)
 
-        # --- Step 2: Prune stale vehicles + emit vehicle_left ---
+        # --- Step 2: Move stale vehicles to ghost buffer (deferred vehicle_left) ---
+        # Instead of firing vehicle_left immediately when a vehicle goes stale,
+        # we move it to _ghost_vehicles. If the same vehicle re-appears within
+        # VEHICLE_GHOST_TTL seconds, we re-associate (no leave event ever fires).
+        # If it doesn't, we emit vehicle_left at ghost expiry.
         stale_ids = [
             vid for vid, veh in self.tracked_vehicles.items()
             if timestamp - veh.last_seen > VEHICLE_LOST_TIMEOUT
         ]
         for vid in stale_ids:
-            self._emit_vehicle_left_event(self.tracked_vehicles[vid], timestamp)
-            del self.tracked_vehicles[vid]
+            veh = self.tracked_vehicles.pop(vid)
+            self._ghost_vehicles[vid] = (veh, timestamp)
+
+        # --- Step 2b: Expire ghosts past TTL and emit their (deferred) vehicle_left ---
+        expired_ghost_ids = [
+            vid for vid, (_, ghost_ts) in self._ghost_vehicles.items()
+            if timestamp - ghost_ts > VEHICLE_GHOST_TTL
+        ]
+        for vid in expired_ghost_ids:
+            veh, _ = self._ghost_vehicles.pop(vid)
+            self._emit_vehicle_left_event(veh, timestamp)
+
+    def _try_ghost_match(self, bbox: list, class_name: str, timestamp: float) -> str | None:
+        """If a recently-departed vehicle is near this bbox, return its id.
+        Otherwise None. Same-class only — don't match a "car" to a "truck"."""
+        if not self._ghost_vehicles:
+            return None
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        bbox_w = max(1.0, bbox[2] - bbox[0])
+        max_dist = bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO
+        best_id = None
+        best_dist = max_dist
+        for vid, (veh, _ts) in self._ghost_vehicles.items():
+            if veh.class_name != class_name:
+                continue  # cars don't morph into trucks mid-occlusion
+            gx = (veh.bbox[0] + veh.bbox[2]) / 2
+            gy = (veh.bbox[1] + veh.bbox[3]) / 2
+            dist = ((cx - gx) ** 2 + (cy - gy) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_id = vid
+        return best_id
 
     def _emit_vehicle_detected_event(self, veh: 'TrackedVehicle', timestamp: float):
         """Emit a vehicle_detected event to the events stream."""
