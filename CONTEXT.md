@@ -257,7 +257,7 @@ This is the biggest service. Read this section when working on UI, routes, or ba
 2. Default `config:{camN}` seeding for any registered cam with empty config hash.
 3. `auto_mark_complete_if_preexisting()` — writes setup.json automatically if registry already has cameras (upgraded install).
 4. AI DB init (`/data/ai.db`).
-5. Background asyncio tasks: `event_notification_poller`, `poll_telegram_callbacks`, `reminder_poller`, `warm_ollama`, `retention_poller`, `start_metrics_collector`.
+5. Background asyncio tasks: `event_notification_poller`, `poll_telegram_callbacks`, `reminder_poller`, `warm_ollama`, `retention_poller`, `health_poller` (disk + Redis memory alerts), `start_metrics_collector`.
 6. WebSocket registered via `register_websocket(app)`.
 7. StaticFiles mounted AFTER routers (so `/api/*` wins over static `index.html`).
 8. **auth_middleware** (line 204) validates `vl_session` cookie via `validate_session`. Redirects to `/login.html` (HTML routes) or returns 401 (API routes).
@@ -303,9 +303,10 @@ Prefix shown in parens. Most routes auth-gated by middleware (not per-endpoint d
 
 ### 6.4 `pollers/`
 - **`events.py`** — `event_notification_poller` reads each registered camera's events stream, dispatches Telegram + saves snapshots to `/data/snapshots/{cam}/{event_id}.jpg` + appends to `/data/events/YYYY-MM-DD.jsonl`.
-- **`ollama_warmup.py`** — `warm_ollama()` pulls chat + vision models if missing, sends a real warm-up chat to force VRAM load, signals `set_gpu_ready_flag(True)`.
+- **`ollama_warmup.py`** — `warm_ollama()` pulls the chat model if missing, sends a real warm-up chat to force it into VRAM, signals `set_gpu_ready_flag(True)`. Also pulls `VISION_MODEL` (MiniCPM-V) via `_ensure_vision_model()` so first Telegram alert with auto-description doesn't fail — added 2026-05-20.
 - **`reminders.py`** — `reminder_poller(_ai_db)` walks `reminders` table in ai.db, fires Telegram messages when due.
 - **`retention.py`** — Daily prune of `/data/snapshots` and `/data/events` (default 4 days; `SNAPSHOT_RETENTION_DAYS=0` disables).
+- **`health.py`** — Watches disk free space + Redis memory; emits a Telegram alert when either crosses configured thresholds (cooldowns per resource so a stuck condition doesn't spam).
 
 ### 6.5 `static/` — HTML pages + JS (reorganized 2026-05-19)
 
@@ -383,7 +384,7 @@ Users in `telegram:users` hash (managed via dashboard `/api/telegram/users`). Un
 ### Commands (all in `routes/bot_commands/`, one file per command)
 - Admin only (role=admin): `/arm`, `/disarm` (toggle notify_person + notify_vehicle on primary config).
 - User: `/snapshot [cam]`, `/clip [Ns] [cam]`, `/status [cam]`, `/who [cam]`, `/events [N] [cam]`, `/zones [cam]`, `/timelapse [YYYY-MM-DD] [cam]`, `/analyze [cam] [prompt]`, `/ask <q>`, `/rules`, `/night`, `/faces`, `/cameras`, `/start`, `/help`.
-- **Camera token parsing** — accepts cam id (`cam2`), friendly name (`basement`), prefix (`base`), or `all`. Bare commands with multiple cameras send an inline keyboard "tap to pick" with callback_data `cmd:<name>:<cam>` that re-dispatches a synthetic command.
+- **Camera token parsing** — accepts cam id (`cam2`), friendly name (`basement`), prefix (`base`), or `all`. Bare commands with multiple cameras send an inline keyboard "tap to pick" with callback_data `cmd:<name>:<cam>` that re-dispatches a synthetic command. Commands that opted into this picker: `/snapshot`, `/clip`, `/zones` (added 2026-05-20).
 - Photo handler runs MiniCPM-V on user-uploaded images.
 
 ### Broadcast (`routes/notifications/`)
@@ -400,7 +401,10 @@ Users in `telegram:users` hash (managed via dashboard `/api/telegram/users`). Un
 
 ### Storage
 - `/data/ai.db` (SQLite, volume `auth-data`). Tables: `ai_config` (single-row), `reminders`, `chat_history`.
-- Last 20 messages of client-supplied history fed back per request, plus dynamic system prompt.
+- Chat history window sent to Ollama is **6 messages** (3 user + 3 assistant) — was 20, cut on 2026-05-19 because long history was the #1 driver of Qwen regurgitating stale wrong answers instead of calling tools fresh. The client-side history view shows the full conversation; only the bus to Ollama is truncated.
+
+### Reliability ceiling
+Qwen 3 14B is the model — no swap to larger Ollama models or hosted Claude. The model is reliable for single-purpose questions ("how many vehicles yesterday?", "who was seen at 5pm?"). Compound multi-part questions still drift even with prompt + tool-result tuning. The AI tab suggestion chips were rewritten to single-purpose questions on 2026-05-19; visible tip in the UI: "💡 ask one thing at a time. Compound questions get muddled." Server-side enforcement loop in `routes/ai.py` detects DVR-link text without a real URL and re-prompts the model to append the link — caught a frequent hallucination class.
 
 ### Ollama config
 - `OLLAMA_HOST=http://ollama:11434`. `OLLAMA_CHAT_MODEL=qwen3:14b` (env, empty disables chat). `OLLAMA_VISION_MODEL=minicpm-v` (env, empty disables vision). `OLLAMA_KEEP_ALIVE=5m`. `OLLAMA_NUM_CTX=8192`.
@@ -433,11 +437,11 @@ Users in `telegram:users` hash (managed via dashboard `/api/telegram/users`). Un
 
 ### System prompt + chat flow
 - System prompt has an explicit `⚠️ ABSOLUTE RULE` banner at the top instructing the model to always call tools for factual queries and never copy numbers/identities from earlier assistant messages.
-- Chat history window sent to Ollama is **6 messages** (3 user + 3 assistant). Was 20 — reduced because long history was the #1 cause of Qwen regurgitating stale wrong answers instead of calling tools fresh.
+- See "Reliability ceiling" above for the chat-history window size and compound-question caveats.
 - `build_system_context()` (`ai_prompts.py`) aggregates zones + event-stream length across all registered cameras (not just primary). Face list is grouped by name (one entry per person, not one per photo).
 
 ### Media side-channel
-Base64 images would blow the LLM context (51KB JPEG ≈ 53k tokens vs 8k limit). `ai_state.py` stashes media per-request_id under a lock; the chat handler injects `![image]` / `<video>` HTML into the FINAL reply (ai.py:228–256). The LLM never sees the bytes.
+Base64 images would blow the LLM context (51KB JPEG ≈ 53k tokens vs 8k limit). `ai_state.py` stashes media per-request_id under a lock; the chat handler injects `![image]` / `<video>` HTML into the FINAL reply (see the `collect_media` calls around the end of `/api/ai/chat` in `routes/ai.py`). The LLM never sees the bytes.
 
 ---
 
@@ -452,9 +456,9 @@ Each cam slot has 6 services with `profiles: ["camN"]`:
 5. `face-recognizer-camN` (GPU, exposes 8081 internal-only)
 6. `tracker-camN` (no GPU)
 
-Slot block ranges in docker-compose.yml: cam1 starts at line 78, cam5 around line 957, with cam6–cam10 + cam11–cam20 templated after. (Run `grep -n "^  recorder-camN:" docker-compose.yml` to find the exact lines for any slot — the file is ~104 KB after 2026-05-19's expansion.) **Future work:** dynamic slot generation via orchestrator-written `docker-compose.override.yml` would remove the 20-slot ceiling entirely.
+Slot block ranges in docker-compose.yml: cam1's `recorder-cam1` block starts around line 371, cam5 around line 957, cam20 around line 3012; the file is ~3200 lines after 2026-05-19's expansion. Run `grep -n "^  recorder-camN:" docker-compose.yml` to find the exact line for any slot — these numbers drift quickly. **Future work:** dynamic slot generation via orchestrator-written `docker-compose.override.yml` would remove the 20-slot ceiling entirely.
 
-Detectors use `restart: on-failure` (NOT `unless-stopped`) so that a clean exit from the `detect_<type>=false` registry gate stays exited rather than restart-looping. Minor inconsistency: cam1's detector blocks still say `restart: unless-stopped` (compose lines 117, 187, 222) — holdover from when cam1 was the legacy primary.
+Detectors use `restart: on-failure` (NOT `unless-stopped`) so that a clean exit from the `detect_<type>=false` registry gate stays exited rather than restart-looping. Minor inconsistency: cam1's detector blocks still say `restart: unless-stopped` — holdover from when cam1 was the legacy primary. `grep -n "^  pose-detector-cam1:" docker-compose.yml` finds the start of the cam1 detector blocks if you want to verify.
 
 ### Always-on services (no profile)
 - `redis`, `ollama`, `dashboard`, `prometheus`, `grafana`, `redis-exporter`, `dcgm-exporter`, `orchestrator`, `portainer`.
@@ -578,7 +582,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 
 7. **Why dashboard has no Docker socket** — explicit security decision. Dashboard attack surface is huge (FastAPI + WS + REST + user-facing login). Orchestrator is tiny, no incoming HTTP. Docker control lives there; dashboard publishes pub/sub events.
 
-8. **`xreadgroup` block parameter trap on vehicle stream** — `tracker.py:923` deliberately omits `block` (or sets it to None). `block=0` means "block forever". Without this, the tracker would deadlock on cameras with `detect_vehicles=false` because the vehicle stream stays permanently empty.
+8. **`xreadgroup` block parameter trap on vehicle stream** — `services/tracker/core/main.py` deliberately omits `block` (or sets it to None) on the vehicle stream read. `block=0` means "block forever"; without this, the tracker would deadlock on cameras with `detect_vehicles=false` because the vehicle stream stays permanently empty. Pose-stream read uses `block=500` so the loop checks both streams every 500 ms.
 
 9. **Action events use debounce + sticky multiplier** — Action changes after `ACTION_DEBOUNCE_FRAMES=10` consecutive frames with the new label; once set, `ACTION_STICKY_MULTIPLIER=2` raises the threshold to 20 frames to change back. Eliminates posture-noise spam.
 
@@ -588,7 +592,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 
 12. **Face DB atomic cache swap** — `FaceDB._load_cache()` builds NEW lists, then assigns to `self._cache` / `self._unknown_cache` in single STORE_ATTR ops (atomic in CPython). Readers iterating OLD lists complete safely. This is what lets multiple face-recognizer containers sharing the same SQLite stay in sync — 30s refresh thread can run without lock contention.
 
-13. **Telegram bot token leak prevention** — `server.py:113` silences `httpx` logger to WARNING. httpx logs every outbound URL at INFO, which would include `https://api.telegram.org/bot<TOKEN>/sendMessage`.
+13. **Telegram bot token leak prevention** — `services/dashboard/server.py` silences the `httpx` logger to WARNING near the top of the module. httpx logs every outbound URL at INFO, which would include `https://api.telegram.org/bot<TOKEN>/sendMessage`.
 
 14. **WebSocket auth bypass guard** — middleware doesn't intercept WS upgrades, so `websocket.py` must `accept()` first (required to send a close frame), THEN validate cookie, THEN close with 4401 if invalid.
 
@@ -617,6 +621,10 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 26. **`build_clip` re-encodes to H.264** — OpenCV's mp4v (MPEG-4 Part 2) doesn't play inline in Telegram. `routes/notifications/frame.py` (the `build_clip` function) wraps the OpenCV output in ffmpeg `libx264 +faststart`.
 
 27. **`network_mode: host` on Prometheus implies localhost-only scrape addresses** — `prometheus.yml` uses `localhost:8080`, `localhost:9121`, `localhost:9400`. Grafana also reachable at `localhost:3000` only.
+
+28. **`EXTRA_COMPOSE_FILES` threads the registry overlay into orchestrator-issued compose calls.** Without it, a registry-pull install would silently rebuild cam2 services from source when the dashboard adds a new camera, because the orchestrator's compose CLI only sees `docker-compose.yml`. `install-linux.sh` writes `EXTRA_COMPOSE_FILES=/workspace/docker-compose.registry.yml` to `.env` on `--pull` (the default). The orchestrator reads it and prepends `-f <each-file>` to every compose invocation. Empty string on `--build` installs — no behavior change there.
+
+29. **Hard line numbers throughout this doc are best-effort.** Treat file/symbol references as truth; if `services/dashboard/server.py:113` doesn't match what's at line 113 today, search the file for the referenced symbol instead. The compose file especially has shifted (cam1 used to be near the top; expanding to 20 slots pushed everything down).
 
 ---
 
@@ -667,6 +675,36 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 - Load-older button visibility — explicit `display: "block"` / `"none"` instead of `""` (was inheriting flex container's display).
 - Grafana panel legendFormat: GPU panels (util/temp/power) and VRAM panel now label as `GPU{{gpu}} ... ({{modelName}})`.
 
+### Phase J — modularization (2026-05-19)
+- **`ai_tools.py` → `routes/ai_tools/` package.** One file per `_tool_*` entrypoint, plus `_shared.py` for KNOWN_EVENT_TYPES / EVENT_CATEGORIES / `_resolve_camera` etc., plus `__init__.py` aggregating SCHEMAS into the `TOOLS` list for the chat endpoint.
+- **`bot_commands.py` → `routes/bot_commands/` package.** `_poller.py` long-poll loop, `_dispatch.py` router, one file per command (`/snapshot`, `/clip`, `/status`, `/zones`, `/events`, `/analyze`, `/ask`, `/timelapse`, `/who`, `/faces`, `/cameras`, `/rules`, `/night`, `/arm`, `/disarm`, `/help`, `/start`), `_shared.py` exporting send-helpers + camera-token parsing.
+- **`notifications.py` → `routes/notifications/` package.** Split into `_shared.py`, `telegram_api.py`, `frame.py`, `scene.py`, `alerts.py`, `endpoints.py`. External surface unchanged.
+- **`services/tracker/tracker.py` → `services/tracker/core/`.** `core/main.py` (run loop), `core/state.py` (TrackedPerson + TrackedVehicle dataclasses), `core/manager.py` (PersonTracker orchestrator), `core/iou.py`, `core/config.py`. `tracker.py` at the COPY root is now a thin shim — Dockerfile + CMD unchanged.
+
+### Phase J fallout (2026-05-19 / 2026-05-20)
+The AST-driven splits walked top-level defs but did NOT follow the call graph or module-level name references. Two regression incidents:
+
+1. **`_load_jsonl_journal` lost from `query_events_by_date`** (2026-05-19) — past-date queries crashed silently inside tool results. Soft-failure UX masked the bug for a week. Fix: restored the helper + added `tests/test_ai_tools_no_nameerror.py` (21 tests, one per tool).
+2. **Six bot commands lost module-level imports** (2026-05-20) — `/events`, `/status`, `/analyze`, `/ask`, `/timelapse` lost `make_redis_client`, `REDIS_HOST/PORT`, `OLLAMA_*`, `SNAPSHOT_DIR`; `/clip` lost cross-module `_extract_clip_frames` + `_describe_scene_multi` from `analyze.py`. Surfaced as NameError when users invoked the commands. Fix: routed all shared constants through `bot_commands/_shared.py` and added each name to its consuming file's import list. **Known follow-up: write `test_bot_commands_no_nameerror.py` to mirror the ai_tools regression test.**
+
+See CLAUDE.md §0 for the canonical lesson.
+
+### Phase K — GHCR live (2026-05-20)
+- **`.github/workflows/publish-images.yml`** now active. `v*` tag push → builds shared base + 8 service images on `ubuntu-latest` runners → publishes to `ghcr.io/gammahazard/vision-labs/<service>` with `:vX.Y.Z` and `:latest` tags. First publish takes ~25-40 min; subsequent tag pushes ~9-10 min thanks to Docker layer cache.
+- **`docker-compose.registry.yml`** overlay extended from cam1-cam5 to cam1-cam20 to match the base compose.
+- **`scripts/install-linux.sh` flipped to pull-from-GHCR by default.** `--build` (or `BUILD_FROM_SOURCE=1`) keeps the local-build path for forkers. `IMAGE_TAG=v0.1.0 bash scripts/install-linux.sh` pins to a specific release.
+- **`EXTRA_COMPOSE_FILES` env var on orchestrator.** Installer writes `EXTRA_COMPOSE_FILES=/workspace/docker-compose.registry.yml` to `.env` on a pull install so the orchestrator's later `docker compose --profile camN up -d` calls keep pulling instead of building. Without this, adding cam2 through the dashboard on a pull install would silently rebuild.
+- Tags shipped: **v0.1.0** (first publish), **v0.1.1** (vision-model auto-pull + bot_commands NameError fixes + /zones camera picker + sharper setup GIF).
+- **One-time per package after first publish**: flip each GHCR package from private to public via GitHub → Packages → ⚙️ → "Change package visibility". Required before strangers can `docker pull`.
+
+### AI assistant reliability tuning (2026-05-19/20)
+Qwen 3 14B is the model ceiling on a single-host install — no swap to larger models or hosted Claude allowed. Iterations to make compound questions less unreliable:
+- Chat history window cut from 20 → 6 messages (the #1 cause of stale wrong answers was the model regurgitating from earlier turns instead of calling tools fresh).
+- System prompt gained an explicit `⚠️ ABSOLUTE RULE` banner at the top + a few-shot example showing the expected answer shape for compound questions.
+- `query_events_by_date` now returns a pre-composed `summary` field (LLM tends to grab `total_events` when it should grab `detection_count`) and trims `latest_events` from 10 → 3 to save attention budget.
+- Server-side enforcement loop in `routes/ai.py` detects DVR-link text without a real URL and re-prompts with "append the link, keep the rest verbatim".
+- AI tab suggestion chips rewritten to single-purpose questions. Visible tip: "💡 ask one thing at a time. Compound questions get muddled." This is the honest framing — the 14B model is fine for one focused question per turn but compound multi-part questions still drift.
+
 ---
 
 ## 16. File index (where to look)
@@ -676,8 +714,10 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 - `docker-compose.registry.yml` — overlay to pull pre-built images from GHCR
 - `docker-compose.qnap.yml` — overlay to flip qnap-* volumes to CIFS mounts
 - `.env` / `.env.example` — runtime config
-- `README.md` — user-facing docs (refreshed 2026-05-18)
+- `README.md` — user-facing docs (refreshed 2026-05-20 with screenshots + Mermaid diagram + setup/Grafana GIFs)
 - `CONTEXT.md` — this file (start here for full context)
+- `CHANGELOG.md` — Keep-a-Changelog format, one entry per shipped behavior change. Mirrors tag annotations. New as of 2026-05-20.
+- `CLAUDE.md` — AI-assistant operational conventions for this repo (R3-split lessons, build/runtime split, release flow). Auto-loaded into Claude Code sessions.
 - `DETAILED_README.md` — in-depth setup + operations guide
 - `ARCHITECTURE.md` — architectural reasoning (why services are split this way)
 - `docs/history/` — historical planning docs: PHASES.md, REFACTOR_PLAN.md, PACKAGING_PLAN.md, MANUAL_SETUP.md
@@ -718,9 +758,10 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 - `scripts/prometheus-clean-stale-cameras.sh` — tombstone stale-camera Prom labels
 
 ### Tests
-- 258 tests, 0 quarantined as of 2026-05-19. Run via `source .venv-test/bin/activate && pytest -q`.
-- `tests/` files: `test_actions.py`, `test_ai_tool_aggregations.py`, `test_face_db.py`, `test_notifications.py`, `test_routes.py`, `test_scene_analysis.py`, `test_time_rules.py`, `test_tracker.py`, `test_vehicles.py`.
+- 279 tests, 0 quarantined as of 2026-05-20. Run via `source .venv-test/bin/activate && pytest -q`.
+- `tests/` files: `test_actions.py`, `test_ai_tool_aggregations.py`, `test_ai_tools_no_nameerror.py` (R3-split regression guard for ai_tools), `test_face_db.py`, `test_notifications.py`, `test_routes.py`, `test_scene_analysis.py`, `test_time_rules.py`, `test_tracker.py`, `test_vehicles.py`.
 - `FakeRedis` (in `test_vehicles.py`) is the standard stub. Tests use host Python 3.12; container is 3.11.
+- Known follow-up: `test_bot_commands_no_nameerror.py` to mirror the ai_tools pattern after the 2026-05-20 bot_commands NameError fixes — would catch the same regression class.
 
 ---
 
@@ -770,6 +811,26 @@ docker compose --profile cam1 build pose-detector-cam1
 docker compose --profile cam1 up -d pose-detector-cam1
 ```
 
+### Fresh install (default: pull from GHCR)
+```bash
+git clone https://github.com/gammahazard/vision-labs-v2 vision-labs && cd vision-labs
+bash scripts/install-linux.sh                # default — pull from GHCR (~3-5 min)
+bash scripts/install-linux.sh --build        # force local build (forkers, ~10-15 min)
+IMAGE_TAG=v0.1.1 bash scripts/install-linux.sh  # pin a specific release
+```
+
+### Cut a new release (maintainer)
+```bash
+# 1. Update CHANGELOG.md — move [Unreleased] into [vX.Y.Z] section, add a fresh [Unreleased]
+# 2. Commit with subject "release: vX.Y.Z"
+# 3. Tag with an annotation mirroring the CHANGELOG section
+git tag -a v0.2.0 -m "v0.2.0 — release notes here"
+git push origin v0.2.0
+# 4. Wait ~9-10 min for .github/workflows/publish-images.yml to finish
+# 5. Verify packages at https://github.com/gammahazard?tab=packages
+# 6. First-publish only: flip each new package to public via Package Settings
+```
+
 ### Tail orchestrator decisions
 ```bash
 docker exec vision-labs-redis-1 redis-cli XREVRANGE orchestrator:audit + - COUNT 20
@@ -805,7 +866,7 @@ When a feature breaks, here's where it usually broke:
 | Camera not coming up after Add | `XREVRANGE orchestrator:audit + - COUNT 10` for the failed action. Common cause: ALLOWED_PROFILES doesn't include the slot. |
 | Live view blank | WebSocket cookie auth — check browser devtools network for `/ws/live` close code 4401. |
 | Names not sticking to bboxes | Tracker `_update_identities` IoU threshold; WebSocket sticky_identities (per-conn). |
-| Telegram silent | `/api/telegram/users` populated? `telegram:last_offset` advancing? httpx logs at INFO would leak the bot token — check `server.py:113`. |
+| Telegram silent | `/api/telegram/users` populated? `telegram:last_offset` advancing? httpx logs at INFO would leak the bot token — confirm `logging.getLogger("httpx").setLevel(logging.WARNING)` is still at the top of `services/dashboard/server.py`. |
 | ONVIF scan returns 0 | `detect_local_cidr()` chain. Run `docker exec vision-labs-dashboard-1 python -c "from helpers.onvif_discovery import detect_local_cidr; print(detect_local_cidr())"`. |
 | Setup wizard 422 | `Depends(validate_session)` regression — `validate_session` is a plain helper, not a FastAPI dep. Endpoints in `routes/setup.py` must NOT use `Depends(validate_session)`. |
 | .env writes silently dropped | `env_writer.py` ALLOWED_KEYS allowlist. Adding a new key requires updating the set. |
