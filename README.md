@@ -16,22 +16,38 @@ A self-hosted, multi-camera AI security platform that processes live RTSP feeds 
 
 Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubuntu 24.04 inside WSL2 on Windows. Single-GPU works fine too — defaults are tuned for an 8–12 GB card; tiers are available for smaller and larger rigs.
 
-<!-- TODO add screenshots here once captured:
-     - docs/images/dashboard-grid.png  (multi-cam home grid)
-     - docs/images/single-view.png     (per-camera detail view + bboxes)
-     - docs/images/ai-chat.png         (Qwen chat tab + tool result)
-     - docs/images/dvr-tab.png         (DVR segment picker)
-     Run pngquant on each before committing — these will be the largest
-     thing in the repo otherwise.
--->
-<!--
+---
+
 ## Screenshots
 
-| Multi-camera grid | Per-camera detail | AI chat |
-|---|---|---|
-| ![Grid](docs/images/dashboard-grid.png) | ![Single](docs/images/single-view.png) | ![AI](docs/images/ai-chat.png) |
--->
+**Multi-camera home grid** — live feeds, recent activity across every camera, enrolled faces, conditions panel.
 
+![Dashboard home](docs/images/dashboard-home.png)
+
+**Per-camera detail view** — full controls, drawable zones, action labels, sticky face identities.
+
+![Per-camera detail](docs/images/detailed-view-cam1.png)
+
+| Cameras admin | Face enrollment | DVR playback |
+|:-:|:-:|:-:|
+| ![Cameras](docs/images/cameras-page.png) | ![Enrol](docs/images/enrol.png) | ![DVR](docs/images/recordings.png) |
+| Add/edit/pause cameras, ONVIF scan, per-detector toggles | 5-angle multi-pose enrollment wizard | Date + camera filter, click any segment to play |
+
+| AI assistant | Telegram alerts | Bot commands |
+|:-:|:-:|:-:|
+| ![AI chat](docs/images/chat.png) | ![Telegram alerts](docs/images/telegram-1.png) | ![Telegram bot UI](docs/images/telegrambotui.png) |
+| Qwen 3 14B + 19 tools, with DVR deep-links | Real-time push with snapshot from each camera | `/snapshot`, `/clip`, `/ask`, `/who`, `/events`, ... |
+
+| Grafana + Prometheus | Container monitoring |
+|:-:|:-:|
+| ![Grafana](docs/images/grafana.png) | ![Containers](docs/images/container-monitoring.png) |
+| Live GPU, Redis, inference-time metrics embedded in the dashboard | Every service's state + uptime in one view, deep-link to Portainer |
+
+### Setup walkthrough
+
+![Setup wizard](docs/images/setup-flow.gif)
+
+The first-run wizard handles hardware detection, GPU tier recommendation, ONVIF camera discovery, location + retention, and Telegram pairing — about 90 seconds end-to-end.
 
 ---
 
