@@ -106,6 +106,8 @@ Omit a section entirely if it would be empty (e.g., a service with no HTTP route
 
 ## Example
 
+**Illustrative only** — line numbers, stream names, and import paths in this example are synthetic shapes, not verified against current code. The example demonstrates the OUTPUT FORMAT and severity-prefix usage; do NOT pattern-match the specific values when producing real findings.
+
 ```markdown
 ### tracker (service)
 
