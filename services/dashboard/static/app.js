@@ -339,7 +339,13 @@ async function testNotification() {
     resultEl.style.display = "none";
 
     try {
-        const resp = await fetch("/api/notifications/test", { method: "POST" });
+        // Use the same camera-resolution helper the rest of the page uses
+        // (withCamera adds ?camera=<id> when CAMERA_ID is set; on the home
+        // page CAMERA_ID is empty so the endpoint falls back to primary).
+        const url = typeof withCamera === "function"
+            ? withCamera("/api/notifications/test")
+            : "/api/notifications/test";
+        const resp = await fetch(url, { method: "POST" });
         const data = await resp.json();
 
         resultEl.style.display = "block";

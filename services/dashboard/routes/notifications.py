@@ -1055,29 +1055,46 @@ async def notification_status():
 
 
 @router.post("/notifications/test")
-async def test_notification():
-    """Send a test notification to Telegram with a camera snapshot."""
+async def test_notification(camera: str = ""):
+    """Send a test notification to Telegram with a camera snapshot.
+
+    Pass ?camera=<id> to use a specific camera's frame + label it in the
+    caption (so a test from cam2's detail view actually uses cam2's frame
+    and the alert clearly says it came from cam2).
+    """
     if not is_configured():
         return JSONResponse(
             status_code=400,
             content={"error": "Telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env"},
         )
 
+    # Resolve which camera the test is for. Empty/unknown \u2192 primary.
+    cam_id = (camera or "").strip() or ctx.CAMERA_ID
+    cam_name = cam_id
+    try:
+        import cameras as _cam_reg
+        for c in _cam_reg.list_enabled_cameras():
+            if c.get("id") == cam_id:
+                cam_name = c.get("name") or cam_id
+                break
+    except Exception:
+        pass
+
     caption = (
         f"\U0001f9ea <b>Test Notification</b>\n"
-        f"\u2022 Source: Vision Labs Dashboard\n"
+        f"\u2022 Camera: {_esc(cam_name)} ({_esc(cam_id)})\n"
         f"\u2022 Time: {_now_str()}\n"
         f"\u2022 Status: \u2705 Notifications working!"
     )
 
-    frame = get_latest_frame()
+    frame = get_latest_frame(camera_id=cam_id)
     if frame:
         ok = await send_photo(frame, caption)
     else:
-        ok = await send_text(caption + "\n\n(No camera frame available)")
+        ok = await send_text(caption + f"\n\n(No frame available for {_esc(cam_id)} \u2014 camera may be offline)")
 
     if ok:
-        return {"status": "sent", "message": "Test notification sent to Telegram"}
+        return {"status": "sent", "message": f"Test sent for {cam_name} ({cam_id})", "camera": cam_id}
     else:
         return JSONResponse(status_code=500, content={"error": "Failed to send. Check bot token and chat ID"})
 
