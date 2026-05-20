@@ -299,6 +299,68 @@ async def chat(req: ChatRequest):
             import re
             reply = re.sub(r"<think>.*?</think>\s*", "", reply, flags=re.DOTALL).strip()
 
+        # Programmatic enforcement: if the user asked for a DVR link/clip and
+        # the model wrote about a clip but didn't call find_dvr_segment, force
+        # one more tool round. Qwen 14B's tool-use discipline isn't strong
+        # enough to reliably call a 3rd tool even with hard system prompts,
+        # so we close the gap server-side.
+        import re as _re
+        called_dvr = any(t["name"] == "find_dvr_segment" for t in tool_calls_log)
+        mentions_clip_text = bool(_re.search(
+            r"(open the clip|view the (clip|recording|footage)|click here|see the (clip|footage))",
+            reply, _re.IGNORECASE
+        ))
+        has_real_dvr_link = "/ai.html?tab=recordings" in reply
+        if (is_dvr_question and not called_dvr
+                and (mentions_clip_text or not has_real_dvr_link)
+                and tool_rounds < 5):
+            logger.info(
+                "DVR enforcement: re-prompting model — user asked for a clip "
+                "but find_dvr_segment was not called."
+            )
+            # Attach the prior reply to the conversation as the assistant's
+            # last turn so the model can see what it said, then prepend a
+            # corrective system instruction and run one more round.
+            messages.append({"role": "assistant", "content": reply})
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Your previous reply mentioned a clip/recording but did "
+                    "NOT include a real DVR URL. You MUST call "
+                    "find_dvr_segment now to get a deep_link. If you already "
+                    "know the busiest hour from query_event_patterns, pass "
+                    "it as the `time` arg (formatted HH:MM, e.g. 20:00). "
+                    "Camera should be the one with the highest count from "
+                    "top_hours[0].per_camera. Then rewrite your reply with "
+                    "the markdown link `[Open the clip](<deep_link>)`."
+                ),
+            })
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_chat_turn), timeout=60.0
+            )
+            # Run another tool-call round if the model now calls find_dvr_segment.
+            while response.message.tool_calls and tool_rounds < 5:
+                tool_rounds += 1
+                messages.append(response.message)
+                for tool_call in response.message.tool_calls:
+                    tool_name = tool_call.function.name
+                    tool_args = tool_call.function.arguments
+                    logger.info(f"DVR re-prompt tool call: {tool_name}({tool_args})")
+                    result = await execute_tool(tool_name, tool_args)
+                    messages.append({"role": "tool", "content": result})
+                    truncated = result if len(result) <= 8192 else result[:8192] + "...[truncated]"
+                    tool_calls_log.append({
+                        "name": tool_name,
+                        "args": tool_args if isinstance(tool_args, dict) else {},
+                        "result": truncated,
+                    })
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(_chat_turn), timeout=60.0
+                )
+            reply = response.message.content or reply
+            if "<think>" in reply:
+                reply = _re.sub(r"<think>.*?</think>\s*", "", reply, flags=_re.DOTALL).strip()
+
         # Collect media stashed by tools during this request
         media = ai_state.collect_media(request_id)
 

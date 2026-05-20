@@ -162,11 +162,57 @@ def _tool_query_events_by_date(args: dict) -> str:
         # roughly doubles the actual count of distinct sightings. Surface a
         # `detection_count` that mirrors what a human means by "how many were
         # detected": one entry per primary appearance event.
-        detection_count = (
-            agg_type_counts.get('person_appeared', 0)
-            + agg_type_counts.get('vehicle_detected', 0)
-        )
-        result = {'date': str(target_date), 'cameras_queried': cam_ids, 'total_events': len(all_events), 'detection_count': detection_count, 'detection_count_note': "detection_count = person_appeared + vehicle_detected (one entry per session). Use this when the user asks 'how many were detected/seen'. Use total_events only when the user explicitly asks for 'events' or 'all activity'.", 'by_type': agg_type_counts, 'by_identity': agg_identity_counts, 'unique_people_identified': len(agg_identity_counts), 'latest_events': all_events[-10:] if len(all_events) > 10 else all_events, 'journal_used': journal_used}
+        people_detected = agg_type_counts.get('person_appeared', 0)
+        people_identified_total = agg_type_counts.get('person_identified', 0)
+        people_identified_unique = len(agg_identity_counts)
+        vehicles_detected = agg_type_counts.get('vehicle_detected', 0)
+        vehicles_idle = agg_type_counts.get('vehicle_idle', 0)
+        detection_count = people_detected + vehicles_detected
+
+        # Build a one-line summary the LLM can copy verbatim — reduces the
+        # chance of it picking the wrong number from the response. The model
+        # has been consistently grabbing `total_events` for "how many
+        # detections" questions despite the rules; pre-composed text is
+        # harder to mis-quote than picking from a field list.
+        if category == 'people' or (people_detected and not vehicles_detected):
+            id_phrase = (
+                f" · {people_identified_total} identifications across {people_identified_unique} unique people"
+                if people_identified_total else ""
+            )
+            summary = (
+                f"{people_detected} person detections (sessions){id_phrase}. "
+                f"Raw event total: {len(all_events)} (includes person_left exit events)."
+            )
+        elif category == 'vehicles' or (vehicles_detected and not people_detected):
+            idle_phrase = f" · {vehicles_idle} idling events" if vehicles_idle else ""
+            summary = (
+                f"{vehicles_detected} vehicle detections (sessions){idle_phrase}. "
+                f"Raw event total: {len(all_events)} (includes vehicle_left exit events)."
+            )
+        else:
+            summary = (
+                f"{detection_count} detections (sessions): {people_detected} people, "
+                f"{vehicles_detected} vehicles. Raw event total: {len(all_events)}."
+            )
+
+        result = {
+            'date': str(target_date),
+            'cameras_queried': cam_ids,
+            # `summary` first — the LLM is biased toward the start of long JSON.
+            'summary': summary,
+            'how_to_answer': (
+                "Use `summary` text when the user asks 'how many detections/people/vehicles'. "
+                "Use `total_events` ONLY when the user explicitly says 'events' or 'activity'. "
+                "Use `unique_people_identified` for 'how many people were identified'."
+            ),
+            'detection_count': detection_count,
+            'total_events': len(all_events),
+            'by_type': agg_type_counts,
+            'by_identity': agg_identity_counts,
+            'unique_people_identified': people_identified_unique,
+            'latest_events': all_events[-10:] if len(all_events) > 10 else all_events,
+            'journal_used': journal_used,
+        }
         if len(cam_ids) > 1:
             result['per_camera'] = per_camera
         return json.dumps(result)
