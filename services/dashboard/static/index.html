@@ -386,6 +386,58 @@
             </div>
         </section>
 
+        <!-- Settings: post-install location + retention. Mirrors the setup
+             wizard's "Location & storage" step so users can change these
+             values without re-running the wizard. -->
+        <section class="panel settings-panel collapsed" id="settingsPanel">
+            <div class="panel-header" onclick="togglePanel(this)">
+                <h2>⚙️ Settings</h2>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="panel-toggle">▼</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <p class="setting-hint" style="margin-top:0;">
+                    Change timezone and retention without re-running the install wizard.
+                    Snapshot/clip retention applies within an hour; timezone change auto-restarts
+                    the dashboard.
+                </p>
+
+                <div class="setting">
+                    <label class="setting-label" for="settingsTimezone">Timezone</label>
+                    <select id="settingsTimezone" class="setting-input">
+                        <option value="">Loading…</option>
+                    </select>
+                </div>
+
+                <div class="setting">
+                    <label class="setting-label">Retention (days)</label>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+                        <div>
+                            <label for="settingsRetRecordings" style="font-size:0.85em;color:var(--text-secondary,#888);">DVR</label>
+                            <input id="settingsRetRecordings" type="number" min="1" max="365" class="setting-input">
+                        </div>
+                        <div>
+                            <label for="settingsRetSnapshots" style="font-size:0.85em;color:var(--text-secondary,#888);">Snapshots</label>
+                            <input id="settingsRetSnapshots" type="number" min="0" max="90" class="setting-input">
+                        </div>
+                        <div>
+                            <label for="settingsRetClips" style="font-size:0.85em;color:var(--text-secondary,#888);">Clips</label>
+                            <input id="settingsRetClips" type="number" min="1" max="30" class="setting-input">
+                        </div>
+                    </div>
+                    <p class="setting-hint" style="margin-top:4px;">
+                        ⚠️ Reducing retention purges older data on the next prune cycle.
+                    </p>
+                </div>
+
+                <div class="setting">
+                    <button class="btn btn-primary" id="settingsSaveBtn" onclick="saveSettings()">💾 Save Settings</button>
+                    <p class="auth-msg" id="settingsMsg" style="margin-top:8px;"></p>
+                </div>
+            </div>
+        </section>
+
         <!-- Account: change credentials + logout. Same panel as on detail pages. -->
         <section class="panel account-panel collapsed" id="accountPanel">
             <div class="panel-header" onclick="togglePanel(this)">
@@ -506,6 +558,7 @@
     <!-- Account + Browse panels on the home page — both share their scripts
          with single.html so behavior matches one-to-one. -->
     <script src="auth.js?v=6"></script>
+    <script src="settings.js?v=1"></script>
     <script src="browse.js?v=1"></script>
     <!-- Manual init: faces.js + events.js usually wait for app.js DOMContentLoaded;
          here we trigger them directly since app.js is not loaded on the grid page. -->

@@ -1458,6 +1458,27 @@ input[type="range"]::-moz-range-thumb {
         gap: 6px;
         flex-wrap: wrap;
     }
+
+    /* iOS auto-zooms on focus when input font-size < 16px. Force ≥16px on
+       all text-entry controls so the viewport stays put when the keyboard
+       opens. (Smaller visual sizing can be done via padding/width instead.) */
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    input[type="search"],
+    input[type="email"],
+    select,
+    textarea {
+        font-size: 16px;
+    }
+
+    /* Settings + setup wizard 3-column retention grid stacks on narrow phones.
+       Three side-by-side number inputs on a 360px-wide screen makes the
+       labels overlap and is hard to tap. Stack them. */
+    .settings-panel .panel-body > div > div[style*="grid-template-columns:1fr 1fr 1fr"],
+    .wizard-step div[style*="grid-template-columns:1fr 1fr 1fr"] {
+        grid-template-columns: 1fr !important;
+    }
 }
 
 /* Very narrow phones (<= 400 px wide). At this size the live-view header
