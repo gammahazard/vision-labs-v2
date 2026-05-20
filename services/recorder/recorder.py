@@ -40,6 +40,19 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
+# Logging — initialized first so module-load helpers can use `logger` instead
+# of print(flush=True). Was originally configured below the helpers, which is
+# why early calls (registry lookup, ffmpeg event emit) had to fall back to print.
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("recorder")
+
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 CAMERA_ID = os.getenv("CAMERA_ID", "cam1")
@@ -83,9 +96,9 @@ def _load_rtsp_from_registry():
             entry = _json.loads(raw)
             RTSP_URL = entry.get("rtsp_sub", "")
             if RTSP_URL:
-                print(f"[recorder] Loaded RTSP from registry for '{CAMERA_ID}': set", flush=True)
+                logger.info(f"Loaded RTSP from registry for '{CAMERA_ID}'")
     except Exception as e:
-        print(f"[recorder] Registry lookup failed (will fall back to env): {e}", flush=True)
+        logger.warning(f"Registry lookup failed (will fall back to env): {e}")
 
 
 _load_rtsp_from_registry()
@@ -121,21 +134,9 @@ def _emit_recorder_event(event_type: str, reason: str = "") -> None:
             maxlen=5000,
             approximate=True,
         )
-        # Use print for symmetry with the rest of this file's pre-logger
-        # output. Once logging is initialized below, normal logger calls work.
-        print(f"[recorder] Emitted {event_type} event for {CAMERA_ID}: {reason}", flush=True)
+        logger.info(f"Emitted {event_type} event for {CAMERA_ID}: {reason}")
     except Exception as e:
-        print(f"[recorder] Failed to emit {event_type} event: {e}", flush=True)
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("recorder")
+        logger.warning(f"Failed to emit {event_type} event: {e}")
 
 # ---------------------------------------------------------------------------
 # Graceful shutdown
