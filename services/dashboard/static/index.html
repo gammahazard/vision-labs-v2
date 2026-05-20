@@ -511,6 +511,57 @@
         </div>
     </div>
 
+    <!-- Face Enrollment Wizard — mirrors single.html so the Enroll button on the
+         home page works inline instead of throwing on missing DOM. The wizard
+         is camera-bound to cam1 (face-recognizer:8081 is mounted on cam1's
+         container; enrolled faces propagate to every other slot via the
+         shared face-data volume). -->
+    <div id="enrollWizard" class="wizard-overlay" style="display: none;">
+        <div class="wizard-modal">
+            <div class="wizard-header">
+                <h3>📸 Enroll <span id="wizardName">—</span></h3>
+                <button class="wizard-close" onclick="closeWizard()">✕</button>
+            </div>
+            <div style="font-size:0.85em;color:var(--text-secondary,#888);padding:0 16px 8px;">
+                📷 <span id="wizardCameraHint">Using cam1 camera</span> · Stand directly in front of the camera.
+            </div>
+            <div class="wizard-steps">
+                <div class="wizard-step active" data-step="0"><span class="step-dot"></span><span class="step-label">Front</span></div>
+                <div class="wizard-step" data-step="1"><span class="step-dot"></span><span class="step-label">Left</span></div>
+                <div class="wizard-step" data-step="2"><span class="step-dot"></span><span class="step-label">Right</span></div>
+                <div class="wizard-step" data-step="3"><span class="step-dot"></span><span class="step-label">Up</span></div>
+                <div class="wizard-step" data-step="4"><span class="step-dot"></span><span class="step-label">Down</span></div>
+            </div>
+            <div class="wizard-body">
+                <div class="wizard-preview" id="wizardPreview">
+                    <div class="wizard-feed-container">
+                        <img id="wizardLiveFeed" class="wizard-live-feed" alt="Live camera">
+                        <svg class="wizard-face-guide" viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg">
+                            <ellipse cx="140" cy="100" rx="65" ry="85" fill="none" stroke="rgba(74,222,128,0.6)" stroke-width="2" stroke-dasharray="8,4" />
+                            <line x1="140" y1="10" x2="140" y2="30" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                            <line x1="140" y1="170" x2="140" y2="190" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                            <line x1="70" y1="100" x2="50" y2="100" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                            <line x1="210" y1="100" x2="230" y2="100" stroke="rgba(74,222,128,0.3)" stroke-width="1" />
+                        </svg>
+                    </div>
+                    <div class="wizard-prompt" id="wizardPrompt">Look straight at the camera</div>
+                    <img id="wizardPhoto" class="wizard-photo" alt="Face capture" style="display: none;">
+                </div>
+                <div class="wizard-status" id="wizardStatus"></div>
+                <div class="wizard-actions">
+                    <button class="btn btn-primary wizard-capture-btn" id="wizardCaptureBtn" onclick="wizardCapture()">📸 Capture</button>
+                    <button class="btn wizard-skip-btn" id="wizardSkipBtn" onclick="wizardSkip()" style="display: none;">Skip →</button>
+                </div>
+            </div>
+            <div class="wizard-footer">
+                <div class="wizard-progress">
+                    <div class="wizard-progress-fill" id="wizardProgressFill" style="width: 0%;"></div>
+                </div>
+                <span class="wizard-counter" id="wizardCounter">0 / 5 captured</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Full-screen camera modal -->
     <div class="modal" id="modal" onclick="closeModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
