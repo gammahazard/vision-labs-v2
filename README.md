@@ -88,11 +88,13 @@ For the full data flow and per-service responsibilities, see **[DETAILED_README.
 ### Linux (Ubuntu 22.04 / 24.04, Debian 12)
 
 ```bash
-git clone <repo-url> vision-labs && cd vision-labs
-bash scripts/install-linux.sh
+git clone https://github.com/gammahazard/vision-labs-v2 vision-labs && cd vision-labs
+bash scripts/install-linux.sh                   # pulls pre-built images from GHCR (~3-5 min)
+# OR, if you've forked + modified the code:
+bash scripts/install-linux.sh --build           # builds locally (~10-15 min)
 ```
 
-The script installs Docker + nvidia-container-toolkit, builds all images, starts the stack, and tells you when the dashboard is up. Idempotent — safe to re-run. ~15–20 min on first install.
+The script installs Docker + nvidia-container-toolkit, pulls (or builds) all images, starts the stack, and tells you when the dashboard is up. Idempotent — safe to re-run. Pin a specific release with `IMAGE_TAG=v0.1.1 bash scripts/install-linux.sh`.
 
 ### Windows 11 (with NVIDIA GPU)
 
