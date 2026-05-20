@@ -44,6 +44,59 @@ _COOKIE_SECURE = os.getenv("DASHBOARD_BEHIND_TLS", "false").lower() in ("1", "tr
 _SECRET_KEY: str = None
 _DB_PATH: str = None
 
+# Minimum password length. 8 is below NIST 2024 guidance (which leans on
+# length + denied-list) but high enough to block trivially weak passwords
+# without being annoying on a personal LAN install. Bump to 12 if you want
+# more friction.
+MIN_PASSWORD_LENGTH = 8
+
+# Brute-force gate state — in-memory dict keyed by client IP.
+# {ip: {"fails": int, "window_start": ts, "locked_until": ts}}
+# Cleared on container restart, which is acceptable for a single-host
+# LAN install; an attacker would need to keep the host up between attempts
+# anyway. For HA / multi-process you'd back this with Redis.
+_LOGIN_FAILURE_THRESHOLD = 5    # fails within window → lock out
+_LOGIN_FAILURE_WINDOW = 300     # 5 minutes
+_LOGIN_LOCKOUT_DURATION = 900   # 15 minutes
+_login_failures: dict = {}
+
+
+def _login_rate_check(ip: str) -> tuple[bool, int]:
+    """Return (allowed, retry_after_seconds). If allowed is False the
+    login route should return 429 immediately, before any DB lookup."""
+    now = time.time()
+    state = _login_failures.get(ip)
+    if state and state.get("locked_until", 0) > now:
+        return False, int(state["locked_until"] - now)
+    return True, 0
+
+
+def _record_login_failure(ip: str) -> None:
+    """Increment failure count for `ip`. Triggers lockout at threshold."""
+    now = time.time()
+    state = _login_failures.get(
+        ip, {"fails": 0, "window_start": now, "locked_until": 0}
+    )
+    # Roll the window forward if the previous one expired.
+    if now - state["window_start"] > _LOGIN_FAILURE_WINDOW:
+        state = {"fails": 0, "window_start": now, "locked_until": 0}
+    state["fails"] += 1
+    if state["fails"] >= _LOGIN_FAILURE_THRESHOLD:
+        state["locked_until"] = now + _LOGIN_LOCKOUT_DURATION
+    _login_failures[ip] = state
+    # Sweep stale entries opportunistically so the dict can't grow forever.
+    if len(_login_failures) > 256:
+        cutoff = now - (_LOGIN_FAILURE_WINDOW + _LOGIN_LOCKOUT_DURATION)
+        for k in list(_login_failures.keys()):
+            v = _login_failures[k]
+            if v.get("locked_until", 0) < now and v.get("window_start", 0) < cutoff:
+                _login_failures.pop(k, None)
+
+
+def _reset_login_failures(ip: str) -> None:
+    """Clear the failure counter for `ip` after a successful login."""
+    _login_failures.pop(ip, None)
+
 
 def get_db_path() -> str:
     """Get the auth database path from routes context."""
@@ -215,35 +268,41 @@ def _maybe_upgrade_to_bcrypt(username: str, password: str, current_hash: str) ->
 # ---------------------------------------------------------------------------
 # Session Tokens
 # ---------------------------------------------------------------------------
-def _create_session_token(username: str) -> str:
+def _create_session_token(username: str, must_change: bool = False) -> str:
     """
-    Create a signed session token: username:timestamp:signature.
-    Signature = HMAC-SHA256(secret_key, username:timestamp).
+    Create a signed session token: username:flag:timestamp:signature.
+    `flag` is "1" when the user is still on default credentials and the
+    server should refuse every route except /api/auth/change-password.
+    Signature = HMAC-SHA256(secret_key, username:flag:timestamp).
     """
     ts = str(int(time.time()))
-    payload = f"{username}:{ts}"
+    flag = "1" if must_change else "0"
+    payload = f"{username}:{flag}:{ts}"
     sig = hmac.new(
         _SECRET_KEY.encode(), payload.encode(), hashlib.sha256
     ).hexdigest()
     return f"{payload}:{sig}"
 
 
-def validate_session(token: str) -> str | None:
-    """
-    Validate a session token. Returns the username if valid, None if not.
-    Tokens expire after 24 hours.
+def _decode_session(token: str) -> dict | None:
+    """Internal: validate signature + expiry and return the full session
+    payload as a dict (username, must_change). Used by both the legacy
+    `validate_session` wrapper and the new middleware gate.
+
+    Returns None for any failure (bad signature, expired, malformed).
     """
     if not token or not _SECRET_KEY:
         return None
 
     parts = token.split(":")
-    if len(parts) != 3:
+    if len(parts) != 4:
+        # Reject pre-flag tokens (old 3-part format). Affected users
+        # log in again — at most 24 h of stale sessions get invalidated.
         return None
 
-    username, ts_str, sig = parts
+    username, flag_str, ts_str, sig = parts
 
-    # Verify signature
-    payload = f"{username}:{ts_str}"
+    payload = f"{username}:{flag_str}:{ts_str}"
     expected_sig = hmac.new(
         _SECRET_KEY.encode(), payload.encode(), hashlib.sha256
     ).hexdigest()
@@ -251,7 +310,6 @@ def validate_session(token: str) -> str | None:
     if not hmac.compare_digest(sig, expected_sig):
         return None
 
-    # Check expiration (24 hours)
     try:
         ts = int(ts_str)
         if time.time() - ts > 86400:
@@ -259,7 +317,24 @@ def validate_session(token: str) -> str | None:
     except ValueError:
         return None
 
-    return username
+    return {"username": username, "must_change": flag_str == "1"}
+
+
+def validate_session(token: str) -> str | None:
+    """Backward-compat wrapper: return username string for callers that
+    don't care about the must_change flag (most of them). New middleware
+    that gates routes on must_change should call `_decode_session` directly.
+    """
+    info = _decode_session(token)
+    return info["username"] if info else None
+
+
+def session_must_change(token: str) -> bool:
+    """True iff the current session is flagged "default credentials —
+    must change before doing anything". Middleware uses this to gate
+    every route except /api/auth/change-password."""
+    info = _decode_session(token)
+    return bool(info and info["must_change"])
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +342,23 @@ def validate_session(token: str) -> str | None:
 # ---------------------------------------------------------------------------
 @router.post("/login")
 async def login(request: Request):
-    """Validate credentials and set session cookie."""
+    """Validate credentials and set session cookie.
+
+    Rate limits failed attempts per source IP: 5 fails in 5 min triggers a
+    15 min lockout (any password attempt — right or wrong — returns 429 with
+    Retry-After during the lockout). Successful login clears the counter."""
+    client_ip = request.client.host if request.client else "?"
+
+    # Hard gate BEFORE looking at the DB so a brute-forcer can't even time
+    # the bcrypt verify.
+    allowed, retry_after = _login_rate_check(client_ip)
+    if not allowed:
+        return JSONResponse(
+            {"error": f"Too many failed attempts. Try again in {retry_after}s."},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+
     try:
         body = await request.json()
     except Exception:
@@ -289,7 +380,13 @@ async def login(request: Request):
         db.close()
 
     if not row or not _verify_password(password, row[1], row[0]):
+        _record_login_failure(client_ip)
         return JSONResponse({"error": "Invalid credentials"}, status_code=401)
+
+    # Correct credentials — clear the per-IP failure counter so future
+    # mistyped passwords from this host don't accumulate against earlier
+    # attacker traffic that happened to share an IP.
+    _reset_login_failures(client_ip)
 
     # Opportunistic password-hash upgrade: if the stored hash is the legacy
     # SHA-256 format, rewrite it as bcrypt now that we know the plaintext is
@@ -297,12 +394,12 @@ async def login(request: Request):
     _maybe_upgrade_to_bcrypt(username, password, row[0])
 
     # Detect the factory-default admin/admin combo. We still issue a session
-    # (so the user can call /api/auth/change-password), but flag the client so
-    # the login UI forces a password change before letting them into the app.
+    # (so the user can call /api/auth/change-password), but flag the session
+    # so the server-side middleware refuses every other route until the
+    # password is rotated. Belt-and-braces: client also gets the flag.
     must_change = (username == "admin" and _verify_password("admin", row[1], row[0]))
 
-    # Create session
-    token = _create_session_token(username)
+    token = _create_session_token(username, must_change=must_change)
     body_out = {"ok": True, "username": username}
     if must_change:
         body_out["must_change_password"] = True
@@ -349,8 +446,19 @@ async def change_password(request: Request):
     if not current_pw or not new_pw:
         return JSONResponse({"error": "Current and new password required"}, status_code=400)
 
-    if len(new_pw) < 4:
-        return JSONResponse({"error": "Password must be at least 4 characters"}, status_code=400)
+    if len(new_pw) < MIN_PASSWORD_LENGTH:
+        return JSONResponse(
+            {"error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters"},
+            status_code=400,
+        )
+
+    # Block the dumbest reuse — preventing "admin" as the new password
+    # when we're trying to migrate users OFF default credentials.
+    if new_pw.lower() == "admin":
+        return JSONResponse(
+            {"error": "Pick a password other than 'admin'"},
+            status_code=400,
+        )
 
     db = _get_db()
     try:
@@ -377,8 +485,10 @@ async def change_password(request: Request):
     finally:
         db.close()
 
-    # Issue new session token with updated username
-    new_token = _create_session_token(target_username)
+    # Issue new session token with updated username. must_change is
+    # explicitly False here — the user just rotated, so they're no
+    # longer on the default credentials.
+    new_token = _create_session_token(target_username, must_change=False)
     response = JSONResponse({"ok": True, "username": target_username})
     response.set_cookie(
         key="vl_session",

@@ -152,7 +152,9 @@ from routes.faces import router as faces_router
 from routes.unknowns import router as unknowns_router
 from routes.zones import router as zones_router
 from routes.notifications import router as notifications_router
-from routes.auth import router as auth_router, init_auth_db, validate_session
+from routes.auth import (
+    router as auth_router, init_auth_db, validate_session, session_must_change,
+)
 from routes.browse import router as browse_router
 from routes.ai import router as ai_router, set_ai_db, set_gpu_ready_flag
 from routes.telegram_access import router as telegram_access_router
@@ -192,6 +194,23 @@ _AUTH_EXEMPT = {
 }
 
 
+# Paths the must-change-password gate lets through. The user must be able to
+# load login.html (cancel button), call change-password, log out, see their
+# current auth status, and load the styles/JS the login page needs.
+_MUST_CHANGE_PASSWORD_ALLOWED = {
+    "/login.html",
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/status",
+    "/api/auth/change-password",
+    "/api/login-bg",
+    "/css/style.css",
+    "/js/core/auth.js",
+    "/favicon.ico",
+    "/favicon.svg",
+}
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Redirect unauthenticated requests to the login page."""
@@ -213,6 +232,20 @@ async def auth_middleware(request: Request, call_next):
         # 303 (See Other) forces browsers to GET the redirect target — safer
         # than the default 307 which can confuse browsers if the original was POST/etc.
         return RedirectResponse("/login.html", status_code=303)
+
+    # Default-credentials gate: if the session is flagged "must change", refuse
+    # every route except change-password (and the assets the login page needs
+    # to render the rotation form). Prevents a CLI/curl client from bypassing
+    # the frontend's UI-side enforcement by talking directly to the API.
+    if session_must_change(token) and path not in _MUST_CHANGE_PASSWORD_ALLOWED:
+        if path.startswith("/api/") or path == "/ws":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                {"error": "Default credentials in use — change your password first.",
+                 "must_change_password": True},
+                status_code=403,
+            )
+        return RedirectResponse("/login.html?must_change=1", status_code=303)
 
     # First-run wizard gate: authenticated but setup hasn't completed.
     # The wizard endpoints + its static page must remain reachable; everything

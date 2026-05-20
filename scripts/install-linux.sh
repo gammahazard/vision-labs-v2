@@ -182,6 +182,25 @@ else
     ok ".env already exists — leaving it untouched"
 fi
 
+# Generate a Redis password if one isn't already set. The dashboard, every
+# detector, and the tracker all read REDIS_PASSWORD via make_redis_client;
+# the redis container only requires AUTH when this is non-empty. We seed it
+# once at install so nobody has to think about it — it's never typed by a
+# human, so a 32-byte hex value is fine.
+if ! grep -qE "^REDIS_PASSWORD=[A-Za-z0-9]" .env 2>/dev/null; then
+    REDIS_PW="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '/+=')"
+    if [ -n "$REDIS_PW" ]; then
+        # Remove any blank/commented REDIS_PASSWORD line, then append the real one.
+        sed -i '/^[[:space:]]*#*[[:space:]]*REDIS_PASSWORD=/d' .env
+        printf '\n# Redis AUTH — auto-generated at install. Required by every service.\nREDIS_PASSWORD=%s\n' "$REDIS_PW" >> .env
+        ok "Generated REDIS_PASSWORD (32 bytes, hex) and added to .env"
+    else
+        warn "Could not generate REDIS_PASSWORD — openssl + /dev/urandom both unavailable. Add a value manually before starting the stack."
+    fi
+else
+    ok "REDIS_PASSWORD already set — leaving it alone"
+fi
+
 # ---------------------------------------------------------------------------
 # Step 6: Build + run
 # ---------------------------------------------------------------------------

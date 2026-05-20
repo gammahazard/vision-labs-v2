@@ -567,7 +567,9 @@ class TestAuthRoutes:
 
         resp = auth_client.post(
             "/api/auth/change-password",
-            json={"current_password": "wrong", "new_password": "newpass"},
+            # 8 chars min — see auth.MIN_PASSWORD_LENGTH. Shorter new_passwords
+            # fail validation before the current-password check runs.
+            json={"current_password": "wrong", "new_password": "newpass1"},
         )
         assert resp.status_code == 401
 

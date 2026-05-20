@@ -32,7 +32,12 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # Bind to 127.0.0.1 only — host-network services (camera-ingester,
+      # recorder, prometheus) reach Redis at localhost:6379, internal-network
+      # services use the `redis` hostname on the docker network. There is no
+      # legitimate reason for a LAN device to talk to this Redis directly, so
+      # we keep it off the LAN even if the user hasn't set REDIS_PASSWORD.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     # If REDIS_PASSWORD is set in .env, Redis demands AUTH from clients.

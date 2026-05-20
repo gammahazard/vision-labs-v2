@@ -54,6 +54,11 @@ import sys
 import time
 import threading
 
+# contracts/ isn't COPY'd into this image (Dockerfile keeps it small —
+# just docker:24-cli + python3). Pick it up from the project mount at
+# /workspace, which docker-compose.yml already bind-mounts read-only.
+sys.path.insert(0, "/workspace")
+
 import redis
 from contracts.redis_client import make_redis_client
 

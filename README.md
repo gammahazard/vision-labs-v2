@@ -97,6 +97,31 @@ Open `http://localhost:8080`, log in with `admin/admin` (forced password rotatio
 
 ---
 
+## Scope + status
+
+This is a **personal / portfolio project**, not a productized product. It runs in the author's home on a dual-GPU workstation and is documented to the level of "another developer could stand it up." A few things to set expectations:
+
+- **LAN-only by design.** The dashboard is meant to be reached at `http://<host-ip>:8080` from devices on the same network. There is no built-in TLS terminator; if you want to expose it to the internet, put it behind a reverse proxy you trust (Caddy, nginx-proxy-manager, Cloudflare Tunnel) and set `DASHBOARD_BEHIND_TLS=true` so session cookies flip to `Secure`.
+- **Single-user authentication.** One admin account, bcrypt-hashed password, HMAC-signed session cookies, brute-force-rate-limited login. No team/role model. Good enough for self-hosted home use; not designed for multi-tenant.
+- **No support, no warranty.** MIT licensed (see [LICENSE](LICENSE)) — feel free to fork, learn from, or repurpose. Issues filed will be read but not necessarily fixed.
+
+### What's optional
+
+The system is overbuilt on purpose so the dual-GPU host has work to do. Several pieces can be removed cleanly:
+
+- **AI chat (Qwen 3 14B + 19 tools)** — set `CHAT_MODEL=` (empty) in `.env`. Frees ~10 GB VRAM. The dashboard shows "AI chat disabled on this tier" and the rest of the system works unchanged.
+- **MiniCPM-V vision scene descriptions** — set `VISION_MODEL=`. Saves ~5 GB VRAM. Telegram alerts still fire; they just don't include the auto-generated "person in a black hoodie walking left" sentence.
+- **Telegram alerts** — leave `TELEGRAM_BOT_TOKEN` blank. The notification path gates on `is_configured()` and silently no-ops.
+- **QNAP NAS** — opt-in via `QNAP_ENABLED=true` + the overlay compose file. Default install keeps recordings local.
+
+### Known limitations
+
+- macOS is not supported (CUDA-only inference).
+- The orchestrator service has access to the Docker socket — it's the only one. The dashboard does not.
+- The setup wizard's GPU probe is best-effort; on very new cards (Blackwell) verify CUDA 12.8+ before relying on auto-tier selection.
+
+---
+
 ## License
 
-This project is for personal/educational use.
+[MIT](LICENSE) — see the LICENSE file for full text.
