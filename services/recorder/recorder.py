@@ -47,6 +47,17 @@ RTSP_URL = os.getenv("RTSP_URL", "")
 REDIS_HOST_FOR_REGISTRY = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT_FOR_REGISTRY = int(os.getenv("REDIS_PORT", "6379"))
 
+# Recorder health state — tracks consecutive short-lived ffmpeg sessions so we
+# can fire one recorder_error event after N quick failures (instead of spamming
+# on every single ffmpeg crash). Recovery event fires once after a long-running
+# successful session.
+_recorder_session_start: float = 0.0
+_consecutive_short_sessions: int = 0
+_recorder_error_active: bool = False
+_RECORDER_SHORT_SESSION_THRESHOLD = 30.0    # session shorter than this = "failed"
+_RECORDER_FAILURES_BEFORE_ALERT = 3         # quick-failure count before alerting
+_RECORDER_HEALTHY_THRESHOLD = 300.0          # session longer than this = "recovered"
+
 
 def _load_rtsp_from_registry():
     """If RTSP_URL not set in env, look it up from cameras:registry.
@@ -85,6 +96,36 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "28"))
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL", "6"))
 from contracts.tz import TZ_LOCAL  # validated single source of truth — see contracts/tz.py
 TZ_NAME = str(TZ_LOCAL)  # kept for any log lines that reference it by name
+
+
+def _emit_recorder_event(event_type: str, reason: str = "") -> None:
+    """Emit a recorder_error or recorder_recovered event to the camera's
+    events stream. Best-effort: failures here are logged but don't crash the
+    recorder (we don't want a Redis hiccup to bring down DVR)."""
+    try:
+        from contracts.redis_client import make_redis_client as _make_rc
+        from contracts.streams import EVENT_STREAM, stream_key
+        r = _make_rc(decode_responses=True,
+                     host=REDIS_HOST_FOR_REGISTRY,
+                     port=REDIS_PORT_FOR_REGISTRY)
+        r.xadd(
+            stream_key(EVENT_STREAM, camera_id=CAMERA_ID),
+            {
+                "camera_id": CAMERA_ID,
+                "event_type": event_type,
+                "timestamp": str(time.time()),
+                "reason": reason or "",
+                "alert_triggered": "true",
+                "alert_level": "always",
+            },
+            maxlen=5000,
+            approximate=True,
+        )
+        # Use print for symmetry with the rest of this file's pre-logger
+        # output. Once logging is initialized below, normal logger calls work.
+        print(f"[recorder] Emitted {event_type} event for {CAMERA_ID}: {reason}", flush=True)
+    except Exception as e:
+        print(f"[recorder] Failed to emit {event_type} event: {e}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -235,6 +276,8 @@ def record_segments() -> bool:
             stderr=subprocess.DEVNULL,
         )
 
+        global _recorder_session_start
+        _recorder_session_start = time.time()
         logger.info(f"ffmpeg started (PID {_ffmpeg_proc.pid})")
 
         # Monitor the process, periodically create day dirs and run cleanup
@@ -267,11 +310,40 @@ def record_segments() -> bool:
 
         # ffmpeg exited on its own — likely RTSP dropped
         rc = _ffmpeg_proc.returncode
-        stderr_out = _ffmpeg_proc.stderr.read().decode(errors="replace")
+        # stderr is DEVNULL (None), so don't try to .read() it — that crashes
+        # with AttributeError. Just log the exit code.
+        session_duration = time.time() - _recorder_session_start
         if rc != 0:
-            logger.warning(f"ffmpeg exited with code {rc}: {stderr_out[-500:]}")
+            logger.warning(
+                f"ffmpeg exited with code {rc} after {session_duration:.1f}s "
+                f"(stderr discarded by design — see Popen comment)"
+            )
         else:
-            logger.info("ffmpeg exited normally")
+            logger.info(f"ffmpeg exited normally after {session_duration:.1f}s")
+
+        # Recorder health tracking — fire alerts when ffmpeg keeps crashing
+        # quickly (network down, bad RTSP URL, disk full) and recover when a
+        # session runs long enough to suggest things are stable.
+        global _consecutive_short_sessions, _recorder_error_active
+        if session_duration < _RECORDER_SHORT_SESSION_THRESHOLD:
+            _consecutive_short_sessions += 1
+            if (_consecutive_short_sessions >= _RECORDER_FAILURES_BEFORE_ALERT
+                    and not _recorder_error_active):
+                _recorder_error_active = True
+                _emit_recorder_event(
+                    "recorder_error",
+                    f"ffmpeg exit_code={rc} after {session_duration:.1f}s "
+                    f"({_consecutive_short_sessions} consecutive short sessions)",
+                )
+        else:
+            # Session lasted long enough — reset counter
+            _consecutive_short_sessions = 0
+            if _recorder_error_active and session_duration > _RECORDER_HEALTHY_THRESHOLD:
+                _recorder_error_active = False
+                _emit_recorder_event(
+                    "recorder_recovered",
+                    f"ffmpeg ran {session_duration:.0f}s successfully",
+                )
         return rc == 0
 
     except FileNotFoundError:

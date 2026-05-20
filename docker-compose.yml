@@ -370,6 +370,7 @@ services:
     profiles: ["cam1"]
     volumes:
       - ./data/recordings:/recordings
+      - ./contracts:/app/contracts:ro
     environment:
       - CAMERA_ID=cam1
       # RTSP URL comes from cameras:registry. Power users override via env.
@@ -396,6 +397,7 @@ services:
     profiles: ["cam2"]
     volumes:
       - ./data/recordings:/recordings
+      - ./contracts:/app/contracts:ro
     environment:
       - CAMERA_ID=cam2
       - RTSP_URL=${CAM2_RTSP_URL:-}
@@ -677,7 +679,7 @@ services:
     build: { context: ./services/recorder }
     network_mode: host
     profiles: ["cam3"]
-    volumes: [ "./data/recordings:/recordings" ]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
     environment:
       - CAMERA_ID=cam3
       - REDIS_HOST=127.0.0.1
@@ -814,7 +816,7 @@ services:
     build: { context: ./services/recorder }
     network_mode: host
     profiles: ["cam4"]
-    volumes: [ "./data/recordings:/recordings" ]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
     environment:
       - CAMERA_ID=cam4
       - REDIS_HOST=127.0.0.1
@@ -951,7 +953,7 @@ services:
     build: { context: ./services/recorder }
     network_mode: host
     profiles: ["cam5"]
-    volumes: [ "./data/recordings:/recordings" ]
+    volumes: [ "./data/recordings:/recordings", "./contracts:/app/contracts:ro" ]
     environment:
       - CAMERA_ID=cam5
       - REDIS_HOST=127.0.0.1

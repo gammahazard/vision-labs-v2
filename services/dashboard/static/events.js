@@ -104,6 +104,7 @@ const EVENT_FILTERS = [
     { key: "people",   label: "🚶 People",   types: ["person_appeared", "person_left", "action_changed"] },
     { key: "vehicles", label: "🚗 Vehicles", types: ["vehicle_detected", "vehicle_idle"] },
     { key: "alerts",   label: "🚨 Alerts",   types: ["unauthorized_access"] },
+    { key: "system",   label: "📡 System",   types: ["stream_stale", "stream_recovered", "recorder_error", "recorder_recovered"] },
 ];
 let _activeFilterKey = "all";
 let _activeCameraFilter = "all";  // "all" or a camera id like "cam1"

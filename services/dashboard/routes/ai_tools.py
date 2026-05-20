@@ -45,6 +45,12 @@ KNOWN_EVENT_TYPES = (
     "face_reconciled",
     "action_changed",
     "unauthorized_access",
+    # Stream-health events emitted by camera-ingester when frames stop/resume.
+    "stream_stale",
+    "stream_recovered",
+    # Recorder health events emitted by recorder when ffmpeg keeps crashing.
+    "recorder_error",
+    "recorder_recovered",
 )
 KNOWN_EVENT_TYPES_DOC = ", ".join(KNOWN_EVENT_TYPES)
 
@@ -56,6 +62,7 @@ EVENT_CATEGORIES = {
     "faces": ("face_enrolled", "face_reconciled", "person_identified"),
     "actions": ("action_changed",),
     "security": ("unauthorized_access",),
+    "system": ("stream_stale", "stream_recovered", "recorder_error", "recorder_recovered"),
     "all": KNOWN_EVENT_TYPES,
 }
 

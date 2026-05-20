@@ -357,6 +357,10 @@ async def startup():
     from pollers.retention import retention_poller
     asyncio.create_task(retention_poller())
 
+    # Disk + Redis-memory health alerts (Telegram broadcast when usage > 85%)
+    from pollers.health import health_poller
+    asyncio.create_task(health_poller())
+
     # Start Prometheus metrics collector (polls Redis every 10s)
     asyncio.create_task(start_metrics_collector())
 

@@ -177,6 +177,37 @@ def render_event(evt: dict) -> dict:
                      "snapshot_key": evt["snapshot_key"],
                      "caption": f"Vehicle — {vclass}"}
 
+    elif et == "stream_stale":
+        css_classes.append("alert")
+        icon = "📡"
+        title = "Camera Stream Stale"
+        if time_str: parts.append(time_str)
+        reason = evt.get("reason") or "no frames"
+        parts.append(reason)
+        parts.append("🚨 Camera may be offline")
+
+    elif et == "stream_recovered":
+        css_classes.append("appeared")
+        icon = "✅"
+        title = "Camera Stream Recovered"
+        if time_str: parts.append(time_str)
+        parts.append(evt.get("reason") or "frames flowing again")
+
+    elif et == "recorder_error":
+        css_classes.append("alert")
+        icon = "💾"
+        title = "DVR Recorder Failing"
+        if time_str: parts.append(time_str)
+        parts.append(evt.get("reason") or "ffmpeg keeps crashing")
+        parts.append("🚨 Recordings may be incomplete")
+
+    elif et == "recorder_recovered":
+        css_classes.append("appeared")
+        icon = "✅"
+        title = "DVR Recorder Recovered"
+        if time_str: parts.append(time_str)
+        parts.append(evt.get("reason") or "recording stable")
+
     elif et == "unauthorized_access":
         css_classes.append("alert")
         icon = "🔒"
@@ -202,6 +233,6 @@ def render_event(evt: dict) -> dict:
         "title": title,
         "subtitle": " · ".join(parts),
         "css_classes": " ".join(dict.fromkeys(css_classes)),  # dedupe, preserve order
-        "alert": alert or et in ("unauthorized_access", "vehicle_idle"),
+        "alert": alert or et in ("unauthorized_access", "vehicle_idle", "stream_stale", "recorder_error"),
         "photo": photo,
     }

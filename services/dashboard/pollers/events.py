@@ -388,6 +388,59 @@ async def event_notification_poller():
                                     snapshot_bytes=snap_bytes,
                                 )
 
+                        elif event_type in (
+                            "stream_stale", "stream_recovered",
+                            "recorder_error", "recorder_recovered",
+                        ):
+                            # System-health alerts always fire (no notify_*
+                            # toggle to opt out — if your camera is dead or
+                            # DVR is failing you want to know). Generic
+                            # Telegram broadcast — bypasses per-event-type
+                            # config gating.
+                            if is_configured():
+                                try:
+                                    from routes.notifications import broadcast_text, _esc
+                                    cam_name = src_camera
+                                    try:
+                                        import cameras as _cam_reg
+                                        for c in _cam_reg.list_enabled_cameras():
+                                            if c.get("id") == src_camera:
+                                                cam_name = c.get("name") or src_camera
+                                                break
+                                    except Exception:
+                                        pass
+                                    reason = data.get("reason", "")
+                                    cam_line = f"• Camera: {_esc(cam_name)} ({_esc(src_camera)})"
+                                    if event_type == "stream_stale":
+                                        msg = (
+                                            f"\U0001f4f6 <b>Camera Stream Stale</b>\n"
+                                            f"{cam_line}\n"
+                                            f"• Reason: {_esc(reason or 'no frames')}\n"
+                                            f"• The camera may be offline or the network dropped."
+                                        )
+                                    elif event_type == "stream_recovered":
+                                        msg = (
+                                            f"✅ <b>Camera Stream Recovered</b>\n"
+                                            f"{cam_line}\n"
+                                            f"• Frames are flowing again."
+                                        )
+                                    elif event_type == "recorder_error":
+                                        msg = (
+                                            f"\U0001f4be <b>DVR Recorder Failing</b>\n"
+                                            f"{cam_line}\n"
+                                            f"• Reason: {_esc(reason or 'ffmpeg keeps crashing')}\n"
+                                            f"• Recordings on this camera may be incomplete."
+                                        )
+                                    else:  # recorder_recovered
+                                        msg = (
+                                            f"✅ <b>DVR Recorder Recovered</b>\n"
+                                            f"{cam_line}\n"
+                                            f"• {_esc(reason or 'recording stable')}"
+                                        )
+                                    await broadcast_text(msg)
+                                except Exception as e:
+                                    logger.warning(f"System-health broadcast failed: {e}")
+
         except Exception as e:
             logger.warning(f"Event notification poller error: {e}")
             await asyncio.sleep(5)

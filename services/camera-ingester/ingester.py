@@ -53,6 +53,7 @@ from streams import (
     FRAME_STREAM as _FRAME_TMPL,
     HD_FRAME_KEY as _HD_TMPL,
     CONFIG_KEY as _CFG_TMPL,
+    EVENT_STREAM as _EVT_TMPL,
     stream_key,
 )
 
@@ -104,6 +105,14 @@ MAX_STREAM_LEN = int(os.getenv("MAX_STREAM_LEN", "1000"))
 STREAM_KEY = stream_key(_FRAME_TMPL, camera_id=CAMERA_ID)
 HD_FRAME_KEY = stream_key(_HD_TMPL, camera_id=CAMERA_ID)
 CONFIG_KEY = stream_key(_CFG_TMPL, camera_id=CAMERA_ID)
+EVENT_STREAM = stream_key(_EVT_TMPL, camera_id=CAMERA_ID)
+
+# Stream-stale detection state. We emit one stream_stale event the first time
+# we exceed STALE_FRAME_RECONNECT_SECS without a frame, then one
+# stream_recovered event when frames resume. The event pipeline (dashboard
+# pollers/events.py) routes these through Telegram so the user knows their
+# camera went silent.
+_stream_stale_active = False
 
 # How often to re-read CONFIG_KEY for hot-reloadable settings (target_fps).
 # Matches the cadence used by detectors. Doesn't need to be aggressive — tuning
@@ -188,6 +197,53 @@ def connect_to_redis(host: str, port: int) -> redis.Redis:
     r.ping()  # Raises ConnectionError if Redis is unreachable
     logger.info("Redis connection verified")
     return r
+
+
+# ---------------------------------------------------------------------------
+# Stream health events — emit when frames stop / resume so the user gets a
+# Telegram alert via the standard event pipeline. Debounced via the
+# _stream_stale_active flag so we only fire once per stale period.
+# ---------------------------------------------------------------------------
+def _emit_stream_event(r: redis.Redis, event_type: str, reason: str = "") -> None:
+    """XADD a single event to events:{CAMERA_ID} so the dashboard event poller
+    picks it up and routes through Telegram + the recent-activity feed.
+
+    Caller should manage debounce via _stream_stale_active — calling this
+    repeatedly during a long stale period would spam the user.
+    """
+    try:
+        r.xadd(
+            EVENT_STREAM,
+            {
+                "camera_id": CAMERA_ID,
+                "event_type": event_type,
+                "timestamp": str(time.time()),
+                "reason": reason or "",
+                "alert_triggered": "true",  # always alert on stream health changes
+                "alert_level": "always",
+            },
+            maxlen=5000,
+            approximate=True,
+        )
+        logger.warning(f"Emitted {event_type} event for {CAMERA_ID}: {reason}")
+    except Exception as e:
+        logger.warning(f"Failed to emit {event_type} event: {e}")
+
+
+def _mark_stream_stale(r: redis.Redis, reason: str) -> None:
+    global _stream_stale_active
+    if _stream_stale_active:
+        return
+    _stream_stale_active = True
+    _emit_stream_event(r, "stream_stale", reason)
+
+
+def _mark_stream_recovered(r: redis.Redis) -> None:
+    global _stream_stale_active
+    if not _stream_stale_active:
+        return
+    _stream_stale_active = False
+    _emit_stream_event(r, "stream_recovered", "frames flowing again")
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +340,10 @@ def run():
                     f"No decoded frame in {STALE_FRAME_RECONNECT_SECS}s "
                     f"(camera likely unplugged or stream stalled) — reconnecting..."
                 )
+                _mark_stream_stale(
+                    r,
+                    f"no decoded frame in {STALE_FRAME_RECONNECT_SECS}s",
+                )
                 break
 
             # Throttle to TARGET_FPS (don't flood Redis with 15 FPS if we only need 5)
@@ -308,6 +368,8 @@ def run():
 
             consecutive_failures = 0
             last_good_frame_wallclock = time.time()
+            # If we previously emitted stream_stale, this is recovery.
+            _mark_stream_recovered(r)
 
             # Encode frame as JPEG
             encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
