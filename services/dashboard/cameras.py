@@ -75,11 +75,12 @@ def _publish_event(action: str, camera_id: str) -> None:
 # --profile <slot> up -d` automatically when a camera with one of these
 # IDs is added.
 #
-# To add more slots: duplicate the cam5 block in docker-compose.yml,
-# append to this list, and update ALLOWED_PROFILES in the orchestrator
-# service env. (cam1 is FIRST in this list so it's the default for the
-# first camera a user adds via the wizard.)
-AVAILABLE_SLOTS = ["cam1", "cam2", "cam3", "cam4", "cam5"]
+# To add more slots: duplicate any of the camN blocks in
+# docker-compose.yml, append to this list, and update ALLOWED_PROFILES
+# in the orchestrator service env. (cam1 is FIRST in this list so it's
+# the default for the first camera a user adds via the wizard.)
+AVAILABLE_SLOTS = ["cam1", "cam2", "cam3", "cam4", "cam5",
+                   "cam6", "cam7", "cam8", "cam9", "cam10"]
 
 
 def next_available_slot() -> Optional[str]:

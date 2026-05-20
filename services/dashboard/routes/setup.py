@@ -287,6 +287,185 @@ async def discover_cameras_in_setup(request: Request):
     return await discover_cameras(request)
 
 
+# ---------------------------------------------------------------------------
+# Telegram bot setup — wizard step 4.5
+# ---------------------------------------------------------------------------
+# Two-step flow that makes the painful "find your chat id" part automatic:
+#   1. User pastes the bot token from @BotFather.
+#      POST /api/setup/telegram/validate-token  → calls getMe, returns bot info.
+#   2. User sends /start to the bot from their phone.
+#      POST /api/setup/telegram/discover-chat-id → polls getUpdates for
+#      ~30 s, extracts the chat_id of the first incoming message.
+#   3. POST /api/setup/telegram/save writes token + chat_id + allowed users
+#      via the normal apply-config path, then sends a confirmation message.
+#
+# Why split into endpoints (instead of one big call): the chat-id discovery
+# needs a long poll the user can cancel ("skip Telegram"). And token validation
+# can fail fast without committing anything.
+
+import httpx as _httpx
+
+
+@router.post("/telegram/validate-token")
+async def telegram_validate_token(request: Request):
+    """Verify a bot token by calling Telegram's getMe. Returns the bot's
+    username on success so the wizard can show "send /start to @yourbot"."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+    token = (body.get("token") or "").strip()
+    # Format sanity — bot tokens are <int>:<29-char-base64ish>.
+    if not re.fullmatch(r"\d{6,}:[A-Za-z0-9_-]{20,}", token):
+        return JSONResponse(
+            {"ok": False, "error": "Token doesn't look right — should be <numbers>:<letters/numbers>"},
+            status_code=400,
+        )
+    try:
+        async with _httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://api.telegram.org/bot{token}/getMe", timeout=10
+            )
+    except _httpx.HTTPError as e:
+        return JSONResponse(
+            {"ok": False, "error": f"Couldn't reach Telegram: {e}"},
+            status_code=502,
+        )
+    data = resp.json() if resp.status_code == 200 else {}
+    if not data.get("ok"):
+        return JSONResponse(
+            {"ok": False, "error": data.get("description", "Token rejected by Telegram")},
+            status_code=400,
+        )
+    info = data.get("result", {})
+    return {
+        "ok": True,
+        "username": info.get("username", ""),
+        "first_name": info.get("first_name", ""),
+        "id": info.get("id"),
+    }
+
+
+@router.post("/telegram/discover-chat-id")
+async def telegram_discover_chat_id(request: Request):
+    """Poll getUpdates for up to ~30 seconds, return the first chat_id we see.
+
+    The wizard tells the user to send /start to the bot, then calls this.
+    The first incoming message gives us the user's chat_id — written to .env
+    in the save step so notifications can target them.
+
+    NOTE: We don't acknowledge the updates (no offset bump). The Telegram
+    bot poller in routes/bot_commands will pick them up cleanly once the
+    dashboard restarts with the saved token.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+    token = (body.get("token") or "").strip()
+    if not token:
+        return JSONResponse({"ok": False, "error": "Missing token"}, status_code=400)
+
+    deadline = time.time() + 35.0
+    async with _httpx.AsyncClient() as client:
+        while time.time() < deadline:
+            try:
+                resp = await client.get(
+                    f"https://api.telegram.org/bot{token}/getUpdates",
+                    params={"timeout": 5, "allowed_updates": '["message"]'},
+                    timeout=10,
+                )
+            except _httpx.HTTPError:
+                await asyncio.sleep(2)
+                continue
+            if resp.status_code != 200:
+                await asyncio.sleep(2)
+                continue
+            data = resp.json()
+            for update in data.get("result", []):
+                msg = update.get("message") or {}
+                chat = msg.get("chat") or {}
+                from_user = msg.get("from") or {}
+                if chat.get("id"):
+                    return {
+                        "ok": True,
+                        "chat_id": chat["id"],
+                        "user_id": from_user.get("id"),
+                        "first_name": from_user.get("first_name", ""),
+                        "username": from_user.get("username", ""),
+                    }
+            await asyncio.sleep(2)
+
+    return {
+        "ok": False,
+        "error": (
+            "No message received after 30 seconds. Make sure you sent a "
+            "message (any message) to the bot from the Telegram app, then "
+            "click 'Find me again'."
+        ),
+    }
+
+
+@router.post("/telegram/save")
+async def telegram_save(request: Request):
+    """Persist token + chat_id + allow-list to .env via apply-config and
+    send a confirmation message so the user immediately sees it works."""
+    from helpers.env_writer import update_env
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+    token = (body.get("token") or "").strip()
+    chat_id = (body.get("chat_id") or "").strip() or str(body.get("chat_id") or "")
+    user_id = str(body.get("user_id") or chat_id)
+    if not token or not chat_id:
+        return JSONResponse(
+            {"ok": False, "error": "Need both token and chat_id"}, status_code=400
+        )
+
+    updates = {
+        "TELEGRAM_BOT_TOKEN": token,
+        "TELEGRAM_CHAT_ID": chat_id,
+        "TELEGRAM_ALLOWED_USERS": user_id,
+    }
+    result = update_env(updates)
+    if not result["ok"]:
+        return JSONResponse(
+            {"ok": False, "error": result["error"]}, status_code=500
+        )
+
+    # Best-effort confirmation message. We send NOW with the freshly-supplied
+    # token (the dashboard's existing notifications module won't pick up the
+    # new env until restart, so we use httpx directly here).
+    try:
+        async with _httpx.AsyncClient() as client:
+            await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": "✅ Vision Labs is connected.\n\nYou'll start seeing alerts here whenever the system detects a person, vehicle, or face. Send /help to the bot for available commands.",
+                    "parse_mode": "HTML",
+                },
+                timeout=10,
+            )
+    except Exception as e:
+        logger.warning(f"Telegram confirmation message failed: {e}")
+
+    # Tell the orchestrator to restart the dashboard so the long-running
+    # bot-command poller picks up the new token.
+    try:
+        r = _redis_client()
+        r.publish("config:apply", json.dumps({
+            "request_id": f"tg-{int(time.time() * 1000)}",
+            "services": ["dashboard"],
+            "keys_changed": list(updates.keys()),
+        }))
+    except redis.ConnectionError as e:
+        logger.warning(f"Couldn't notify orchestrator: {e}")
+
+    return {"ok": True, "written": result["written"]}
+
+
 @router.post("/apply-config")
 async def apply_config(request: Request):
     """Persist the user's hardware-tier / GPU-mode / model choices to .env

@@ -6,7 +6,7 @@
     <title>Vision Labs — Setup</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/setup.css?v=2">
+    <link rel="stylesheet" href="css/setup.css?v=3">
 </head>
 <body>
 
@@ -22,6 +22,8 @@
             <li data-step="hardware">Hardware</li>
             <li data-step="location">Location</li>
             <li data-step="camera">First camera</li>
+            <li data-step="verify">Verify</li>
+            <li data-step="telegram">Telegram</li>
             <li data-step="finish">Finish</li>
         </ol>
     </nav>
@@ -206,7 +208,101 @@
             </div>
         </div>
 
-        <!-- Step 4: Finish -->
+        <!-- Step 4.5: Smoke check — verify a frame is actually flowing -->
+        <section class="wizard-step" data-step="verify">
+            <h2>Final check.</h2>
+            <p>
+                Quick sanity check before we drop you on the dashboard: we'll
+                wait up to 30 seconds for a frame from each camera you added.
+                If nothing shows up, the camera URL/credentials are likely
+                wrong — fixable in the Cameras tab.
+            </p>
+            <div id="verifyResults" class="verify-results" style="margin-top:12px;"></div>
+            <div class="wizard-actions">
+                <button id="btnVerifySkip" class="btn-tertiary">Skip check →</button>
+                <button id="btnVerifyContinue" class="btn-primary" disabled>Continue →</button>
+            </div>
+        </section>
+
+        <!-- Step 6: Telegram (optional) -->
+        <section class="wizard-step" data-step="telegram">
+            <h2>Connect Telegram alerts <span style="font-weight:400; opacity:0.6;">(optional)</span></h2>
+            <p>
+                With Telegram connected, your phone becomes a remote for the
+                whole stack. From anywhere you have data you can:
+            </p>
+            <ul style="margin:6px 0 12px 18px; line-height:1.7;">
+                <li>Get instant snapshots + AI scene descriptions when a person, vehicle, or known face is detected</li>
+                <li>Pull a fresh live photo on demand: <code>/snapshot</code></li>
+                <li>Grab a 5-40s video clip from any camera: <code>/clip 15 driveway</code></li>
+                <li>Ask the AI assistant questions from the chat: <code>/ask was anyone in the backyard tonight?</code></li>
+                <li>Check who's currently in frame: <code>/who</code> · arm/disarm alerts: <code>/arm</code></li>
+            </ul>
+            <p>
+                Skip this step if you'd rather use the dashboard only — you
+                can connect Telegram later from <code>.env</code>.
+            </p>
+
+            <!-- Step 6a: paste the bot token from @BotFather -->
+            <div id="tgStepToken" class="tg-substep">
+                <h3 style="margin-bottom:8px;">1. Create your bot</h3>
+                <ol style="margin:0 0 12px 18px; line-height:1.7;">
+                    <li>Open Telegram (mobile or desktop)</li>
+                    <li>Search for <strong><code>@BotFather</code></strong> and start a chat</li>
+                    <li>Send <code>/newbot</code></li>
+                    <li>Pick a name and username when prompted</li>
+                    <li>BotFather replies with a token like <code>123456:ABC...</code> — copy it here</li>
+                </ol>
+                <label style="display:block; margin-top:8px;">
+                    <span style="font-weight:600;">Bot token</span>
+                    <input type="text" id="tgToken"
+                           placeholder="123456789:AAH..."
+                           style="width:100%; padding:8px; border-radius:4px; margin-top:4px;"
+                           autocomplete="off">
+                </label>
+                <div id="tgTokenStatus" class="rtsp-test-result" hidden style="margin-top:10px;"></div>
+                <div class="wizard-actions">
+                    <button id="btnTgBack" class="btn-secondary">← Back</button>
+                    <button id="btnTgSkip" class="btn-tertiary">Skip Telegram</button>
+                    <button id="btnTgValidate" class="btn-primary">Validate token →</button>
+                </div>
+            </div>
+
+            <!-- Step 6b: discover the user's chat_id by waiting for a message -->
+            <div id="tgStepDiscover" class="tg-substep" hidden>
+                <h3 style="margin-bottom:8px;">2. Send a message to your bot</h3>
+                <p>
+                    Open Telegram and send <strong>any message</strong> (or just
+                    <code>/start</code>) to your bot:
+                    <strong id="tgBotMention">@yourbot</strong>
+                </p>
+                <p>
+                    We'll wait up to 30 seconds for your message to arrive,
+                    then capture your chat ID so the bot knows where to send
+                    alerts.
+                </p>
+                <div id="tgDiscoverStatus" class="rtsp-test-result" style="margin-top:10px;">⏳ Waiting for your message…</div>
+                <div class="wizard-actions">
+                    <button id="btnTgDiscoverCancel" class="btn-tertiary">Skip</button>
+                    <button id="btnTgDiscoverRetry" class="btn-secondary" hidden>Find me again →</button>
+                </div>
+            </div>
+
+            <!-- Step 6c: confirm + send test message -->
+            <div id="tgStepDone" class="tg-substep" hidden>
+                <h3 style="margin-bottom:8px;">3. All set</h3>
+                <p>
+                    Connected as <strong id="tgConfirmedName">…</strong>.
+                    A test message has been sent to your Telegram —
+                    check your phone to confirm.
+                </p>
+                <div class="wizard-actions">
+                    <button id="btnTgFinish" class="btn-primary">Continue →</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 7: Finish -->
         <section class="wizard-step" data-step="finish">
             <h2>You're done.</h2>
             <p id="finishSummary"></p>
@@ -226,6 +322,6 @@
     </main>
 </div>
 
-<script src="js/pages/setup.js?v=8"></script>
+<script src="js/pages/setup.js?v=10"></script>
 </body>
 </html>

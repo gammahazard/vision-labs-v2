@@ -61,6 +61,12 @@ ALLOWED_KEYS = {
     "SNAPSHOT_RETENTION_DAYS",
     "CLIP_RETENTION_DAYS",
     "RETENTION_DAYS",
+    # Telegram — wizard-settable (token + chat id + initial allowlist). The
+    # Telegram setup step writes all three after validating against the
+    # Telegram API. Read by routes/notifications and routes/bot_commands.
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",
+    "TELEGRAM_ALLOWED_USERS",
 }
 
 

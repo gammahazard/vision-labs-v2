@@ -19,7 +19,7 @@ const state = {
     cameraSkipped: false,
 };
 
-const STEPS = ['welcome', 'hardware', 'location', 'camera', 'finish'];
+const STEPS = ['welcome', 'hardware', 'location', 'camera', 'verify', 'telegram', 'finish'];
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -34,7 +34,33 @@ function showStep(step) {
         const idx = STEPS.indexOf(li.dataset.step);
         li.classList.toggle('active', idx === stepIdx);
         li.classList.toggle('completed', idx < stepIdx);
+        // Mark "visited" steps as clickable — anything we've gotten past
+        // or are currently on can be jumped back to. Future steps stay
+        // dim and uninteractive so the user can't skip ahead unsafely.
+        if (idx <= stepIdx) {
+            li.classList.add('clickable');
+            li.style.cursor = 'pointer';
+        } else {
+            li.classList.remove('clickable');
+            li.style.cursor = 'default';
+        }
     });
+}
+
+// Step-indicator click handler: let the user jump back to any step they've
+// already visited. Forward jumps are blocked to avoid skipping required
+// state (e.g. running the hardware probe before the verify step).
+function _onStepIndicatorClick(e) {
+    const li = e.target.closest('li[data-step]');
+    if (!li || !li.classList.contains('clickable')) return;
+    const target = li.dataset.step;
+    const targetIdx = STEPS.indexOf(target);
+    const currentIdx = STEPS.indexOf(state.current);
+    if (targetIdx >= 0 && targetIdx <= currentIdx) {
+        // Re-running a step that has its own auto-trigger? Honor those.
+        showStep(target);
+        if (target === 'telegram') showTelegramSubstep('token');
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +188,29 @@ function renderHardwareResult(data) {
     }
 
     const singleSlots = estimateSlots(biggest.vram_mb, biggestTier);
+    // When the user opts out of AI chat, VRAM that was reserved for Qwen +
+    // MiniCPM-V is freed for detectors. Recompute the slot estimate against
+    // that "no chat" budget so the trade-off is visible BEFORE they pick.
+    const slotsNoChat = estimateSlots(biggest.vram_mb, 'small');  // 'small' = no chat budget
+    const showNoChatToggle = (biggestTier !== 'small') && (slotsNoChat > singleSlots);
+
+    const aiToggleHtml = showNoChatToggle ? `
+        <div class="ai-chat-toggle" style="margin-top:14px; padding:12px; background:var(--bg-secondary,#1f2937); border-radius:6px;">
+            <label style="display:flex; gap:10px; align-items:flex-start; cursor:pointer;">
+                <input type="checkbox" id="prefersMoreCameras" style="margin-top:3px;">
+                <div>
+                    <strong>I'd rather have more cameras than AI chat.</strong>
+                    <div style="font-size:0.9em; color:var(--text-secondary,#9ca3af); margin-top:4px;">
+                        Disables the local LLM (Qwen) and vision model (MiniCPM-V) — frees ~14 GB of
+                        VRAM. Telegram alerts and detection still work; the AI chat tab will show
+                        "disabled on this tier" instead.
+                        With chat off, this GPU can run roughly <strong>${slotsNoChat}</strong>
+                        ${slotsNoChat === 1 ? 'camera' : 'cameras'} (vs ${singleSlots} with chat on).
+                    </div>
+                </div>
+            </label>
+        </div>
+    ` : '';
 
     resultEl.innerHTML = `
         <table>
@@ -170,10 +219,13 @@ function renderHardwareResult(data) {
         </table>
         ${modeChooserHtml}
         <div class="recommended">
-            <strong>Recommended tier:</strong> <code>${biggestTier}</code><br>
-            <strong>Estimated camera capacity:</strong> ${singleSlots} ${singleSlots === 1 ? 'camera' : 'cameras'} (single-GPU mode, with default detector mix)<br>
-            ${tierBlurbs[biggestTier]}
+            <strong>Recommended tier:</strong> <code id="tierLabel">${biggestTier}</code><br>
+            <strong>Estimated camera capacity:</strong>
+            <span id="slotsLabel">${singleSlots} ${singleSlots === 1 ? 'camera' : 'cameras'}</span>
+            (single-GPU mode, with default detector mix)<br>
+            <span id="tierBlurb">${tierBlurbs[biggestTier]}</span>
         </div>
+        ${aiToggleHtml}
     `;
 
     // Wire the radios so state.gpuMode + the .env hint update together
@@ -182,11 +234,24 @@ function renderHardwareResult(data) {
             state.gpuMode = e.target.value;
         });
     });
-    // Default the radio state to 'single'. The HTML already marks the
-    // 'single' option as checked; this just keeps `state.gpuMode` in
-    // sync with the rendered DOM in case the user proceeds without
-    // touching the radios.
     state.gpuMode = 'single';
+
+    // Wire the "more cameras vs AI" checkbox. Re-render the slot count + tier
+    // blurb in place so the user can see the trade-off immediately.
+    const noChatBox = document.getElementById('prefersMoreCameras');
+    if (noChatBox) {
+        noChatBox.addEventListener('change', (e) => {
+            state.aiDisabled = e.target.checked;
+            const tier = e.target.checked ? 'small' : biggestTier;
+            const slots = estimateSlots(biggest.vram_mb, tier);
+            document.getElementById('tierLabel').textContent = e.target.checked ? `${biggestTier} (chat off)` : biggestTier;
+            document.getElementById('slotsLabel').textContent = `${slots} ${slots === 1 ? 'camera' : 'cameras'}`;
+            document.getElementById('tierBlurb').innerHTML = e.target.checked
+                ? 'AI chat disabled. The chat tab returns "disabled on this tier"; all other features (live grid, Telegram alerts, DVR, face recognition) still work.'
+                : tierBlurbs[biggestTier];
+        });
+    }
+    state.aiDisabled = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +283,15 @@ async function applyConfig() {
         mid:   { chat: 'qwen3:7b',   vision: '', pose: '/models/yolov8s-pose.pt', vehicle: '/models/yolov8s.pt', fps: '10' },
         full:  { chat: 'qwen3:14b',  vision: 'minicpm-v', pose: '/models/yolov8s-pose.pt', vehicle: '/models/yolov8s.pt', fps: '15' },
     };
-    const m = modelsForTier[tier] || modelsForTier.mid;
+    const m = { ...(modelsForTier[tier] || modelsForTier.mid) };
+    // When the user ticked "more cameras instead of AI chat", null out the
+    // LLM model env vars so Ollama doesn't pre-load Qwen / MiniCPM-V and
+    // detectors get the full VRAM budget. Detector models still come from
+    // the chosen tier so accuracy isn't degraded.
+    if (state.aiDisabled) {
+        m.chat = '';
+        m.vision = '';
+    }
 
     const payload = {
         detector_gpu: String(detectorGpu),
@@ -466,7 +539,7 @@ async function addCamera() {
         id = sd.slot;
     } catch (_) {}
     if (!id) {
-        alert('No free camera slots. The wizard supports up to 5 cameras (cam1-cam5).');
+        alert('No free camera slots. The default install ships with 10 slots (cam1-cam10) — add more by duplicating camN blocks in docker-compose.yml.');
         return;
     }
 
@@ -490,8 +563,8 @@ async function addCamera() {
         });
         if (resp.ok) {
             state.cameraAdded = true;
-            showStep('finish');
-            renderFinishSummary();
+            showStep('verify');
+            runVerifyStep();
         } else {
             const data = await resp.json();
             alert(`Couldn't add camera: ${data.error || resp.status}`);
@@ -503,8 +576,221 @@ async function addCamera() {
 
 function skipCamera() {
     state.cameraSkipped = true;
-    showStep('finish');
-    renderFinishSummary();
+    // No camera means nothing to verify — jump straight to the Telegram step.
+    // Telegram is still useful for system-status messages even without cameras.
+    showStep('telegram');
+    showTelegramSubstep('token');
+}
+
+// ---------------------------------------------------------------------------
+// Step 5 — Verify (smoke check that frames are actually flowing)
+// ---------------------------------------------------------------------------
+// After the user adds their first camera, the orchestrator needs ~10-15s to
+// spin up the per-camera detector services and the ingester needs another
+// few seconds to make the first RTSP handshake. We poll /api/stats for each
+// registered camera and watch frames_in_stream go up. If it does, the
+// camera + credentials are good and the pipeline is end-to-end alive.
+async function runVerifyStep() {
+    const resultsEl = document.getElementById('verifyResults');
+    const continueBtn = document.getElementById('btnVerifyContinue');
+    resultsEl.innerHTML = '<p class="probing">⏳ Loading registered cameras…</p>';
+
+    let cams = [];
+    try {
+        const r = await fetch('/api/cameras');
+        cams = (await r.json()).cameras || [];
+    } catch (e) {
+        resultsEl.innerHTML = `<p class="error">Couldn't fetch camera list: ${escapeHtml(String(e))}</p>`;
+        continueBtn.disabled = false;
+        return;
+    }
+    cams = cams.filter(c => c.enabled !== false);
+    if (cams.length === 0) {
+        resultsEl.innerHTML = '<p>No enabled cameras to verify. Continue when ready.</p>';
+        continueBtn.disabled = false;
+        return;
+    }
+
+    // Render one row per camera with a pending indicator
+    resultsEl.innerHTML = cams.map(c => `
+        <div class="verify-row" data-cam="${escapeHtml(c.id)}" style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <span class="verify-icon" style="font-size:1.2em;">⏳</span>
+            <div>
+                <strong>${escapeHtml(c.name || c.id)}</strong>
+                <span style="opacity:0.6;">(${escapeHtml(c.id)})</span>
+                <div class="verify-detail" style="font-size:0.85em; opacity:0.7;">Waiting for first frame…</div>
+            </div>
+        </div>
+    `).join('');
+
+    // Poll /api/stats?camera=<id> every 2s up to 30s. Mark ✓ once
+    // frames_in_stream > 0; mark ✗ on timeout.
+    const deadline = Date.now() + 30_000;
+    const pending = new Set(cams.map(c => c.id));
+
+    while (pending.size > 0 && Date.now() < deadline) {
+        await Promise.all([...pending].map(async (camId) => {
+            try {
+                const r = await fetch(`/api/stats?camera=${encodeURIComponent(camId)}`);
+                if (!r.ok) return;
+                const data = await r.json();
+                const frames = data.frames_in_stream || 0;
+                if (frames > 0) {
+                    pending.delete(camId);
+                    const row = document.querySelector(`.verify-row[data-cam="${camId}"]`);
+                    if (row) {
+                        row.querySelector('.verify-icon').textContent = '✓';
+                        row.querySelector('.verify-icon').style.color = '#22c55e';
+                        row.querySelector('.verify-detail').textContent =
+                            `${frames} frame${frames === 1 ? '' : 's'} received — pipeline alive.`;
+                    }
+                }
+            } catch (_) { /* keep retrying */ }
+        }));
+        if (pending.size === 0) break;
+        await new Promise(res => setTimeout(res, 2000));
+    }
+
+    // Anything still pending after the deadline failed.
+    for (const camId of pending) {
+        const row = document.querySelector(`.verify-row[data-cam="${camId}"]`);
+        if (row) {
+            row.querySelector('.verify-icon').textContent = '✗';
+            row.querySelector('.verify-icon').style.color = '#ef4444';
+            row.querySelector('.verify-detail').innerHTML =
+                `No frames received after 30s. Likely causes: wrong RTSP URL, wrong credentials, or the camera is unreachable from the host network. Fixable in the <strong>Cameras tab</strong> after you finish setup.`;
+        }
+    }
+
+    continueBtn.disabled = false;
+    state.verifyResult = {
+        passed: cams.length - pending.size,
+        failed: pending.size,
+    };
+}
+
+function continueFromVerify() {
+    showStep('telegram');
+    showTelegramSubstep('token');
+}
+
+// ---------------------------------------------------------------------------
+// Step 6 — Telegram (optional)
+// ---------------------------------------------------------------------------
+// Three sub-steps: paste token → validate via getMe → user sends a message →
+// poll getUpdates to discover chat_id → save to .env. The whole thing can be
+// skipped at any time.
+
+function showTelegramSubstep(name) {
+    for (const sub of ['token', 'discover', 'done']) {
+        document.getElementById('tgStep' + capitalize(sub)).hidden = (sub !== name);
+    }
+}
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+let _tgToken = '';
+let _tgBotUsername = '';
+
+async function tgValidateToken() {
+    const token = document.getElementById('tgToken').value.trim();
+    const status = document.getElementById('tgTokenStatus');
+    const btn = document.getElementById('btnTgValidate');
+    if (!token) {
+        status.hidden = false;
+        status.className = 'rtsp-test-result err';
+        status.textContent = 'Paste the token first.';
+        return;
+    }
+    btn.disabled = true;
+    status.hidden = false;
+    status.className = 'rtsp-test-result';
+    status.textContent = '⏳ Checking with Telegram…';
+
+    try {
+        const r = await fetch('/api/setup/telegram/validate-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+        });
+        const data = await r.json();
+        if (!data.ok) {
+            status.className = 'rtsp-test-result err';
+            status.textContent = `✗ ${data.error || 'Token rejected.'}`;
+            btn.disabled = false;
+            return;
+        }
+        _tgToken = token;
+        _tgBotUsername = data.username || '';
+        // Move to substep 2
+        document.getElementById('tgBotMention').textContent =
+            _tgBotUsername ? `@${_tgBotUsername}` : '(your bot)';
+        showTelegramSubstep('discover');
+        tgDiscoverChatId();
+    } catch (e) {
+        status.className = 'rtsp-test-result err';
+        status.textContent = `✗ Network error: ${e}`;
+        btn.disabled = false;
+    }
+}
+
+async function tgDiscoverChatId() {
+    const status = document.getElementById('tgDiscoverStatus');
+    const retry = document.getElementById('btnTgDiscoverRetry');
+    status.className = 'rtsp-test-result';
+    status.textContent = '⏳ Waiting for your message…';
+    retry.hidden = true;
+
+    try {
+        const r = await fetch('/api/setup/telegram/discover-chat-id', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: _tgToken }),
+        });
+        const data = await r.json();
+        if (!data.ok) {
+            status.className = 'rtsp-test-result err';
+            status.textContent = `✗ ${data.error}`;
+            retry.hidden = false;
+            return;
+        }
+        // Got the chat id — save + send confirmation
+        await tgSave(data);
+    } catch (e) {
+        status.className = 'rtsp-test-result err';
+        status.textContent = `✗ Network error: ${e}`;
+        retry.hidden = false;
+    }
+}
+
+async function tgSave(discovered) {
+    const status = document.getElementById('tgDiscoverStatus');
+    status.className = 'rtsp-test-result';
+    status.textContent = '⏳ Saving and sending a test message to confirm…';
+
+    try {
+        const r = await fetch('/api/setup/telegram/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                token: _tgToken,
+                chat_id: discovered.chat_id,
+                user_id: discovered.user_id,
+            }),
+        });
+        const data = await r.json();
+        if (!data.ok) {
+            status.className = 'rtsp-test-result err';
+            status.textContent = `✗ ${data.error || 'Save failed.'}`;
+            return;
+        }
+        const who = discovered.first_name || discovered.username || `user ${discovered.user_id}`;
+        document.getElementById('tgConfirmedName').textContent = who;
+        state.telegramConfigured = true;
+        showTelegramSubstep('done');
+    } catch (e) {
+        status.className = 'rtsp-test-result err';
+        status.textContent = `✗ Network error: ${e}`;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -522,7 +808,13 @@ function renderFinishSummary() {
     }
 
     if (state.cameraAdded) {
-        parts.push('Your first camera was added. The orchestrator will spawn its detector services within ~10 seconds.');
+        if (state.verifyResult && state.verifyResult.failed === 0 && state.verifyResult.passed > 0) {
+            parts.push(`Your first camera is added and producing frames (${state.verifyResult.passed} ${state.verifyResult.passed === 1 ? 'pipeline' : 'pipelines'} verified end-to-end).`);
+        } else if (state.verifyResult && state.verifyResult.failed > 0) {
+            parts.push(`Your camera was registered but the verify check didn't see frames after 30s. Open the Cameras tab to recheck the RTSP URL + credentials.`);
+        } else {
+            parts.push('Your first camera was added. The orchestrator will spawn its detector services within ~10 seconds.');
+        }
     } else if (state.cameraSkipped) {
         parts.push('Camera setup skipped — add cameras any time via the Cameras tab.');
     }
@@ -637,6 +929,9 @@ async function finishWizard() {
     if (state.detected) steps.push('hardware_detected');
     if (state.cameraAdded) steps.push('camera_added');
     else if (state.cameraSkipped) steps.push('camera_skipped');
+    if (state.verifyResult) {
+        steps.push(`verify_${state.verifyResult.passed}of${state.verifyResult.passed + state.verifyResult.failed}`);
+    }
     steps.push('finished');
 
     try {
@@ -668,6 +963,9 @@ function escapeHtml(s) {
 // Wire up
 // ---------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
+    // Step indicator: click to jump back to previously-visited steps.
+    document.getElementById('stepIndicator').addEventListener('click', _onStepIndicatorClick);
+
     document.getElementById('btnNext1').addEventListener('click', () => showStep('hardware'));
     document.getElementById('btnBack2').addEventListener('click', () => showStep('welcome'));
     document.getElementById('btnNext2').addEventListener('click', () => {
@@ -685,6 +983,30 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnAddCamera').addEventListener('click', addCamera);
     document.getElementById('btnSkipCamera').addEventListener('click', skipCamera);
     document.getElementById('btnFinish').addEventListener('click', finishWizard);
+    document.getElementById('btnVerifySkip').addEventListener('click', () => {
+        showStep('telegram');
+        showTelegramSubstep('token');
+    });
+    document.getElementById('btnVerifyContinue').addEventListener('click', continueFromVerify);
+
+    // Telegram sub-step wiring
+    document.getElementById('btnTgBack').addEventListener('click', () => showStep('verify'));
+    document.getElementById('btnTgSkip').addEventListener('click', () => {
+        state.telegramSkipped = true;
+        showStep('finish');
+        renderFinishSummary();
+    });
+    document.getElementById('btnTgValidate').addEventListener('click', tgValidateToken);
+    document.getElementById('btnTgDiscoverCancel').addEventListener('click', () => {
+        state.telegramSkipped = true;
+        showStep('finish');
+        renderFinishSummary();
+    });
+    document.getElementById('btnTgDiscoverRetry').addEventListener('click', tgDiscoverChatId);
+    document.getElementById('btnTgFinish').addEventListener('click', () => {
+        showStep('finish');
+        renderFinishSummary();
+    });
 
     // ONVIF discovery
     document.getElementById('btnDiscover').addEventListener('click', discoverCameras);

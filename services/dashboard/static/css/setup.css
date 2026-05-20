@@ -88,6 +88,12 @@ body {
     color: var(--text-secondary);
 }
 
+/* Clickable steps (anything visited or current). Forward steps stay dim. */
+.step-indicator li.clickable:hover {
+    border-color: var(--border-active);
+    background: var(--bg-secondary);
+}
+
 /* Each wizard step is a panel; only the active one is visible */
 .wizard-step {
     display: none;
