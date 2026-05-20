@@ -95,7 +95,7 @@ For a deeper walk through Redis streams/keys, pub/sub channels, and service-by-s
 
 ## 4. Manual setup
 
-For users who want full visibility into every step, or to integrate Vision Labs into an existing stack with custom Docker / firewall / volume layout. See [MANUAL_SETUP.md](MANUAL_SETUP.md) for the very long-form walkthrough; the abridged version is below.
+For users who want full visibility into every step, or to integrate Vision Labs into an existing stack with custom Docker / firewall / volume layout. See [docs/history/MANUAL_SETUP.md](docs/history/MANUAL_SETUP.md) for the very long-form walkthrough; the abridged version is below.
 
 ```bash
 # 1. Move into WSL2 ext4 (not /mnt/c — bind mounts on 9p are dramatically slower)

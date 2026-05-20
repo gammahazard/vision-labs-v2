@@ -332,7 +332,6 @@ camera (where it makes semantic sense — events, system status).
 |------|-------|---------|
 | `app.js` | 362 | WebSocket connection, settings sliders, module init |
 | `ai.js` | 962 | AI chat, vision tab, DVR tab, onboarding wizard |
-| `generate.js` | 1570 | Image generation, gallery, sweep, img2img, prompt history |
 | `events.js` | 715 | Event feed polling + cursor pagination + journal fallback, type-filter pills, name search, Face Matched detail modal (thumbnail grid + similarity scores), photo lightbox |
 | `zones.js` | 500+ | Zone drawing canvas, CRUD operations, alert level config |
 | `faces.js` | 430+ | Face enrollment wizard, multi-angle capture |
@@ -349,7 +348,6 @@ camera (where it makes semantic sense — events, system status).
 |------|---------|
 | `style.css` | Main dashboard styles (live view, events, settings, zones) |
 | `ai.css` | AI chat interface, DVR player |
-| `generate.css` | Image generation UI, gallery, sweep, lightbox |
 | `monitoring.css` | System monitor cards, Grafana embed |
 
 ---
@@ -636,7 +634,7 @@ becomes either a QNAP NFS mount or stays local with shorter retention.
 | `qnap-snapshots`, `qnap-events`, `qnap-telegram`, `qnap-videos`, `qnap-clips` | Local Docker by default; CIFS when `docker-compose.qnap.yml` overlay is used | 5 storage volumes that can flip between local and NAS-backed at runtime |
 | `./data/recordings` (bind mount) | Bind mount to WSL host path (since `ed2c3c2`) | DVR recordings — browseable from Windows Explorer without sudo; will be swapped to NFS mount when QNAP arrives, code paths unchanged |
 | `./services/dashboard/static` + `./services/dashboard/{routes,pollers,helpers,*.py}` | Read-only bind mounts on the dashboard container | Dashboard source live-reload. HTML/CSS/JS changes are live on browser refresh; Python changes only need `docker compose restart dashboard` (no rebuild). The image still `COPY`s them for builds-from-scratch — the mounts just shadow that at runtime |
-| `/var/run/docker.sock` → `/var/run/docker.sock` (on orchestrator only) | Bind mount | Required for the orchestrator to manage compose profiles. **Deliberately NOT mounted on the dashboard** — see Phase 7b decision in REFACTOR_PLAN.md |
+| `/var/run/docker.sock` → `/var/run/docker.sock` (on orchestrator only) | Bind mount | Required for the orchestrator to manage compose profiles. **Deliberately NOT mounted on the dashboard** — see Phase 7b decision in docs/history/REFACTOR_PLAN.md |
 
 ### Profiles + Overlay Files
 
@@ -764,4 +762,4 @@ can verify counts/identities against the raw tool output. Mitigation for
 Qwen 3 14B hallucinations on aggregate queries.
 
 For day-to-day operational details on AI tools, see [CONTEXT.md §9](CONTEXT.md).
-For the full audit + remediation log, see PHASES.md.
+For the full audit + remediation log, see docs/history/PHASES.md.

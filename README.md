@@ -92,9 +92,8 @@ Open `http://localhost:8080`, log in with `admin/admin` (forced password rotatio
 
 - **[DETAILED_README.md](DETAILED_README.md)** — feature deep-dive, manual setup, env vars, dashboard pages, Telegram commands, backup/restore, hardware tiers
 - **[CONTEXT.md](CONTEXT.md)** — full project context for developers: service-by-service responsibilities, Redis schema, orchestrator behavior, gotchas
-- **[MANUAL_SETUP.md](MANUAL_SETUP.md)** — long-form install walkthrough for users who'd rather skip the installer
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — historical architecture deep dive (some sections predate recent refactors; prefer CONTEXT.md when they disagree)
-- **[PHASES.md](PHASES.md)** — chronological dev log
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — architectural reasoning: why services are split this way, Redis bus design, GPU placement
+- **[docs/history/](docs/history/)** — historical planning docs (MANUAL_SETUP, PHASES, REFACTOR_PLAN, PACKAGING_PLAN)
 
 ---
 

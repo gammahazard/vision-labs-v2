@@ -2,7 +2,7 @@
 
 > One-stop reference for a new session (human or LLM) to understand the project end-to-end. Last updated 2026-05-18.
 
-This document is the canonical context for working in this repo. It assumes you can read source code, but tells you **where to look**, **what reads what**, and **what to be careful of**. For task-specific docs see README.md (user-facing), PHASES.md (chronological dev log), REFACTOR_PLAN.md (historical decisions). ARCHITECTURE.md is partially stale — prefer this doc when they disagree.
+This document is the canonical context for working in this repo. It assumes you can read source code, but tells you **where to look**, **what reads what**, and **what to be careful of**. For architectural reasoning ("why services are split this way") see ARCHITECTURE.md — this doc tracks operational details (current AI tool catalog, env vars, retention defaults). Historical planning docs live in `docs/history/`.
 
 ---
 
@@ -86,7 +86,7 @@ portainer ──▶ https://localhost:9443 (Docker management UI)
 - Removing/disabling a camera = orchestrator runs `compose stop` + `compose rm -f -s` on just that slot's services (never bare `compose down` — that tears down everything).
 - `next-slot` endpoint (cameras.py) walks `AVAILABLE_SLOTS` in order, so the wizard always proposes cam1 first.
 
-**Why this matters:** When you see `front_door` in older docs or git history, that's the legacy primary. It's gone. Migration scripts exist in `scripts/migrate-front-door-to-cam1.sh` and `scripts/migrate-stream-fields.sh` and have already been run on this dev host. The only places `front_door` still legitimately appears: those migration scripts, and historical doc files (ARCHITECTURE.md, PHASES.md, REFACTOR_PLAN.md — partially stale).
+**Why this matters:** When you see `front_door` in older docs or git history, that's the legacy primary. It's gone. Migration scripts exist in `scripts/migrate-front-door-to-cam1.sh` and `scripts/migrate-stream-fields.sh` and have already been run on this dev host. The only places `front_door` still legitimately appears: those migration scripts, and historical planning docs under `docs/history/`.
 
 ---
 
@@ -611,7 +611,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 ### Phase G (2026-05-18) — biggest refactor of the month
 - **`front_door` → `cam1`. Symmetric slot model.** No more privileged primary camera. All 5 slots cam1-cam5 are profile-gated and orchestrator-managed identically.
 - Live migration ran on dev host: 104 Redis keys renamed, 718 events rewritten, 1012 identities rewritten, recordings dir + snapshot subdirs moved, event JSONLs rewritten in place.
-- Stale references remaining: ARCHITECTURE.md (extensive), PHASES.md:185, REFACTOR_PLAN.md (historical doc).
+- Stale references remaining: docs/history/REFACTOR_PLAN.md (historical doc), docs/history/PHASES.md.
 
 ### Phase H (2026-05-18)
 - Camera-add form locks ID to next-slot (read-only input).
@@ -642,11 +642,9 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 - `.env` / `.env.example` — runtime config
 - `README.md` — user-facing docs (refreshed 2026-05-18)
 - `CONTEXT.md` — this file (start here for full context)
-- `PHASES.md` — chronological dev log (some sections stale post-Phase G)
-- `ARCHITECTURE.md` — older deep dive (partially stale: front_door refs, generate.js refs)
-- `REFACTOR_PLAN.md` — historical refactoring plan
-- `PACKAGING_PLAN.md` — packaging/release plan
-- `MANUAL_SETUP.md` — manual install walkthrough
+- `DETAILED_README.md` — in-depth setup + operations guide
+- `ARCHITECTURE.md` — architectural reasoning (why services are split this way)
+- `docs/history/` — historical planning docs: PHASES.md, REFACTOR_PLAN.md, PACKAGING_PLAN.md, MANUAL_SETUP.md
 
 ### Source
 - `contracts/{streams,actions,time_rules}.py` — shared schemas/algorithms
