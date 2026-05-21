@@ -246,16 +246,19 @@ def resolve_event_snapshot_path(event_id: str, camera_id: str = "") -> str | Non
         return None
 
     # camera_id arrives from a query param (?camera=) and is interpolated
-    # into the snapshot path below. Same defence-in-depth as for event_id:
-    # only allow the alphanumeric/underscore/dash shape camera ids use in
-    # the registry. A crafted ?camera=../../etc would otherwise let the
-    # caller read /etc/<safe_id>.jpg style paths (narrow because safe_id
-    # is digit-only, but still a real traversal).
-    if camera_id and not re.fullmatch(r"[A-Za-z0-9_\-]+", camera_id):
+    # into the snapshot path below. Sanitize it the same way recordings.py
+    # _resolve_camera does — strip to the alnum/underscore/dash charset that
+    # registry slot ids actually use. The variable rename also lets CodeQL's
+    # taint analysis recognize the input as cleansed (it doesn't recognize
+    # in-place regex.fullmatch on the same variable).
+    safe_camera_id = "".join(
+        c for c in (camera_id or "") if c.isalnum() or c in "-_"
+    )
+    if camera_id and not safe_camera_id:
         return None
 
-    if camera_id:
-        p = os.path.join(SNAPSHOT_DIR, camera_id, f"{safe_id}.jpg")
+    if safe_camera_id:
+        p = os.path.join(SNAPSHOT_DIR, safe_camera_id, f"{safe_id}.jpg")
         if os.path.exists(p):
             return p
 
