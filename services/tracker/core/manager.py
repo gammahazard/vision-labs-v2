@@ -249,6 +249,18 @@ class PersonTracker:
                     best_iou = iou
                     best_match_id = vid
 
+            # IoU match can fail across consecutive frames when a fast-moving
+            # car shifts by more than half its width — IoU drops below
+            # VEHICLE_IOU_THRESHOLD even though it's clearly the same car.
+            # Mirror _try_ghost_match's center-distance heuristic here for
+            # the live-track case. Same-class only; same VEHICLE_GHOST_MAX_DIST_RATIO
+            # threshold. Catches the "drive-by car briefly splits into two
+            # TrackedVehicles" bug reported on cam1 (bboxes 50px apart on
+            # consecutive frames, IoU≈0.14). See test
+            # test_drive_by_with_low_iou_consecutive_frames_does_not_double_track.
+            if not best_match_id:
+                best_match_id = self._try_live_center_match(bbox, class_name)
+
             # Try ghost re-association before treating as a brand-new vehicle.
             # A ghost is a recently-lost vehicle (within VEHICLE_GHOST_TTL).
             # If the new detection is close enough in space + same class, we
@@ -357,6 +369,41 @@ class PersonTracker:
             self._emit_vehicle_gone_event(veh, timestamp)
             if veh.idle_alerted:
                 self._emit_vehicle_left_event(veh, timestamp)
+
+    def _try_live_center_match(self, bbox: list, class_name: str) -> str | None:
+        """Fallback live-track match by center distance when IoU failed.
+
+        When a vehicle drifts fast enough that consecutive-frame bboxes have
+        IoU below VEHICLE_IOU_THRESHOLD, the standard match step misses it
+        and the tracker spawns a new TrackedVehicle for the same physical
+        car. This helper checks whether any currently-tracked vehicle of the
+        SAME class is within `bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO` of the
+        new bbox's center; if so, return its id so the match step reuses it.
+
+        Same-class only — mirrors the ghost-match's safety rule. Cars
+        don't morph into trucks mid-track. Note: the standard IoU step
+        deliberately doesn't check class (handles YOLO class flicker on
+        the same vehicle); we restrict the looser center-distance path
+        only.
+        """
+        if not self.tracked_vehicles:
+            return None
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        bbox_w = max(1.0, bbox[2] - bbox[0])
+        max_dist = bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO
+        best_id = None
+        best_dist = max_dist
+        for vid, veh in self.tracked_vehicles.items():
+            if veh.class_name != class_name:
+                continue
+            vx = (veh.bbox[0] + veh.bbox[2]) / 2
+            vy = (veh.bbox[1] + veh.bbox[3]) / 2
+            dist = ((cx - vx) ** 2 + (cy - vy) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_id = vid
+        return best_id
 
     def _try_ghost_match(self, bbox: list, class_name: str, timestamp: float) -> str | None:
         """If a recently-departed vehicle is near this bbox, return its id.

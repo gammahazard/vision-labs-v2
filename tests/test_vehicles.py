@@ -949,6 +949,117 @@ def test_tracker_does_not_emit_sample_when_feature_disabled(monkeypatch):
 
 
 # ===========================================================================
+# IoU identity-swap regression — same car across consecutive frames whose
+# bboxes shifted enough to drop below the IoU threshold should still match
+# the existing TrackedVehicle, not spawn a new one. Live cam1 data showed
+# this failing with bboxes [756.4, 320.7, 830.3, 355.8] (frame N) →
+# [706.7, 329.3, 781.2, 366.6] (frame N+1, 225ms later, IoU≈0.14). Two
+# TrackedVehicles were created for the same physical car, producing two
+# vehicle_detected events + later two vehicle_gone events.
+# ===========================================================================
+def test_drive_by_with_low_iou_consecutive_frames_does_not_double_track(monkeypatch):
+    """Two consecutive detections of the SAME physical car whose bboxes
+    shifted enough to have IoU < threshold (fast-moving / large between-
+    frame motion). Must match to the same TrackedVehicle via the
+    center-distance fallback, not spawn a second one."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Live data from cam1, 2026-05-21 — same car 225ms apart, IoU≈0.14
+    m._process_vehicle_detections(
+        [{"bbox": [756.4, 320.7, 830.3, 355.8],
+          "class_name": "car", "confidence": 0.82}],
+        timestamp=0.0,
+    )
+    m._process_vehicle_detections(
+        [{"bbox": [706.7, 329.3, 781.2, 366.6],
+          "class_name": "car", "confidence": 0.78}],
+        timestamp=0.225,
+    )
+
+    # Exactly one TrackedVehicle should exist
+    assert len(m.tracked_vehicles) == 1, (
+        f"expected 1 tracked vehicle (IoU swap should match via center "
+        f"fallback), got {len(m.tracked_vehicles)}: "
+        f"{list(m.tracked_vehicles.keys())}"
+    )
+
+    # Exactly one vehicle_detected event in the stream
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    detected = [e for e in events if e.get("event_type") == "vehicle_detected"]
+    assert len(detected) == 1, (
+        f"expected 1 vehicle_detected, got {len(detected)}: {events}"
+    )
+
+
+def test_two_genuinely_different_cars_far_apart_dont_merge(monkeypatch):
+    """Two cars at very different positions in the frame should NOT match
+    via center-distance fallback. Verifies the fallback isn't over-eager.
+    Center distance ~750 px is well beyond `bbox_w * 2.0 = ~150 px`."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Car 1 at left edge, Car 2 at right edge — same camera frame
+    m._process_vehicle_detections(
+        [{"bbox": [50, 320, 130, 360],   # left-side car
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    m._process_vehicle_detections(
+        [{"bbox": [800, 320, 880, 360],  # right-side car, ~750px away
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=0.225,
+    )
+
+    assert len(m.tracked_vehicles) == 2, (
+        f"expected 2 distinct tracks for far-apart cars, got "
+        f"{len(m.tracked_vehicles)}"
+    )
+
+
+def test_center_fallback_respects_class_match(monkeypatch):
+    """A car and a truck with low IoU but close centers must NOT merge via
+    the new center-distance fallback. Class match is enforced ONLY in the
+    fallback (mirroring _try_ghost_match's behavior); the existing IoU
+    step is class-blind, which is intentional — handles the
+    car↔truck-class-flicker case where YOLO gives a different class on
+    consecutive frames for the same physical vehicle."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Two adjacent bboxes, no overlap → IoU=0 (below threshold). Centers
+    # are 80px apart, bbox_w=60, so threshold = 60×2.0 = 120 → within range.
+    # If class check is skipped on the fallback, these would incorrectly
+    # merge. With the check, they stay separate.
+    m._process_vehicle_detections(
+        [{"bbox": [400, 300, 460, 340],
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    m._process_vehicle_detections(
+        [{"bbox": [480, 300, 540, 340],
+          "class_name": "truck", "confidence": 0.8}],
+        timestamp=0.1,
+    )
+    assert len(m.tracked_vehicles) == 2
+
+
+# ===========================================================================
 # vehicle_gone + vehicle_left semantic split (Phase 1 follow-up fix)
 # ===========================================================================
 def test_drive_by_emits_vehicle_gone_but_not_vehicle_left(monkeypatch):
