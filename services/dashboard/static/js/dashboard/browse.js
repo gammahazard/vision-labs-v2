@@ -120,8 +120,55 @@ async function _loadBrowseHome() {
 }
 
 // ---------------------------------------------------------------------------
-// View: Day — thumbnail grid for a specific date
+// View: Day — per-track grouped cards (above) + flat thumbnail grid
 // ---------------------------------------------------------------------------
+
+// Fetch /api/browse/tracks/{date} and return an HTML string for the grouped-card
+// section, or '' if there are no tracks. Sanitization happens at the call site
+// (same convention as the flat-grid renderer below).
+async function _renderDayTracks(date, camera) {
+    const url = `/api/browse/tracks/${encodeURIComponent(date)}`
+                + (camera ? `?camera=${encodeURIComponent(camera)}` : '');
+    try {
+        const res = await fetch(url);
+        if (!res.ok) return '';
+        const tracks = await res.json();
+        if (!Array.isArray(tracks) || tracks.length === 0) return '';
+
+        const cards = tracks.map(t => `
+            <div class="track-card" data-track-id="${t.track_id}">
+                <div class="track-hero">
+                    <img src="${t.hero_url}" alt="${t.vehicle_class} hero" loading="lazy">
+                    <span class="track-class-pill">${t.vehicle_class}</span>
+                </div>
+                <div class="track-meta">
+                    <div class="track-time">${t.time}
+                        <span class="track-event">${t.event_kind}</span>
+                    </div>
+                    <div class="track-stats">
+                        ${t.voting_samples} angle${t.voting_samples === 1 ? '' : 's'}
+                        · ${t.duration_seconds.toFixed(1)}s
+                    </div>
+                </div>
+                <div class="track-angles">
+                    ${t.angle_urls.map(u => `
+                        <img src="${u}" class="track-angle" loading="lazy" alt="angle">
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+
+        return `<section class="track-cards-section">
+            <h3 style="margin:0.75rem 0 0.5rem;font-size:0.9rem;color:#94a3b8;">
+                Per-track view (${tracks.length} track${tracks.length === 1 ? '' : 's'})
+            </h3>
+            <div class="track-cards-grid">${cards}</div>
+        </section>`;
+    } catch (_) {
+        return '';
+    }
+}
+
 async function _browseDayClick(date) {
     _browseCurrentView = "day";
     _browseCurrentDate = date;
@@ -131,13 +178,19 @@ async function _browseDayClick(date) {
     container.innerHTML = '<div class="browse-loading">Loading…</div>';
 
     try {
-        const resp = await fetch(`/api/browse/days/${date}`);
-        const snapshots = await resp.json();
+        // Fetch tracks and flat snapshots in parallel
+        const [tracksHtml, snapshots] = await Promise.all([
+            _renderDayTracks(date, null),
+            fetch(`/api/browse/days/${date}`).then(r => r.json()),
+        ]);
 
         let html = `<div class="browse-nav">
             <button class="browse-back-btn" data-action="back">← Back</button>
             <span class="browse-nav-title">${date} — ${snapshots.length} snapshot${snapshots.length !== 1 ? "s" : ""}</span>
         </div>`;
+
+        // Grouped-card section comes first (empty string when no tracks → no section)
+        html += tracksHtml;
 
         if (!snapshots.length) {
             html += '<div class="browse-empty">No snapshots for this day.</div>';
