@@ -29,20 +29,18 @@ LLM:
 
 import asyncio
 import os
-import json
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import ollama as ollama_lib
 
-import routes as ctx
 import routes.ai_state as ai_state
-from routes.ai_state import set_ai_db, set_gpu_ready_flag
+# Re-exported for server.py — set_ai_db is wired during startup; ruff would
+# strip these as "unused" because they're only called by external consumers.
+from routes.ai_state import set_ai_db, set_gpu_ready_flag  # noqa: F401
 from routes.ai_tools import TOOLS, execute_tool
 from routes.ai_prompts import build_system_context, build_system_prompt
 
@@ -50,7 +48,6 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 logger = logging.getLogger("dashboard.ai")
 
 from constants import CHAT_MODEL as OLLAMA_MODEL, OLLAMA_KEEP_ALIVE, OLLAMA_HOST
-from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 
 
@@ -417,7 +414,7 @@ async def chat(req: ChatRequest):
             status_code=504,
             content={"error": "AI took too long to respond. Try a simpler question or check Ollama health."},
         )
-    except Exception as e:
+    except Exception:
         ai_state.collect_media(request_id)  # Clean up on error
         logger.exception("AI chat error")
         return JSONResponse(
@@ -604,7 +601,7 @@ async def analyze_image(req: VisionRequest):
     except asyncio.TimeoutError:
         return JSONResponse(status_code=504,
                             content={"error": f"Vision model timed out ({int(timeout)}s)"})
-    except Exception as e:
+    except Exception:
         logger.exception("Vision analysis error")
         return JSONResponse(status_code=500,
                             content={"error": "Vision model error — see dashboard logs for details"})

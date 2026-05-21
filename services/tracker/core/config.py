@@ -7,7 +7,6 @@ dashboard slider for IOU_THRESHOLD) only changes one file.
 """
 
 import os
-import sys
 import logging
 
 # contracts/ is mounted at /app/contracts in the tracker container (see

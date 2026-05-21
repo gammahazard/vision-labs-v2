@@ -7,15 +7,11 @@ PURPOSE:
     and the AI's personality/capability instructions.
 """
 
-import os
-import json
 import logging
 import time
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import routes as ctx
-import routes.ai_state as ai_state
 
 logger = logging.getLogger("dashboard.ai")
 from contracts.tz import TZ_LOCAL  # validated single source of truth

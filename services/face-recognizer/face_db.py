@@ -21,7 +21,6 @@ SCHEMA:
 """
 
 import sqlite3
-import time
 import numpy as np
 import logging
 import os

@@ -15,9 +15,7 @@ ENDPOINTS:
 """
 
 import json
-import os
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse

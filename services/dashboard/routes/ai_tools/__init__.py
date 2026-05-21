@@ -69,6 +69,19 @@ TOOLS = [
 ]
 
 
+# Public surface — listed explicitly so the lint gate doesn't flag the
+# `_shared` re-exports above as unused. The docstring at the top of this
+# file is the contract; this list mirrors it.
+__all__ = [
+    "TOOLS",
+    "execute_tool",
+    "KNOWN_EVENT_TYPES",
+    "KNOWN_EVENT_TYPES_DOC",
+    "EVENT_CATEGORIES",
+    "_category_matches",
+]
+
+
 _logger = logging.getLogger("dashboard.ai")
 
 

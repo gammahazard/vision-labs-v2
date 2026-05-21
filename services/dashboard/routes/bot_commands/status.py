@@ -6,37 +6,13 @@ The function and any per-command helpers live together so adding/changing a
 command is a single-file change. ``__init__.py`` wires this into the dispatcher.
 """
 
-import os
-import re
-import json
-import asyncio
-import logging
-import glob
-from datetime import datetime
 
-import cv2
-import numpy as np
-import httpx
 
 import routes as ctx
-import routes.ai_state as ai_state
-from contracts.time_rules import get_time_period
-from contracts.tz import TZ_LOCAL
 
 from ._shared import (
-    logger,
-    TELEGRAM_LOG_DIR,
-    send_text, send_photo, send_video,
-    edit_message_buttons, answer_callback_query,
-    get_latest_frame, build_clip, _now_str,
-    TELEGRAM_API, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USERS,
-    is_configured, _is_authorized,
-    _log_telegram_command, _save_telegram_media, _log_access,
-    _telegram_get_cameras, _camera_friendly_name, _user_specified_camera,
-    _send_camera_picker, _resolve_camera_token, _get_user_role,
-    _send_long_text,
-    _camreg,
-    make_redis_client, REDIS_HOST, REDIS_PORT,
+    send_text, _now_str,
+    _telegram_get_cameras, _camera_friendly_name, _resolve_camera_token, make_redis_client, REDIS_HOST, REDIS_PORT,
 )
 
 
@@ -76,7 +52,7 @@ async def _cmd_status(chat_id: str = "", text: str = "", **kwargs):
         info = r.info("memory")
         mem_used = info.get("used_memory_human", "?")
 
-        parts = [f"📊 <b>System Status</b>", f"• Redis memory: {mem_used}"]
+        parts = ["📊 <b>System Status</b>", f"• Redis memory: {mem_used}"]
 
         # Per-camera health
         for cid in cam_ids:

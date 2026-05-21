@@ -20,8 +20,7 @@ import os
 import time
 import sqlite3
 import logging
-from dataclasses import dataclass, asdict
-from typing import Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger("dashboard.ai_db")
 

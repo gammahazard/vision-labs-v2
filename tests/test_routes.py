@@ -16,9 +16,7 @@ NO real Redis — all Redis calls are mocked via a FakeRedis dict-store.
 
 import os
 import sys
-import json
 import time
-import tempfile
 import pytest
 
 # ---------------------------------------------------------------------------

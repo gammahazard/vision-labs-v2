@@ -6,7 +6,6 @@ this package. Admin-only commands (arm/disarm) require the user to have the
 "admin" role in Redis (cf. helpers/users.py).
 """
 
-import logging
 
 from ._shared import (
     logger,
@@ -22,7 +21,7 @@ from .disarm import _cmd_disarm
 from .who import _cmd_who
 from .help import _cmd_help
 from .cameras import _cmd_cameras
-from .analyze import _cmd_analyze, _handle_photo
+from .analyze import _cmd_analyze
 from .events import _cmd_events
 from .zones import _cmd_zones
 from .time_rules import _cmd_time_rules

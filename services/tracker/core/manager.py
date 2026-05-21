@@ -6,7 +6,6 @@ in sync. The big one — ~700 lines of pipeline logic.
 """
 
 import json
-import os
 import time
 
 import redis
@@ -19,9 +18,6 @@ from .config import (
     ZONE_KEY,
     IDENTITY_KEY,
     FRAME_STREAM,
-    HD_FRAME_KEY,
-    # Legacy underscore aliases used throughout the class body — preserved
-    # so this file remains a pure mechanical extraction with no name churn.
     VEHICLE_SNAPSHOT_KEY_TMPL as _VSNAP_TMPL,
     VEHICLE_SNAPSHOT_BBOX_KEY_TMPL as _VSNAP_BBOX_TMPL,
     PERSON_SNAPSHOT_KEY_TMPL as _PSNAP_TMPL,

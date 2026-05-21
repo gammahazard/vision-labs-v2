@@ -10,9 +10,7 @@ Tests:
 
 import sys
 import os
-import pytest
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 # Add project root and contracts to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

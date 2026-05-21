@@ -120,8 +120,6 @@ def register(app: FastAPI):
         # Use a separate Redis connection for binary frame data
         r_bin = make_redis_client(decode_responses=False, host=REDIS_HOST, port=REDIS_PORT)
 
-        last_frame_id = "$"  # Start from latest
-
         # Dashboard render rate is now driven by the same `target_fps` Redis config
         # the ingester respects, so the slider in the UI is the single source of
         # truth for end-to-end FPS. Re-checked every 25 frames inside the loop.

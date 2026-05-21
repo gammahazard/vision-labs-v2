@@ -218,7 +218,7 @@ def connect_to_camera(rtsp_url: str) -> cv2.VideoCapture:
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     if not cap.isOpened():
-        raise ConnectionError(f"Failed to open RTSP stream")
+        raise ConnectionError("Failed to open RTSP stream")
 
     # Read camera properties for logging
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

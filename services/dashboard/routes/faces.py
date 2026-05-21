@@ -130,5 +130,5 @@ async def get_face_photo(face_id: int):
             if resp.status_code == 200:
                 return Response(content=resp.content, media_type="image/jpeg")
             return JSONResponse(status_code=404, content={"error": "Face not found"})
-    except Exception as e:
+    except Exception:
         return JSONResponse(status_code=503, content={"error": "Face recognizer not available"})

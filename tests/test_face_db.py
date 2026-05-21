@@ -17,13 +17,12 @@ NO mocks — all tests hit a real SQLite DB in /tmp.
 
 import os
 import sys
-import tempfile
 import pytest
 import numpy as np
 
 # Add the face-recognizer service directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "face-recognizer"))
-from face_db import FaceDB, MAX_UNKNOWN_FACES, UNKNOWN_DEDUP_THRESHOLD
+from face_db import FaceDB, UNKNOWN_DEDUP_THRESHOLD
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +236,7 @@ class TestUnknownFaces:
     def test_dedup_similar_embedding(self, db):
         """Similar embeddings (above UNKNOWN_DEDUP_THRESHOLD) are deduped."""
         emb = random_embedding(seed=42)
-        uid1 = db.save_unknown(emb.copy(), b"photo1")
+        db.save_unknown(emb.copy(), b"photo1")
 
         # Create similar embedding
         noisy = similar_embedding(emb, noise=0.05)

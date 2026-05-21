@@ -27,12 +27,10 @@ MODULES:
 
 import asyncio
 import os
-import time
 import logging
 
 import cv2
 import numpy as np
-import redis
 from contracts.redis_client import make_redis_client
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
@@ -155,7 +153,7 @@ from routes.auth import (
     router as auth_router, init_auth_db, validate_session, session_must_change,
 )
 from routes.browse import router as browse_router
-from routes.ai import router as ai_router, set_ai_db, set_gpu_ready_flag
+from routes.ai import router as ai_router, set_ai_db
 from routes.telegram_access import router as telegram_access_router
 from routes.metrics import router as metrics_router, start_metrics_collector
 from routes.recordings import router as recordings_router
@@ -375,7 +373,6 @@ async def startup():
     # actually have services spawned for it. The old `seed_default_if_empty`
     # call here would auto-create a `front_door` entry from RTSP_SUB env,
     # which created a misleading "always-on primary" asymmetry.
-    import cameras as camera_registry
 
     # First-run wizard gate: if we DIDN'T just create the camera registry
     # (i.e. this is a pre-existing install with cameras already in Redis),
@@ -438,7 +435,6 @@ register_websocket(app)
 # refreshes. Set Cache-Control: no-cache on HTML responses so the browser
 # always revalidates. Versioned assets (ai.js?v=N, conditions.js?v=N, etc.)
 # stay cacheable as before — their URL changes when we bump the version.
-from fastapi import Response
 from fastapi.staticfiles import StaticFiles as _StaticFiles
 
 

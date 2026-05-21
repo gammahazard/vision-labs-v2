@@ -124,6 +124,13 @@ For services that COPY a single `.py` into their image (tracker, orchestrator), 
 - When a refactor invalidates a test, **prefer fixing the test** over `@pytest.mark.stale`. Stale tests rot. Fix or delete.
 - Tests use the host Python (3.12), not the container Python (3.11). Beware: container has bcrypt + cv2 + ollama as real deps; tests stub them. If you need to test something only the container can do, exec into the container.
 
+### Lint gate (ruff F-rules)
+
+- A second CI job (`lint` in `.github/workflows/tests.yml`) runs `ruff check .` against the whole tree. Config lives in `ruff.toml` at the repo root. Only the Pyflakes `F` ruleset is enabled — style/type rules are intentionally off (see the comment at the top of `ruff.toml`).
+- **F821 (undefined-name) is the load-bearing rule.** It catches the NameError-class regressions in §0 at PR time. F401/F811/F841 are also on; F401 in `tests/` is muted per-file because tests park experimental imports.
+- Re-export hubs (`_shared.py`, select package `__init__.py` files) declare their public surface via `__all__` OR per-line `# noqa: F401  (re-exported)` markers. Both patterns are used in the codebase; pick whichever produces less diff at a given site. Without one of these, ruff would auto-strip the re-export and break runtime consumers (this is how server.py's `from routes.ai import set_ai_db` broke during the initial lint pass).
+- Run locally before pushing: `source .venv-test/bin/activate && ruff check .` (install with `pip install ruff==0.15.13` if first time).
+
 ---
 
 ## 8. Don't write these things
@@ -228,7 +235,8 @@ The repo has a layered defense setup configured both at the GitHub level (repo S
 | **Dependabot version updates** | Weekly grouped PRs to bump deps proactively. Patch + minor only — ignores semver-major (manual review for those). | `.github/dependabot.yml` |
 | **Secret scanning alerts + push protection** | Detects committed secrets; push protection BLOCKS pushes containing detected secrets at git push time. | Repo Settings toggle |
 | **Branch protection on main** | Blocks force-push + deletion; requires `pytest` status check on PR merges. Admin can bypass for direct pushes; force/delete is hard-no for everyone including admins. | `gh api repos/.../branches/main/protection` |
-| **`tests.yml`** | Runs the 302-test pytest suite on every push to main + every PR. Required check before PR merge. | `.github/workflows/tests.yml` |
+| **`tests.yml` (pytest)** | Runs the 312-test pytest suite on every push to main + every PR. Required check before PR merge. | `.github/workflows/tests.yml` |
+| **`tests.yml` (lint)** | `ruff check .` with the Pyflakes `F` ruleset. Catches the NameError-class regressions (`F821`) and unused/redefined imports at PR time. Config in `ruff.toml`. See §7 for the rule scope rationale. Not yet a required check in branch protection — add via `gh api repos/.../branches/main/protection` if you want it gating merges. | `.github/workflows/tests.yml` + `ruff.toml` |
 | **`/audit-repo` skill** | Project-specific audit (docs drift, code quality, architecture, schema-drift between services). See §12. | `.claude/skills/audit-repo/` |
 | **DOMPurify at innerHTML sinks** | Runtime XSS hardening in the dashboard's JS. Every dashboard JS file that writes to `innerHTML` uses a `_safeHtml(html)` helper that wraps `DOMPurify.sanitize(html, {ADD_TAGS: [...], ADD_ATTR: [...]})`. | `services/dashboard/static/js/lib/dompurify.min.js` + `_safeHtml()` defined at the top of `ai.js`, `monitoring.js`, `events.js`, `browse.js` |
 | **Realpath + containment for file paths** | Defense against `?camera=../../etc`-style path traversal in route handlers that interpolate user input into `os.path.join`. The canonical pattern is `os.path.realpath(...).startswith(realpath(BASE) + os.sep)`. | Currently in `routes/events.py:resolve_event_snapshot_path` + the `get_event_snapshot` open() sink. New file-serving routes should follow the same pattern. |

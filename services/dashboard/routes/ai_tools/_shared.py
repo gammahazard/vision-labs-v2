@@ -19,7 +19,6 @@ WHY THIS MODULE EXISTS:
 """
 
 import logging
-import os
 
 import routes as ctx
 

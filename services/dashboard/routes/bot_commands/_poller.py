@@ -6,16 +6,13 @@ dispatching. Unauthorized attempts emit an `unauthorized_access` event so they
 show up in the dashboard events feed.
 """
 
-import os
 import json
 import asyncio
-import logging
 from datetime import datetime
 
 import httpx
 
 import routes as ctx
-from contracts.tz import TZ_LOCAL
 
 from ._shared import (
     logger,

@@ -8,7 +8,6 @@ to all approved chats in parallel.
 
 import json
 import asyncio
-import logging
 
 import httpx
 

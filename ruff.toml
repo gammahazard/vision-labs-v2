@@ -1,0 +1,48 @@
+# ruff.toml — lint configuration for Vision Labs.
+#
+# Scope choice (deliberate, narrow):
+#
+# We enable ONLY the `F` (Pyflakes) ruleset. F-rules catch real bugs:
+#   F401 — unused imports (signals refactor leftovers + the rare side-effect-
+#          only imports that need an explicit noqa)
+#   F811 — redefined name (silent shadow / duplicate import)
+#   F821 — undefined name (the v0.1.1 bot_commands regression class; the
+#          single most important rule we run — see CLAUDE.md §0)
+#   F841 — assigned but never used (often a leftover from a dropped use)
+#
+# Style rules (E, W, I, N, D, …) and bug-classification rules (B, …) are
+# intentionally OFF. The existing codebase has a consistent informal style
+# and we don't want to surface hundreds of pre-existing nits on a hot lint
+# gate. Adding more rule families is a separate, opt-in conversation.
+#
+# Type-checking (mypy / pyright) is intentionally NOT enabled here. The
+# codebase isn't annotated enough for that to be useful as a CI gate without
+# a long, separate type-annotation pass. See CLAUDE.md §7.
+
+# Re-export hubs (_shared.py and select __init__.py files) use either
+# explicit `__all__` lists or per-line `# noqa: F401` markers to satisfy
+# F401 without weakening the lint. Both patterns are documented in
+# CLAUDE.md §6.
+
+target-version = "py311"
+line-length = 120
+
+# Skip vendored / generated / non-source trees.
+extend-exclude = [
+    ".venv-test",
+    ".venv",
+    "audits",
+    "docs",
+    ".claude/plugins",
+    "services/dashboard/static/js/lib",   # vendored DOMPurify et al.
+]
+
+[lint]
+select = ["F"]
+
+[lint.per-file-ignores]
+# tests/conftest-style fixture modules sometimes import patch decorators
+# that the test runner uses dynamically. Tests are also the place where
+# experimental imports get parked. Keep the gate honest by checking F821
+# (the real-bug rule) but tolerate unused imports here.
+"tests/**" = ["F401"]

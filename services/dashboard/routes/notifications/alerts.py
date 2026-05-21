@@ -8,7 +8,6 @@ person_identified + face_enrolled always sent).
 """
 
 import time
-import logging
 
 import routes as ctx
 
@@ -62,7 +61,7 @@ async def notify_person_detected(event_data: dict,
     action = event_data.get("action", "")
     person_id = event_data.get("person_id", "unknown")
     name = identity if identity else person_id
-    parts = [f"\U0001f6a8 <b>Person Detected</b>"]
+    parts = ["\U0001f6a8 <b>Person Detected</b>"]
     parts.append(f"\u2022 Who: {_esc(name)}")
     if zone:
         parts.append(f"\u2022 Zone: {_esc(zone)}")
@@ -132,7 +131,7 @@ async def notify_person_identified(event_data: dict,
 
 
 
-    parts = [f"\U0001f464 <b>Person Identified</b>"]
+    parts = ["\U0001f464 <b>Person Identified</b>"]
     parts.append(f"\u2022 Name: {_esc(identity_name)}")
     parts.append(f"\u2022 Tracker ID: {_esc(person_id)}")
     if zone:
@@ -243,7 +242,7 @@ async def notify_vehicle_idle(event_data: dict,
     else:
         duration_str = f"{duration_raw:.0f}s"
 
-    parts = [f"\U0001f697 <b>Vehicle Idling</b>"]
+    parts = ["\U0001f697 <b>Vehicle Idling</b>"]
     parts.append(f"\u2022 Type: {_esc(vehicle_class)}")
     if zone:
         parts.append(f"\u2022 Zone: {_esc(zone)}")

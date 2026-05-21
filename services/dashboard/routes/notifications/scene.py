@@ -8,7 +8,6 @@ notifications.
 """
 
 import asyncio
-import logging
 
 from ._shared import logger, OLLAMA_HOST, VISION_MODEL, OLLAMA_KEEP_ALIVE
 

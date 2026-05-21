@@ -272,3 +272,40 @@ async def _send_long_text(text: str, chat_id: str = ""):
             split_at = MAX
         await send_text(text[:split_at], chat_id=chat_id)
         text = text[split_at:].lstrip("\n")
+
+
+# Public surface — every name below is either USED inside this file OR
+# re-exported for sibling bot_commands modules. Listing them explicitly
+# satisfies the F401 lint gate without sprinkling per-line noqa markers
+# across the import block. This module is a re-export hub per CLAUDE.md §6.
+__all__ = [
+    # stdlib re-exports for command files (handlers do real work and pull
+    # these from one place rather than re-importing on each command).
+    "os", "re", "json", "asyncio", "logging", "glob",
+    "datetime", "ZoneInfo",
+    # Third-party re-exports
+    "cv2", "np", "redis", "httpx",
+    # Internal contracts re-exports
+    "make_redis_client", "TZ_LOCAL", "get_time_period",
+    # Routes ctx + ai_state
+    "ctx", "ai_state",
+    # Notification surface — every name re-exported from routes.notifications
+    "is_configured", "_is_authorized",
+    "send_text", "send_photo", "send_video",
+    "edit_message_buttons", "answer_callback_query",
+    "get_latest_frame", "build_clip", "_now_str",
+    "TELEGRAM_API", "TELEGRAM_CHAT_ID", "TELEGRAM_ALLOWED_USERS",
+    "REDIS_HOST", "REDIS_PORT",
+    # Ollama config
+    "OLLAMA_HOST", "OLLAMA_KEEP_ALIVE", "VISION_MODEL", "OLLAMA_MODEL",
+    # Cameras registry
+    "_camreg",
+    # Locally-defined helpers
+    "logger",
+    "TELEGRAM_LOG_DIR", "SNAPSHOT_DIR",
+    "_log_telegram_command", "_save_telegram_media", "_log_access",
+    "_seed_users_from_env", "_telegram_get_cameras",
+    "_camera_friendly_name", "_user_specified_camera",
+    "_send_camera_picker", "_resolve_camera_token",
+    "_get_user_role", "_send_long_text",
+]

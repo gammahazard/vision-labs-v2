@@ -17,10 +17,8 @@ ENDPOINTS:
     DELETE /api/unknowns/{uid}        — Delete single unknown
 """
 
-import json
 import time
 
-import redis
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 import httpx
@@ -51,7 +49,7 @@ async def get_unknown_photo(uid: int):
             if resp.status_code == 200:
                 return Response(content=resp.content, media_type="image/jpeg")
             return JSONResponse(status_code=404, content={"error": "Unknown face not found"})
-    except Exception as e:
+    except Exception:
         return JSONResponse(status_code=503, content={"error": "Face recognizer not available"})
 
 

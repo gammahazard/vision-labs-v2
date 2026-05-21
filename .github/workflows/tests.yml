@@ -26,6 +26,25 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Lint gate — Pyflakes (F rules) only.
+  # ---------------------------------------------------------------------------
+  # F821 (undefined-name) is the load-bearing rule: it would have caught
+  # every NameError-class regression in CLAUDE.md §0 at PR time instead of
+  # in production. Style rules (E, W, …) and type-checking are deliberately
+  # NOT enabled here. See ruff.toml for the scope rationale.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install ruff
+        run: pip install ruff==0.15.13
+      - name: Run ruff (F-class checks)
+        run: ruff check .
+
   pytest:
     runs-on: ubuntu-latest
 

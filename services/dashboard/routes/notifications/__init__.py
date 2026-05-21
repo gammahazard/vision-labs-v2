@@ -29,7 +29,7 @@ Internal layout:
 
 from ._shared import (
     _esc, _now_str, is_configured, _is_authorized,
-    TELEGRAM_API, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USERS,
+    TELEGRAM_API, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USERS,
     REDIS_HOST, REDIS_PORT,
 )
 from .telegram_api import (
@@ -52,7 +52,7 @@ __all__ = [
     "edit_message_buttons", "answer_callback_query",
     "is_configured", "_is_authorized",
     "get_latest_frame", "get_sd_frame", "build_clip", "draw_bbox_on_frame",
-    "describe_scene",
+    "describe_scene", "_PERSON_PROMPT", "_VEHICLE_PROMPT",
     "notify_person_detected", "notify_person_identified",
     "notify_vehicle_idle", "notify_face_enrolled",
     "_esc", "_now_str",

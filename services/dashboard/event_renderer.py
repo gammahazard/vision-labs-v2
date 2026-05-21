@@ -34,7 +34,6 @@ OUTPUT SHAPE:
     }
 """
 
-import os
 from datetime import datetime
 from contracts.tz import TZ_LOCAL  # validated single source of truth
 

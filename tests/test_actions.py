@@ -10,7 +10,6 @@ NO mocks — the classifier is pure math on keypoint coordinates.
 
 import os
 import sys
-import pytest
 
 # Add contracts directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "contracts"))

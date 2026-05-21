@@ -10,7 +10,6 @@ NO real Telegram or Redis. Uses monkeypatch/patch to isolate logic.
 import os
 import sys
 import time
-import pytest
 
 # ---------------------------------------------------------------------------
 # Path setup

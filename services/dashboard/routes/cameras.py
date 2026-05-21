@@ -30,7 +30,6 @@ import asyncio
 import json
 import logging
 import re
-import shlex
 import urllib.parse
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import URLError, HTTPError
@@ -106,7 +105,7 @@ async def _ffprobe_rtsp(url: str, timeout: float = 8.0) -> dict:
         return {"ok": False, "error": "No video stream found"}
     except FileNotFoundError:
         return {"ok": False, "error": "ffprobe not installed in dashboard container"}
-    except Exception as e:
+    except Exception:
         logger.exception("ffprobe RTSP probe error")
         return {"ok": False, "error": "RTSP probe failed — see dashboard logs for details"}
 

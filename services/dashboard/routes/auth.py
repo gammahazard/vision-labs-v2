@@ -24,7 +24,7 @@ import os
 import secrets
 import sqlite3
 import time
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])

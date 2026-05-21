@@ -16,15 +16,8 @@ import routes as ctx
 import routes.ai_state as ai_state
 
 from ._shared import (
-    KNOWN_EVENT_TYPES,
-    KNOWN_EVENT_TYPES_DOC,
-    EVENT_CATEGORIES,
     TZ_LOCAL,
-    _category_matches,
-    _camera_key,
-    _camera_name,
     _get_camera_list,
-    _redact_sensitive,
     _resolve_camera,
 )
 

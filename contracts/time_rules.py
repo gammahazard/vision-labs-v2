@@ -26,7 +26,6 @@ ALERT LEVELS (per zone):
 
 import os
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 try:
     from astral import LocationInfo

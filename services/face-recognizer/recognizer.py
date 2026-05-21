@@ -27,7 +27,6 @@ ENVIRONMENT VARIABLES:
     API_PORT        — REST API port for enrollment (default: 8081)
 """
 
-import asyncio
 import base64
 import json
 import os

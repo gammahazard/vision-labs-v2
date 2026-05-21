@@ -54,7 +54,7 @@ async def list_containers():
     """
     try:
         raw = ctx.r.get("orchestrator:containers")
-    except redis.RedisError as e:
+    except redis.RedisError:
         logger.exception("Redis error fetching container state")
         return JSONResponse(
             status_code=503,

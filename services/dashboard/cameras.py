@@ -323,7 +323,7 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
         else:
             _publish_event("upsert", cid)
         return True, None
-    except Exception as e:
+    except Exception:
         logger.exception(f"Registry upsert({cid}) failed")
         return False, "Registry write failed — see dashboard logs for details"
 

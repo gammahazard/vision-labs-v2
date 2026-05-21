@@ -48,10 +48,9 @@ from pathlib import Path
 
 import redis
 from contracts.redis_client import make_redis_client
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-import constants as ctx
 
 logger = logging.getLogger("dashboard.setup")
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -107,7 +106,7 @@ def _write_state(state: dict) -> None:
     except OSError as e:
         if getattr(e, "errno", None) == 16:  # EBUSY → bind-mount target
             logger.warning(
-                f"setup.json appears bind-mounted (EBUSY); using truncate fallback"
+                "setup.json appears bind-mounted (EBUSY); using truncate fallback"
             )
             try:
                 tmp.unlink(missing_ok=True)

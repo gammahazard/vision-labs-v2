@@ -35,7 +35,6 @@ import logging
 import os
 import time
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import cv2
 import numpy as np
@@ -59,7 +58,7 @@ async def event_notification_poller():
     """
     from routes.notifications import (
         notify_person_detected, notify_person_identified,
-        notify_vehicle_idle, is_configured, get_latest_frame, get_sd_frame,
+        notify_vehicle_idle, is_configured, get_sd_frame,
     )
 
     from contracts.streams import (

@@ -183,3 +183,28 @@ def _get_all_chat_ids() -> list[str]:
     if not chat_ids and TELEGRAM_CHAT_ID:
         chat_ids.append(TELEGRAM_CHAT_ID)
     return chat_ids
+
+
+# Public surface declared explicitly so the lint gate doesn't flag re-exports
+# (make_redis_client, OLLAMA_*, VISION_MODEL) as unused. This module is a
+# shared-helper hub per CLAUDE.md §6; sibling modules import from it
+# unchanged.
+__all__ = [
+    # Re-exports — imported here so the package's __init__ + sibling modules
+    # can pull everything from one place.
+    "make_redis_client",
+    "TZ_LOCAL",
+    "OLLAMA_HOST",
+    "VISION_MODEL",
+    "OLLAMA_KEEP_ALIVE",
+    # Telegram config
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_API",
+    "TELEGRAM_CHAT_ID", "TELEGRAM_ALLOWED_USERS",
+    "REDIS_HOST", "REDIS_PORT",
+    # Helpers + gates
+    "_esc", "_redact_token", "_now_str",
+    "_get_cooldown", "_cooldown_field",
+    "_get_last_notification", "_set_last_notification",
+    "is_configured", "_is_authorized", "_get_all_chat_ids",
+    "logger",
+]

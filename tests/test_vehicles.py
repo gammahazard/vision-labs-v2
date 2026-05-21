@@ -10,7 +10,6 @@ NO real Redis or GPU — tracker logic and routes are tested with FakeRedis.
 
 import os
 import sys
-import json
 import time
 import pytest
 

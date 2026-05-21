@@ -16,11 +16,9 @@ RELATIONSHIPS:
 """
 
 import asyncio
-import time
 import json
 import logging
 import sys
-import os
 
 from fastapi import APIRouter, Response
 
@@ -29,7 +27,6 @@ from prometheus_client import (
     Counter,
     generate_latest,
     CONTENT_TYPE_LATEST,
-    CollectorRegistry,
     REGISTRY,
 )
 
@@ -205,7 +202,7 @@ async def monitoring_health():
             "redis_memory_mb": redis_mem_mb,
             "total_events": events_len,
         }
-    except Exception as e:
+    except Exception:
         logger.exception("Health endpoint error")
         return {"error": "Health check failed — see dashboard logs for details"}
 

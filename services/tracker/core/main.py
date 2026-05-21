@@ -1,7 +1,6 @@
 """tracker/core/main.py — entrypoint: signal handler, consumer-group setup, main loop."""
 
 import json
-import os
 import signal
 import time
 

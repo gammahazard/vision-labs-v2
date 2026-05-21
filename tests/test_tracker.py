@@ -10,8 +10,6 @@ NO mocks on the core logic — only Redis is faked (for PersonTracker tests).
 
 import os
 import sys
-import time
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "tracker"))
 

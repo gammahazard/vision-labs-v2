@@ -8,7 +8,6 @@ live frame stream and re-encodes via ffmpeg for cross-platform playback.
 """
 
 import json
-import logging
 
 import cv2
 import numpy as np

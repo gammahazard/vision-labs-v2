@@ -6,7 +6,6 @@ Owns the `router` object that server.py wires into the dashboard app via
 HTTP concerns out of the alert/transport code.
 """
 
-import logging
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -14,7 +13,6 @@ from fastapi.responses import JSONResponse
 import routes as ctx
 
 from ._shared import (
-    logger,
     is_configured,
     _esc,
     _now_str,

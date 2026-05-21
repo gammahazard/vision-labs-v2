@@ -8,35 +8,18 @@ command is a single-file change. ``__init__.py`` wires this into the dispatcher.
 
 import os
 import re
-import json
 import asyncio
-import logging
 import glob
 from datetime import datetime
 
 import cv2
-import numpy as np
-import httpx
 
-import routes as ctx
-import routes.ai_state as ai_state
-from contracts.time_rules import get_time_period
 from contracts.tz import TZ_LOCAL
 
 from ._shared import (
     logger,
-    TELEGRAM_LOG_DIR,
-    send_text, send_photo, send_video,
-    edit_message_buttons, answer_callback_query,
-    get_latest_frame, build_clip, _now_str,
-    TELEGRAM_API, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USERS,
-    is_configured, _is_authorized,
-    _log_telegram_command, _save_telegram_media, _log_access,
-    _telegram_get_cameras, _camera_friendly_name, _user_specified_camera,
-    _send_camera_picker, _resolve_camera_token, _get_user_role,
-    _send_long_text,
-    _camreg,
-    SNAPSHOT_DIR,
+    send_text, send_video,
+    _telegram_get_cameras, _camera_friendly_name, _resolve_camera_token, SNAPSHOT_DIR,
 )
 
 
@@ -85,8 +68,8 @@ async def _cmd_timelapse(chat_id: str = "", text: str = "", **kwargs):
 
     if not os.path.isdir(SNAPSHOT_DIR):
         await send_text(
-            f"📂 Snapshot directory not found.\n"
-            f"Usage: /timelapse [YYYY-MM-DD]",
+            "📂 Snapshot directory not found.\n"
+            "Usage: /timelapse [YYYY-MM-DD]",
             chat_id=chat_id,
         )
         return
