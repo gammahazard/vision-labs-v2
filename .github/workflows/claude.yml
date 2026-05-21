@@ -12,11 +12,25 @@ on:
 
 jobs:
   claude:
+    # SECURITY: gate every trigger on the sender being the repo owner (or a
+    # short allowlist). Without this, ANY GitHub user could comment `@claude`
+    # on a public repo's PR/issue and trigger billing on the owner's
+    # Anthropic account (~$4/invocation per the prior auto-review measurement).
+    # To allow more users: add OR clauses like
+    #   github.event.sender.login == 'someone-else'
+    # to the first AND clause. Do NOT loosen to `author_association == 'OWNER'`
+    # without thinking — that wouldn't help on a public repo where any
+    # outside contributor commenter has association == NONE which is harmless,
+    # but for a private/org repo with multiple contributors it might be
+    # what you want.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      github.event.sender.login == github.repository_owner &&
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
