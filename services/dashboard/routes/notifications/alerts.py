@@ -19,6 +19,7 @@ from ._shared import (
     _get_cooldown,
     _get_last_notification,
     _set_last_notification,
+    _vehicle_position_dedup_key,
 )
 from .telegram_api import (
     send_text, send_photo,
@@ -196,38 +197,30 @@ async def notify_vehicle_idle(event_data: dict,
         )
         return 0
 
-    # Per-vehicle dedup. Key = (camera, tracker_vehicle_id, first_seen). The
-    # same physical car generating a new track after a >15s occlusion gets a
-    # fresh first_seen, so it falls under the per-camera cooldown instead of
-    # this dedup. This catches the obvious double-notify cases: tracker process
-    # restart mid-park, or any future retry/replay of the same event.
-    vid = event_data.get("vehicle_id", "")
-    vfirst = event_data.get("vehicle_first_seen", "")
-    if vid and vfirst:
-        dedup_key = f"notify:vehicle_idle:seen:{cam}:{vid}:{vfirst}"
+    # Position-based dedup — see _vehicle_position_dedup_key() in _shared.py
+    # for the full rationale. Prefer `snapshot_bbox` (the bbox captured when
+    # the tracker first saw this vehicle, stable across the vehicle's
+    # lifecycle) over `bbox` (the current position, can drift on tracker
+    # identity swaps). 30-minute TTL: a parked car is "already notified" for
+    # half an hour; after that, if it's still in the spot it'll re-notify,
+    # which is probably what you want — long enough to suppress drive-by
+    # churn, short enough that a still-there car eventually gets re-flagged.
+    bbox_for_dedup = event_data.get("snapshot_bbox") or event_data.get("bbox")
+    pos_key = _vehicle_position_dedup_key(cam, bbox_for_dedup)
+    if pos_key:
         try:
-            first_notify = ctx.r.set(dedup_key, "1", nx=True, ex=3600)
+            first_notify = ctx.r.set(pos_key, "1", nx=True, ex=1800)
             if not first_notify:
                 logger.debug(
-                    f"Vehicle idle already notified for {vid}@{vfirst} on {cam}"
+                    f"Vehicle idle suppressed by position dedup on {cam}: key={pos_key}"
                 )
                 return 0
         except Exception as e:
-            # Best-effort — Redis failure falls back to the cooldown gate.
+            # Best-effort — Redis failure means we'd just send another
+            # notification, not lose one. No fallback gate; the per-camera
+            # cooldown that used to live here was dropped because it was
+            # suppressing legitimately distinct vehicles within 60 s.
             logger.debug(f"Vehicle dedup-key check failed: {e}")
-
-    now = time.time()
-    cooldown = _get_cooldown("vehicle_cooldown", 60)
-    last_sent = _get_last_notification("vehicle_idle", cam)
-    if now - last_sent < cooldown:
-        remaining = cooldown - (now - last_sent)
-        logger.debug(
-            f"Vehicle idle notification rate-limited on {cam or 'global'} "
-            f"({remaining:.0f}s remaining in {cooldown}s cooldown)"
-        )
-        return 0  # Rate limited
-
-    _set_last_notification("vehicle_idle", now, cam)
 
     vehicle_class = event_data.get("vehicle_class", "vehicle")
     zone = event_data.get("zone", "")

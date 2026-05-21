@@ -100,7 +100,19 @@ class TrackedVehicle:
         cur_cx, cur_cy = self.center_history[-1]
         drift = ((cur_cx - ref_cx) ** 2 + (cur_cy - ref_cy) ** 2) ** 0.5
         bbox_w = max(1.0, self.bbox[2] - self.bbox[0])
-        threshold = max(8.0, bbox_w * 0.10)
+        # Threshold relaxed from `max(8.0, bbox_w*0.10)` to `max(20.0, bbox_w*0.15)`
+        # after live data on cam1 showed a parked car flip-flopping `is_stationary`
+        # on YOLO bbox jitter — same TrackedVehicle re-emitting `vehicle_idle`
+        # every few minutes for an hour, polluting the event stream + AI query
+        # counts (the per-vehicle dedup at the notify layer suppressed the
+        # Telegrams, but the events were noisy). With 20 px / 15% width:
+        # • 80 px bbox (typical street-parked car at our sub-stream res) →
+        #   threshold = 20 px ≈ a quarter of the car's width. Allows real
+        #   jitter without false motion calls.
+        # • 200 px bbox (close-up vehicle) → threshold = 30 px ≈ 15% width.
+        # Stationary classification is now stable against realistic detector
+        # noise; deliberate motion still trips it.
+        threshold = max(20.0, bbox_w * 0.15)
         return drift < threshold
 
 
