@@ -10,6 +10,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ### Added
 - **Edit pencil ✏ on every camera row** — modal to rename, edit lat/lon, toggle detectors without delete + re-add. Reuses `data-requires=` so `detect_faces → detect_persons` is gated inside the modal too.
+- **Vehicle attributes Phase 1** — new per-cam `vehicle-attributes-cam{N}` service buffers HD crops per tracked vehicle and writes `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}` on `vehicle_left` / `vehicle_idle`. No classifier yet — Phase 3 ships ML. New `detect_vehicle_attributes` flag (hard-depends on `detect_vehicles`); tracker emits `vehicle_sample` every Nth matched update (gated by `EMIT_VEHICLE_SAMPLES`, off by default). Orchestrator allowlist + per-cam expansion extended. Browse renders grouped cards above the flat snapshot grid. *Requires new service image build + tracker rebuild.*
 
 ### Fixed
 - **Detector-flag dependencies enforced** — UI (`js/lib/checkbox-dependencies.js`, generic `data-requires=`) + server (`cameras.py:_validate_camera`) both gate `detect_faces` on `detect_persons`. Wired into setup, add-camera, edit-camera.
