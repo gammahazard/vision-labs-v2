@@ -141,6 +141,13 @@ def _validate_camera(entry: dict) -> Optional[str]:
             return "'rtsp_main' must start with rtsp:// or rtsps://"
         if len(rtsp_main) > 512:
             return "'rtsp_main' must be 512 characters or fewer"
+    # Hard dependencies — child detectors require their parent enabled.
+    # The UI surfaces these as "(requires …)" hints + checkbox auto-disable
+    # via data-requires="…" (see js/lib/checkbox-dependencies.js), but a
+    # curl/CLI client could bypass that. Enforce on the server too so the
+    # downstream services don't sit idle on an impossible config.
+    if entry.get("detect_faces") and entry.get("detect_persons") is False:
+        return "'detect_faces' requires 'detect_persons' to be true"
     return None
 
 
@@ -322,6 +329,41 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
             _publish_event("enable" if now_enabled else "disable", cid)
         else:
             _publish_event("upsert", cid)
+
+        # Detector-flag toggle mid-life: the orchestrator's reconcile loop
+        # only watches `enabled` (see orchestrator.py:desired_profiles), so
+        # flipping `detect_*` on an existing camera doesn't auto-spawn the
+        # disabled-but-now-wanted service — the container exited cleanly on
+        # its last startup flag-check and Docker's restart policy won't
+        # restart on exit code 0. Publish to `config:apply` (same channel
+        # the settings panel uses) with the affected per-cam service names;
+        # orchestrator's per-cam expansion logic from PR #10 handles the
+        # rest with `up -d --force-recreate`.
+        if existing:
+            detector_to_service = {
+                "detect_persons":  f"pose-detector-{cid}",
+                "detect_vehicles": f"vehicle-detector-{cid}",
+                "detect_faces":    f"face-recognizer-{cid}",
+            }
+            changed_services = [
+                svc for flag, svc in detector_to_service.items()
+                if bool(existing.get(flag, True)) != bool(entry.get(flag, True))
+            ]
+            if changed_services:
+                try:
+                    ctx.r.publish("config:apply", json.dumps({
+                        "request_id": f"detector-toggle-{cid}-{int(time.time() * 1000)}",
+                        "services": changed_services,
+                        "keys_changed": ["detect_*"],
+                    }))
+                    logger.info(
+                        f"Registry: published config:apply for {cid} "
+                        f"(detector flags changed: {changed_services})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Registry: couldn't publish config:apply for {cid}: {e}"
+                    )
         return True, None
     except Exception:
         logger.exception(f"Registry upsert({cid}) failed")
