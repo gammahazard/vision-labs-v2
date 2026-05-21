@@ -221,14 +221,22 @@ class TestSyncToolsNoError:
               {"camera": "cam1", "date": "today", "time": "13:00"})
 
     def test_schedule_reminder(self, ai_ctx, monkeypatch):
+        """Stub the AI DB + use the correct arg keys so the tool reaches
+        _parse_time + _MAX_PENDING_REMINDERS. Previous version passed
+        {text, when} but the tool reads {message, time_description} —
+        both empty → early return at args validation, masking NameErrors
+        on _parse_time + _MAX_PENDING_REMINDERS (the 2026-05-20 audit
+        found this; commit c5dca11 fixed it)."""
         from routes.ai_tools import schedule_reminder as sr
-        # Stub the AI DB so the schedule write doesn't hit a real SQLite.
         import routes.ai_state as ai_state
+
         class _StubDB:
             def add_reminder(self, *a, **kw): return 1
+            def count_pending_reminders(self): return 0  # exercises the rate-limit check path
+
         monkeypatch.setattr(ai_state, "_ai_db", _StubDB())
         _call(sr._tool_schedule_reminder,
-              {"text": "test", "when": "in 5 minutes"})
+              {"message": "test reminder", "time_description": "in 5 minutes"})
 
 
 class TestSyncNoArgsToolsNoError:
@@ -263,8 +271,15 @@ class TestAsyncToolsNoError:
         from routes.ai_tools.capture_snapshot import _tool_capture_snapshot
         _call(_tool_capture_snapshot, {"camera": "cam1"})
 
-    def test_send_telegram(self, ai_ctx):
-        # No bot configured → tool returns error JSON.
+    def test_send_telegram(self, ai_ctx, monkeypatch):
+        """Stub is_configured + send_text so the tool reaches its rate-limit
+        code path. Previous version returned early at the is_configured()
+        check and masked a NameError on _send_telegram_rate_check + window
+        constants (the 2026-05-20 audit found this; commit 5d20ac3 fixed it)."""
+        import routes.notifications as nots
+        monkeypatch.setattr(nots, "is_configured", lambda: True)
+        async def _stub_send_text(*a, **kw): return None
+        monkeypatch.setattr(nots, "send_text", _stub_send_text)
         from routes.ai_tools.send_telegram import _tool_send_telegram
         _call(_tool_send_telegram, {"message": "test"})
 
