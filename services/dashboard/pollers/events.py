@@ -388,6 +388,31 @@ async def event_notification_poller():
                                     snapshot_bytes=snap_bytes,
                                 )
 
+                        elif event_type == "vehicle_left":
+                            # Clear the position dedup key so the next vehicle
+                            # to park at the same spot gets a fresh notification.
+                            # Uses the CURRENT bbox (last observed position),
+                            # not snapshot_bbox — for an identity-swapped tracker
+                            # that "leaves" with its bbox drifted onto a passing
+                            # car, the DEL hits a different grid cell than the
+                            # parked spot, leaving the parked-spot dedup intact.
+                            # For a legitimately-departed parked car, the last
+                            # bbox is usually close to the parked spot or
+                            # somewhere along the departure path; if the same
+                            # grid cell, the DEL fires; otherwise the 30-min
+                            # TTL handles eventual expiry. Best-effort —
+                            # Redis errors silently no-op (worst case is the
+                            # 30-min TTL gates the next notification).
+                            from routes.notifications._shared import _vehicle_position_dedup_key
+                            pos_key = _vehicle_position_dedup_key(
+                                src_camera, data.get("bbox", ""),
+                            )
+                            if pos_key:
+                                try:
+                                    r.delete(pos_key)
+                                except Exception:
+                                    pass
+
                         elif event_type in (
                             "stream_stale", "stream_recovered",
                             "recorder_error", "recorder_recovered",

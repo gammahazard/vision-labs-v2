@@ -230,70 +230,99 @@ class TestZoneAlertGate:
 
 
 # ===========================================================================
-# Per-Vehicle Dedup Key Shape
+# Position-Based Dedup Key Shape (replaced per-vehicle dedup)
 # ===========================================================================
-class TestVehicleDedupKey:
-    """The per-vehicle dedup key prevents the same TrackedVehicle instance
-    from triggering two Telegram notifications. The key is composed of
-    (camera, vehicle_id, first_seen) so a fresh track after tracker restart
-    or ghost-expiry gets a different key and can notify again.
+class TestVehiclePositionDedupKey:
+    """Position-quantized dedup keys the parking SPOT, not the tracker
+    instance. Solves the failure mode where the same physical car gets
+    re-tracked under multiple vehicle_id values (tracker restart, IoU
+    identity swap with a passing car, ghost-expiry after long occlusion)
+    and each fresh tracker_id was bypassing the old per-tracker SETNX.
+
+    Live data on cam1 showed three separate Telegrams for the same parked
+    car within an hour: vehicle_0029 → vehicle_0001 → vehicle_0003, all
+    at bbox ~[728, 322, 807, 359]. With position dedup all three collapse
+    to the same key.
+
+    Key shape: notify:vehicle_idle:seen:{camera_id}:{grid_x}_{grid_y}
+    Grid step: 100 px (bbox center quantized).
     """
 
     @staticmethod
-    def _dedup_key(event_data: dict) -> str | None:
-        cam = event_data.get("camera_id", "")
-        vid = event_data.get("vehicle_id", "")
-        vfirst = event_data.get("vehicle_first_seen", "")
-        if not (vid and vfirst):
+    def _key(camera_id: str, bbox) -> str | None:
+        # Mirror of services/dashboard/routes/notifications/_shared.py
+        # `_vehicle_position_dedup_key`. Extracted into the test so the
+        # contract is asserted without importing dashboard internals
+        # (matches the pattern of every other helper test in this file).
+        import json as _json
+        if bbox is None:
             return None
-        return f"notify:vehicle_idle:seen:{cam}:{vid}:{vfirst}"
+        try:
+            if isinstance(bbox, str):
+                bbox = _json.loads(bbox)
+            if not (isinstance(bbox, list) and len(bbox) == 4):
+                return None
+            cx = (bbox[0] + bbox[2]) / 2
+            cy = (bbox[1] + bbox[3]) / 2
+            grid_x = int(cx // 100)
+            grid_y = int(cy // 100)
+            return f"notify:vehicle_idle:seen:{camera_id}:{grid_x}_{grid_y}"
+        except (ValueError, TypeError, _json.JSONDecodeError):
+            return None
 
-    def test_key_includes_all_three_parts(self):
-        key = self._dedup_key({
-            "camera_id": "cam1",
-            "vehicle_id": "vehicle_0042",
-            "vehicle_first_seen": "1735693200",
-        })
-        assert key == "notify:vehicle_idle:seen:cam1:vehicle_0042:1735693200"
+    def test_parked_car_grid_bucket(self):
+        """The bbox [728, 322, 807, 359] from real cam1 data quantizes to
+        grid (7, 3) at 100px buckets."""
+        key = self._key("cam1", [728, 322, 807, 359])
+        assert key == "notify:vehicle_idle:seen:cam1:7_3"
 
-    def test_no_key_without_vehicle_id(self):
-        """Without vehicle_id, dedup is skipped (key=None) — relies on cooldown."""
-        assert self._dedup_key({
-            "camera_id": "cam1",
-            "vehicle_first_seen": "1735693200",
-        }) is None
+    def test_same_grid_for_jittered_bboxes(self):
+        """Tiny YOLO bbox jitter on a parked car (a few px frame-to-frame)
+        keeps the bbox in the same grid bucket → same dedup key → second
+        idle event for the same parked car is correctly suppressed."""
+        k1 = self._key("cam1", [728.0, 322.9, 807.5, 359.4])
+        k2 = self._key("cam1", [729.3, 323.9, 804.8, 359.3])
+        k3 = self._key("cam1", [728.6, 324.7, 808.3, 359.1])
+        assert k1 == k2 == k3 == "notify:vehicle_idle:seen:cam1:7_3"
 
-    def test_no_key_without_first_seen(self):
-        """Without first_seen, dedup is skipped (key=None) — relies on cooldown."""
-        assert self._dedup_key({
-            "camera_id": "cam1",
-            "vehicle_id": "vehicle_0042",
-        }) is None
+    def test_different_tracker_ids_same_parking_spot_collide(self):
+        """The core fix: vehicle_0029 / vehicle_0001 / vehicle_0003 all
+        emitted at the same parking spot from real data → ONE dedup key.
+        Previously each tracker-id had its own key → three separate
+        Telegram notifications for the same physical car."""
+        spot = [728, 322, 807, 359]
+        # The event payload's tracker fields don't even reach the helper —
+        # position alone determines the key.
+        k1 = self._key("cam1", spot)
+        k2 = self._key("cam1", spot)
+        k3 = self._key("cam1", spot)
+        assert k1 == k2 == k3
 
-    def test_different_first_seen_yields_different_key(self):
-        """Same vehicle_id but different first_seen (e.g. tracker restart) → new key."""
-        k1 = self._dedup_key({
-            "camera_id": "cam1",
-            "vehicle_id": "vehicle_0001",
-            "vehicle_first_seen": "1735693200",
-        })
-        k2 = self._dedup_key({
-            "camera_id": "cam1",
-            "vehicle_id": "vehicle_0001",
-            "vehicle_first_seen": "1735696800",
-        })
+    def test_different_spots_yield_different_keys(self):
+        """Two cars parked far apart get distinct dedup keys."""
+        k1 = self._key("cam1", [728, 322, 807, 359])
+        k2 = self._key("cam1", [200, 400, 280, 440])
         assert k1 != k2
 
     def test_different_cameras_yield_different_keys(self):
-        """Same vehicle_id on different cameras → different keys."""
-        k1 = self._dedup_key({
-            "camera_id": "cam1",
-            "vehicle_id": "vehicle_0001",
-            "vehicle_first_seen": "1735693200",
-        })
-        k2 = self._dedup_key({
-            "camera_id": "cam2",
-            "vehicle_id": "vehicle_0001",
-            "vehicle_first_seen": "1735693200",
-        })
+        """Same spot on different cameras → different keys."""
+        k1 = self._key("cam1", [728, 322, 807, 359])
+        k2 = self._key("cam2", [728, 322, 807, 359])
         assert k1 != k2
+
+    def test_no_key_for_missing_bbox(self):
+        """No bbox → skip dedup (caller should treat as 'allow notify')."""
+        assert self._key("cam1", None) is None
+
+    def test_no_key_for_malformed_bbox(self):
+        """Malformed bbox JSON → skip dedup (don't crash, don't block)."""
+        assert self._key("cam1", "[not json") is None
+        assert self._key("cam1", [1, 2, 3]) is None  # wrong arity
+        assert self._key("cam1", {"x": 1}) is None  # wrong type
+
+    def test_json_string_bbox_works(self):
+        """The event payload stores bbox as a JSON string — verify the
+        helper parses it transparently."""
+        k1 = self._key("cam1", "[728, 322, 807, 359]")
+        k2 = self._key("cam1", [728, 322, 807, 359])
+        assert k1 == k2

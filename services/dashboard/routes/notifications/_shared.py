@@ -185,6 +185,54 @@ def _get_all_chat_ids() -> list[str]:
     return chat_ids
 
 
+def _vehicle_position_dedup_key(camera_id: str, bbox, grid_px: int = 100) -> str | None:
+    """Position-quantized dedup key for vehicle_idle notifications.
+
+    `bbox` is either a JSON string `"[x1, y1, x2, y2]"` or a 4-element list.
+    Returns None if it can't be parsed — caller should treat as "skip dedup".
+
+    Why position-based and not per-tracker:
+        Previously the dedup key was `notify:vehicle_idle:seen:{cam}:{vid}:{first_seen}`
+        — bound to the tracker instance. But the same physical car gets
+        multiple tracker instances over time:
+          • Tracker process restarts assign a new vehicle_id from 0001.
+          • Brief drive-by occlusions exceed VEHICLE_LOST_TIMEOUT +
+            VEHICLE_GHOST_TTL → ghost expires → vehicle_left fires →
+            re-detection creates a fresh track.
+          • IoU identity swaps when a passing car overlaps a parked car
+            briefly steal the parked car's tracker_id, forcing the actual
+            parked car onto a new track.
+        Each "new" track had a fresh dedup key → fresh Telegram → user
+        gets pinged 3+ times for the same parked car in an hour. Live
+        data on cam1 showed exactly this (vehicle_0029 → vehicle_0001 →
+        vehicle_0003, all in the same parking spot, all separately
+        notified).
+
+    Position dedup keys on the parking SPOT (bbox center quantized to a
+    coarse grid), so re-tracks of the same physical car at the same spot
+    hit the same dedup key regardless of tracker identity.
+
+    grid_px = 100 means parking spots within ~100 px dedup together.
+    Wider than the IoU threshold so adjacent-spot cars don't collide,
+    tighter than typical street-side car spacing (~5 m ≈ 200+ px in the
+    sub-stream resolution we run inference on).
+    """
+    if bbox is None:
+        return None
+    try:
+        if isinstance(bbox, str):
+            bbox = json.loads(bbox)
+        if not (isinstance(bbox, list) and len(bbox) == 4):
+            return None
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        grid_x = int(cx // grid_px)
+        grid_y = int(cy // grid_px)
+        return f"notify:vehicle_idle:seen:{camera_id}:{grid_x}_{grid_y}"
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
 # Public surface declared explicitly so the lint gate doesn't flag re-exports
 # (make_redis_client, OLLAMA_*, VISION_MODEL) as unused. This module is a
 # shared-helper hub per CLAUDE.md §6; sibling modules import from it
@@ -205,6 +253,7 @@ __all__ = [
     "_esc", "_redact_token", "_now_str",
     "_get_cooldown", "_cooldown_field",
     "_get_last_notification", "_set_last_notification",
+    "_vehicle_position_dedup_key",
     "is_configured", "_is_authorized", "_get_all_chat_ids",
     "logger",
 ]

@@ -709,8 +709,8 @@ class TestTrackedVehicleStationary:
         assert len(veh.center_history) == 20
 
     def test_stationary_boundary_under_threshold(self):
-        """bbox_w=200 → threshold = 20 px. Current-vs-median drift of 19 px
-        is below threshold → still stationary."""
+        """bbox_w=200, threshold = max(20, 200*0.15) = 30 px. Drift of 19 px
+        is well under that → still stationary."""
         veh = self._make_vehicle(bbox=[100, 200, 300, 400])
         # 5 same-position updates so the median sits at (200, 300)
         for i in range(1, 6):
@@ -720,13 +720,31 @@ class TestTrackedVehicleStationary:
         assert veh.is_stationary is True
 
     def test_stationary_boundary_over_threshold(self):
-        """Drift of 21 px exceeds the 20 px threshold → not stationary."""
+        """bbox_w=200, threshold = 30 px. Drift of 31 px exceeds it →
+        not stationary. (Threshold was bumped from 20 → 30 to absorb
+        YOLO bbox jitter on parked cars; see state.py comment + the
+        cam1 live-data analysis that motivated the change.)"""
         veh = self._make_vehicle(bbox=[100, 200, 300, 400])
         for i in range(1, 6):
             veh.update([100, 200, 300, 400], "car", 0.9, float(i))
-        # Final frame: shift current bbox center by 21 px (just over)
-        veh.update([121, 200, 321, 400], "car", 0.9, 6.0)
+        # Final frame: shift current bbox center by 31 px (just over)
+        veh.update([131, 200, 331, 400], "car", 0.9, 6.0)
         assert veh.is_stationary is False
+
+    def test_stationary_resists_small_jitter(self):
+        """Real YOLO jitter on a parked car (5-8 px frame-to-frame) must
+        NOT flip is_stationary False. Cam1 live data showed the old 8 px
+        threshold doing this and causing `idle_alerted` to reset → same
+        TrackedVehicle re-emitting `vehicle_idle` events every few minutes.
+        """
+        veh = self._make_vehicle(bbox=[100, 200, 300, 400])
+        # Realistic jitter sequence — small horizontal nudges
+        for i, dx in enumerate([0, 2, -3, 4, -2, 5, -4, 3, -6, 7], start=1):
+            veh.update([100 + dx, 200, 300 + dx, 400], "car", 0.9, float(i))
+        # Final small-drift sample
+        veh.update([108, 202, 308, 402], "car", 0.9, 11.0)
+        # bbox_w=200 → threshold 30 px. Drift is well under → stationary.
+        assert veh.is_stationary is True
 
     def test_snapshot_bbox_preserved_after_update(self):
         """snapshot_bbox should stay at initial bbox even after updates."""

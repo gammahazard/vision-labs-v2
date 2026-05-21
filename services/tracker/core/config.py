@@ -57,7 +57,15 @@ MAX_EVENT_STREAM_LEN = int(os.getenv("MAX_EVENT_STREAM_LEN", "5000"))
 VEHICLE_IDLE_TIMEOUT = float(os.getenv("VEHICLE_IDLE_TIMEOUT", "90.0"))
 VEHICLE_LOST_TIMEOUT = float(os.getenv("VEHICLE_LOST_TIMEOUT", "10.0"))
 VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))
-VEHICLE_GHOST_TTL = float(os.getenv("VEHICLE_GHOST_TTL", "5.0"))
+# Bumped 5.0 → 30.0 so a parked car briefly occluded by drive-by traffic
+# (delivery van, garbage truck stopping in front for >15 s) gets re-attached
+# to the same TrackedVehicle on the other side of the disturbance, instead of
+# the ghost expiring → vehicle_left → fresh track → fresh vehicle_idle (and
+# the position dedup at the notify layer would need to do all the work). With
+# the bump, the effective occlusion grace is LOST_TIMEOUT (10s) + GHOST_TTL
+# (30s) = 40 s — wider than any realistic drive-by but still tight enough
+# that a genuinely-departed car fires vehicle_left within ~45 s of leaving.
+VEHICLE_GHOST_TTL = float(os.getenv("VEHICLE_GHOST_TTL", "30.0"))
 VEHICLE_GHOST_MAX_DIST_RATIO = float(os.getenv("VEHICLE_GHOST_MAX_DIST_RATIO", "2.0"))
 CONFIG_RELOAD_INTERVAL = int(os.getenv("CONFIG_RELOAD_INTERVAL", "10"))
 ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))
