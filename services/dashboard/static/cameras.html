@@ -55,6 +55,17 @@
         .cam-nav a { color: #94a3b8; font-size: 0.85rem; text-decoration: none; padding: 0.4rem 0.8rem; border-radius: 6px; }
         .cam-nav a:hover { background: #1a2235; color: #e2e8f0; }
         .cam-nav a.active { background: #1a2235; color: #4ade80; }
+
+        .cam-edit-btn { background: transparent; border: none; color: #64748b; cursor: pointer; padding: 0 0.2rem; font-size: 0.85rem; line-height: 1; vertical-align: -1px; transition: color 0.15s ease; }
+        .cam-edit-btn:hover { color: #4ade80; }
+
+        .cam-modal-backdrop { position: fixed; inset: 0; background: rgba(2, 6, 23, 0.75); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+        .cam-modal-backdrop.show { display: flex; }
+        .cam-modal { background: #1a2235; border: 1px solid #2d3748; border-radius: 12px; padding: 1.5rem; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; }
+        .cam-modal h2 { font-size: 1.05rem; font-weight: 600; color: #e2e8f0; margin: 0 0 0.25rem; }
+        .cam-modal .cam-modal-sub { font-size: 0.78rem; color: #64748b; margin-bottom: 1rem; }
+        .cam-modal .cam-form-grid { margin-bottom: 1rem; }
+        .cam-modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
     </style>
 </head>
 
@@ -177,8 +188,51 @@
         </div>
     </div>
 
+    <!-- Edit camera modal: opened from the pencil on each camera row -->
+    <div class="cam-modal-backdrop" id="editModal" onclick="if (event.target === this) closeEditModal()">
+        <div class="cam-modal">
+            <h2>Edit camera</h2>
+            <div class="cam-modal-sub" id="editModalSub">&nbsp;</div>
+            <form id="editCameraForm" onsubmit="handleSaveEdit(event)">
+                <div class="cam-form-grid">
+                    <div class="full">
+                        <label for="editName">Display name</label>
+                        <input type="text" id="editName" required>
+                    </div>
+                    <div>
+                        <label for="editLat">Latitude <span style="color:#64748b;font-size:0.7rem;">(optional)</span></label>
+                        <input type="number" id="editLat" step="0.0001" placeholder="43.6532">
+                    </div>
+                    <div>
+                        <label for="editLon">Longitude <span style="color:#64748b;font-size:0.7rem;">(optional)</span></label>
+                        <input type="number" id="editLon" step="0.0001" placeholder="-79.3832">
+                    </div>
+                    <div class="full" style="margin-top: 0.25rem;">
+                        <label style="margin-bottom: 0.4rem;">Detectors</label>
+                        <div style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:#e2e8f0;">
+                            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                                <input type="checkbox" id="editDetectPersons"> Persons (pose)
+                            </label>
+                            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                                <input type="checkbox" id="editDetectVehicles"> Vehicles
+                            </label>
+                            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+                                <input type="checkbox" id="editDetectFaces" data-requires="editDetectPersons"> Faces (requires person detection)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="cam-msg" id="editMsg"></div>
+                <div class="cam-modal-actions">
+                    <button type="button" class="cam-btn cam-btn-secondary" onclick="closeEditModal()">Cancel</button>
+                    <button type="submit" class="cam-btn cam-btn-primary" id="editSaveBtn">Save changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="js/lib/checkbox-dependencies.js?v=1"></script>
-    <script src="js/pages/cameras.js?v=7"></script>
+    <script src="js/pages/cameras.js?v=8"></script>
     <script src="js/core/nav.js?v=4"></script>
 </body>
 

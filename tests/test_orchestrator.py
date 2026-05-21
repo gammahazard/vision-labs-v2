@@ -441,6 +441,78 @@ class TestConfigApply:
         _, fields = entries[0]
         assert "no services after expansion" in fields["detail"]
 
+    def test_pre_expanded_per_cam_name_targets_single_camera(self, fake_redis, restrict_profiles):
+        # Detector-flag toggle on a single camera: dashboard publishes the
+        # pre-expanded `vehicle-detector-cam2` directly so only that camera's
+        # service is force-recreated. Bare-name expansion would have hit every
+        # enabled camera, which is wrong for a per-camera flag change.
+        self._seed_cameras(fake_redis, ["cam1", "cam2"])
+        with patch.object(orchestrator, "_run_compose",
+                          return_value=(True, "")) as mock_run:
+            orchestrator.apply_config(
+                fake_redis,
+                ["vehicle-detector-cam2"],
+                request_id="toggle-cam2",
+            )
+        mock_run.assert_called_once()
+        cmd_args = mock_run.call_args[0][0]
+        assert "vehicle-detector-cam2" in cmd_args
+        assert "vehicle-detector-cam1" not in cmd_args
+        # Only cam2's profile flag passed — cam1 untouched.
+        profile_idx = [i for i, a in enumerate(cmd_args) if a == "--profile"]
+        profile_vals = [cmd_args[i + 1] for i in profile_idx]
+        assert profile_vals == ["cam2"]
+
+    def test_pre_expanded_name_for_disabled_camera_drops_silently(self, fake_redis, restrict_profiles):
+        # cam2 is in the registry but disabled. A flag-toggle publish that
+        # targets `vehicle-detector-cam2` must NOT invoke compose — there's
+        # nothing running to recreate. Audited as a clean skip, not an error.
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam2": json.dumps({"id": "cam2", "enabled": False}),
+        }
+        with patch.object(orchestrator, "_run_compose") as mock_run:
+            orchestrator.apply_config(
+                fake_redis,
+                ["vehicle-detector-cam2"],
+                request_id="toggle-disabled",
+            )
+        mock_run.assert_not_called()
+        entries = fake_redis._streams.get(orchestrator.AUDIT_STREAM, [])
+        _, fields = entries[0]
+        assert fields["success"] == "1"
+        assert "no services after expansion" in fields["detail"]
+
+    def test_pre_expanded_name_with_unknown_profile_rejected(self, fake_redis, restrict_profiles):
+        # `vehicle-detector-cam99` — cam99 is NOT in ALLOWED_PROFILES.
+        # Must hit the allowlist gate, not pass through the per-cam path.
+        self._seed_cameras(fake_redis, ["cam1"])
+        with patch.object(orchestrator, "_run_compose") as mock_run:
+            orchestrator.apply_config(
+                fake_redis,
+                ["vehicle-detector-cam99"],
+                request_id="bad-cam",
+            )
+        mock_run.assert_not_called()
+        entries = fake_redis._streams.get(orchestrator.AUDIT_STREAM, [])
+        _, fields = entries[0]
+        assert fields["detail"] == "no services"
+
+    def test_pre_expanded_name_with_unknown_prefix_rejected(self, fake_redis, restrict_profiles):
+        # `orchestrator-cam1` — `orchestrator` is NOT a PER_CAM_SERVICE_PREFIX.
+        # Must be rejected; we don't want arbitrary `{garbage}-cam1` slipping in.
+        self._seed_cameras(fake_redis, ["cam1"])
+        with patch.object(orchestrator, "_run_compose") as mock_run:
+            orchestrator.apply_config(
+                fake_redis,
+                ["orchestrator-cam1", "redis-cam1"],
+                request_id="bad-prefix",
+            )
+        mock_run.assert_not_called()
+        entries = fake_redis._streams.get(orchestrator.AUDIT_STREAM, [])
+        _, fields = entries[0]
+        assert fields["detail"] == "no services"
+
 
 # ===========================================================================
 # 3b. _expand_per_cam_services helper (load-bearing for #3)
@@ -530,6 +602,50 @@ class TestExpandPerCamServices:
         assert "recorder" not in expanded
         assert "recorder-cam1" not in expanded
         assert profiles == []
+
+    def test_pre_expanded_passes_through_when_camera_enabled(self, fake_redis, restrict_profiles):
+        # `vehicle-detector-cam2` passes through verbatim + adds `cam2` to
+        # the profile set so compose can resolve the profile-gated service.
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam2": json.dumps({"id": "cam2", "enabled": True}),
+        }
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["vehicle-detector-cam2"],
+        )
+        assert expanded == ["vehicle-detector-cam2"]
+        assert profiles == ["cam2"]
+
+    def test_pre_expanded_dropped_when_camera_disabled(self, fake_redis, restrict_profiles):
+        # cam2 not enabled → nothing to recreate. Drop silently rather than
+        # error (same spirit as bare-name expansion dropping disabled cams).
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam2": json.dumps({"id": "cam2", "enabled": False}),
+        }
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["vehicle-detector-cam2"],
+        )
+        assert expanded == []
+        assert profiles == []
+
+    def test_mixed_bare_and_pre_expanded(self, fake_redis, restrict_profiles):
+        # Real-world payload: a TZ-style global change (recorder bare) plus a
+        # detector-flag toggle on cam2 (vehicle-detector-cam2). The bare name
+        # expands to every enabled cam; the pre-expanded one targets just cam2.
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam2": json.dumps({"id": "cam2", "enabled": True}),
+        }
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["recorder", "vehicle-detector-cam2"],
+        )
+        assert "recorder-cam1" in expanded
+        assert "recorder-cam2" in expanded
+        assert "vehicle-detector-cam2" in expanded
+        # Bare `vehicle-detector` was NOT in the input — must not appear.
+        assert "vehicle-detector-cam1" not in expanded
+        assert set(profiles) == {"cam1", "cam2"}
 
 
 # ===========================================================================

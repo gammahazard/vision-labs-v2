@@ -65,7 +65,11 @@ function renderCameras(cameras) {
                               style="margin-left:0.5rem;font-size:0.7rem;padding:2px 8px;border-radius:10px;background:#1e293b;color:#94a3b8;vertical-align:middle;">…</span>
                     </div>
                     <div class="cam-item-meta">${escape(subUrl)}</div>
-                    <div class="cam-item-meta" style="margin-top:0.15rem;">${escape(loc)} · ${escape(detStr)}</div>
+                    <div class="cam-item-meta" style="margin-top:0.15rem;">
+                        ${escape(loc)} · ${escape(detStr)}
+                        <button type="button" class="cam-edit-btn" title="Edit name, location, detectors"
+                                onclick="openEditModal('${escape(c.id)}')">✏</button>
+                    </div>
                 </div>
                 <div class="cam-item-actions" style="flex-direction:column;align-items:flex-end;gap:0.35rem;">
                     <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.78rem;color:#94a3b8;cursor:pointer;">
@@ -400,6 +404,121 @@ async function handleAddCamera(event) {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Save Camera';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Edit modal — opened via the ✏ button on each camera row. Only exposes
+// name + location + detector flags. RTSP URL changes are excluded because
+// swapping URLs effectively swaps the underlying camera; delete+re-add is
+// the right ergonomics there. Detector toggles ride PR #19's config:apply
+// publish in cameras.py:upsert_camera (and the orchestrator's pre-expanded
+// service-name pass-through, added in the same PR as this modal), so flag
+// changes take effect within seconds without delete+re-add.
+// ---------------------------------------------------------------------------
+let _editingCameraId = null;
+
+async function openEditModal(camId) {
+    try {
+        const res = await fetch(`/api/cameras/${encodeURIComponent(camId)}`);
+        if (!res.ok) {
+            alert(`Failed to load camera: HTTP ${res.status}`);
+            return;
+        }
+        const cam = await res.json();
+        _editingCameraId = camId;
+
+        $('editModalSub').textContent = `${cam.id} — ${_maskRtspUrl(cam.rtsp_sub || '')}`;
+        $('editName').value = cam.name || '';
+        $('editLat').value = cam.location_lat || '';
+        $('editLon').value = cam.location_lon || '';
+        $('editDetectPersons').checked = cam.detect_persons !== false;
+        $('editDetectVehicles').checked = cam.detect_vehicles !== false;
+        $('editDetectFaces').checked = cam.detect_faces !== false;
+
+        // Fire change on the parent so checkbox-dependencies.js syncs the
+        // child (faces) disabled state. Programmatic `el.checked = X` does
+        // not fire change events on its own.
+        $('editDetectPersons').dispatchEvent(new Event('change'));
+
+        $('editMsg').className = 'cam-msg';
+        $('editMsg').textContent = '';
+        $('editModal').classList.add('show');
+    } catch (e) {
+        alert(`Failed to load camera: ${e.message}`);
+    }
+}
+
+function closeEditModal() {
+    $('editModal').classList.remove('show');
+    _editingCameraId = null;
+}
+
+async function handleSaveEdit(event) {
+    event.preventDefault();
+    if (!_editingCameraId) return;
+
+    const name = $('editName').value.trim();
+    const lat = parseFloat($('editLat').value);
+    const lon = parseFloat($('editLon').value);
+    const detect_persons = $('editDetectPersons').checked;
+    const detect_vehicles = $('editDetectVehicles').checked;
+    const detect_faces = $('editDetectFaces').checked;
+
+    if (!name) {
+        $('editMsg').textContent = 'Display name is required';
+        $('editMsg').className = 'cam-msg show err';
+        return;
+    }
+
+    // Re-fetch the existing camera so PUT body has the immutable fields
+    // (rtsp_sub/main, created_at) it needs to pass server validation.
+    let existing;
+    try {
+        const res = await fetch(`/api/cameras/${encodeURIComponent(_editingCameraId)}`);
+        existing = await res.json();
+    } catch (e) {
+        $('editMsg').textContent = `Couldn't reload camera: ${e.message}`;
+        $('editMsg').className = 'cam-msg show err';
+        return;
+    }
+
+    const body = {
+        ...existing,
+        name,
+        detect_persons,
+        detect_vehicles,
+        detect_faces,
+    };
+    // Location: empty input means clear it (send 0 to be falsy on the server).
+    body.location_lat = Number.isFinite(lat) ? lat : 0;
+    body.location_lon = Number.isFinite(lon) ? lon : 0;
+
+    const btn = $('editSaveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    try {
+        const res = await fetch(`/api/cameras/${encodeURIComponent(_editingCameraId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            closeEditModal();
+            showMsg(`✓ Updated "${name}". Detector changes propagate within seconds.`, 'ok');
+            loadCameras();
+        } else {
+            $('editMsg').textContent = `Save failed: ${data.error || `HTTP ${res.status}`}`;
+            $('editMsg').className = 'cam-msg show err';
+        }
+    } catch (e) {
+        $('editMsg').textContent = `Save failed: ${e.message}`;
+        $('editMsg').className = 'cam-msg show err';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save changes';
     }
 }
 

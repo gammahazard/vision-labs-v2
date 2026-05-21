@@ -53,6 +53,7 @@ import subprocess
 import sys
 import time
 import threading
+from typing import Optional
 
 # contracts/ isn't COPY'd into this image (Dockerfile keeps it small —
 # just docker:24-cli + python3). Pick it up from the project mount at
@@ -147,6 +148,26 @@ PER_CAM_SERVICE_PREFIXES = {
     "recorder", "pose-detector", "vehicle-detector",
     "face-recognizer", "camera-ingester", "tracker",
 }
+
+
+def _split_pre_expanded(svc: str) -> Optional[tuple[str, str]]:
+    """If `svc` looks like `{prefix}-{profile}` where prefix is in
+    PER_CAM_SERVICE_PREFIXES and profile is in ALLOWED_PROFILES, return
+    `(prefix, profile)`. Otherwise None.
+
+    Used by both the allowlist check in `apply_config` and the expansion
+    pass in `_expand_per_cam_services`, so dashboard code that knows
+    exactly which camera's service it wants to recreate (e.g. detector-flag
+    toggles in the cameras edit modal) can target it directly without
+    causing every enabled camera's variant to be force-recreated.
+    """
+    for prefix in PER_CAM_SERVICE_PREFIXES:
+        suffix = f"{prefix}-"
+        if svc.startswith(suffix):
+            profile = svc[len(suffix):]
+            if profile in ALLOWED_PROFILES:
+                return prefix, profile
+    return None
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -605,11 +626,24 @@ def _expand_per_cam_services(r: redis.Redis, services: list) -> tuple[list, list
     profiles: set[str] = set()
     for svc in services:
         if svc in PER_CAM_SERVICE_PREFIXES:
+            # Bare per-cam service: expand to every enabled cam variant.
             for cam in sorted(cams):
                 expanded.append(f"{svc}-{cam}")
                 profiles.add(cam)
-        else:
-            expanded.append(svc)
+            continue
+        pre = _split_pre_expanded(svc)
+        if pre is not None:
+            # Pre-expanded per-cam service (e.g. `vehicle-detector-cam2`):
+            # pass through verbatim only if that camera is actually enabled.
+            # If it's not, there's nothing to recreate — silently drop, same
+            # spirit as bare-name expansion dropping disabled cams.
+            _, profile = pre
+            if profile in cams:
+                expanded.append(svc)
+                profiles.add(profile)
+            continue
+        # Singleton (`dashboard`, `ollama`, `grafana`): pass through.
+        expanded.append(svc)
     return expanded, sorted(profiles)
 
 
@@ -627,8 +661,17 @@ def apply_config(r: redis.Redis, services: list, request_id: str) -> None:
     `dashboard` — don't restart either. Symptom from the user side is
     "I changed retention but it didn't take effect."
     """
-    valid = [s for s in services if s in CONFIG_APPLY_ALLOWED_SERVICES]
-    rejected = [s for s in services if s not in CONFIG_APPLY_ALLOWED_SERVICES]
+    def _is_allowed(svc: str) -> bool:
+        if svc in CONFIG_APPLY_ALLOWED_SERVICES:
+            return True
+        # Pre-expanded per-cam name like `vehicle-detector-cam2`: only valid
+        # when the dashboard knows exactly which camera's service needs
+        # recreating (e.g. a detector-flag toggle on a single camera). Both
+        # halves must be allowlisted to bound blast radius.
+        return _split_pre_expanded(svc) is not None
+
+    valid = [s for s in services if _is_allowed(s)]
+    rejected = [s for s in services if not _is_allowed(s)]
     if rejected:
         logger.warning(f"config:apply ignoring {rejected} (not in allowlist)")
 
