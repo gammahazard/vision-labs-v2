@@ -8,6 +8,7 @@ and path traversal protection.
 NO real Redis or GPU — tracker logic and routes are tested with FakeRedis.
 """
 
+import json
 import os
 import sys
 import time
@@ -886,4 +887,63 @@ class TestVehicleGhostBuffer:
             f"Ghost re-association reset first_seen — duration counter "
             f"will misreport ({rehydrated.first_seen} vs {first_seen})"
         )
+
+
+# ===========================================================================
+# Tracker — vehicle_sample event emission (Phase 1 vehicle-attributes)
+# ===========================================================================
+def test_tracker_emits_vehicle_sample_every_n_updates(monkeypatch):
+    """With EMIT_VEHICLE_SAMPLES=1 and SAMPLE_INTERVAL_FRAMES=3, the third
+    matched update on an existing vehicle emits `vehicle_sample`. The 1st
+    and 2nd matched updates do not."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("SAMPLE_INTERVAL_FRAMES", "3")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    bbox = [100, 100, 200, 200]
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=0.0)
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=1.0)
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=2.0)
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=3.0)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    sample_events = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    detected_events = [e for e in events if e.get("event_type") == "vehicle_detected"]
+
+    assert len(detected_events) == 1
+    assert len(sample_events) == 1
+    s = sample_events[0]
+    assert s["vehicle_id"].startswith("vehicle_")
+    assert json.loads(s["bbox"]) == bbox
+
+
+def test_tracker_does_not_emit_sample_when_feature_disabled(monkeypatch):
+    """Default env (EMIT_VEHICLE_SAMPLES unset) ⇒ zero sample events even
+    across many matched updates."""
+    monkeypatch.delenv("EMIT_VEHICLE_SAMPLES", raising=False)
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    bbox = [100, 100, 200, 200]
+    for t in range(0, 10):
+        m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                        "confidence": 0.8}], timestamp=float(t))
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    samples = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    assert samples == []
 

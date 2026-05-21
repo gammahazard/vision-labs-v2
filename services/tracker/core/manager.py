@@ -6,6 +6,7 @@ in sync. The big one — ~700 lines of pipeline logic.
 """
 
 import json
+import os
 import time
 
 import redis
@@ -29,6 +30,7 @@ from .config import (
     VEHICLE_GHOST_MAX_DIST_RATIO,
     MIN_BBOX_AREA,
     IDENTITY_GRACE_SECONDS,
+    VEHICLE_SAMPLE_EVENT,
     stream_key,
     point_in_polygon,
     should_alert,
@@ -36,6 +38,14 @@ from .config import (
 )
 from .iou import compute_iou
 from .state import TrackedPerson, TrackedVehicle
+
+# Phase 1 of the vehicle-attributes pipeline. Off by default until the
+# consumer (vehicle-attributes-cam{N}) is wired up. See spec §2.2.
+# These are module-level so importlib.reload(manager) re-reads them when
+# tests monkeypatch os.environ before reloading.
+EMIT_VEHICLE_SAMPLES = os.getenv("EMIT_VEHICLE_SAMPLES", "0") == "1"
+SAMPLE_INTERVAL_FRAMES = max(1, int(os.getenv("SAMPLE_INTERVAL_FRAMES", "3")))
+
 
 class PersonTracker:
     """
@@ -46,7 +56,8 @@ class PersonTracker:
     Emits events when people appear or leave.
     """
 
-    def __init__(self, r: redis.Redis, iou_threshold: float, lost_timeout: float):
+    def __init__(self, r: redis.Redis, iou_threshold: float = VEHICLE_IOU_THRESHOLD,
+                 lost_timeout: float = VEHICLE_LOST_TIMEOUT):
         self.r = r
         self.iou_threshold = iou_threshold
         self.lost_timeout = lost_timeout
@@ -282,6 +293,12 @@ class PersonTracker:
                     veh.idle_alerted = True
                     self._emit_vehicle_idle_event(veh, timestamp)
 
+                # Phase 1: emit a sampling event every Nth matched update
+                # so vehicle-attributes-cam{N} can pull the HD frame at a
+                # known cadence. Cheap pubsub-equivalent — costs one XADD.
+                if EMIT_VEHICLE_SAMPLES and veh.frame_count % SAMPLE_INTERVAL_FRAMES == 0:
+                    self._emit_vehicle_sample_event(veh, timestamp)
+
             else:
                 # --- New vehicle: create tracker and emit detection event ---
                 vid = f"vehicle_{self._next_vehicle_id:04d}"
@@ -389,6 +406,26 @@ class PersonTracker:
             f"EVENT: vehicle_detected | {veh.class_name} ({veh.confidence:.2f})"
             f"{f' | zone={zone_name}' if zone_name else ''}"
         )
+
+    def _emit_vehicle_sample_event(self, veh: 'TrackedVehicle', timestamp: float):
+        """Emit a low-weight sampling event the attribute service uses to
+        decide when to crop the current HD frame for this track.
+
+        Mirrors vehicle_detected payload so a consumer can treat both as
+        `(track_id, bbox, timestamp)` carriers without branching on event_type.
+        """
+        event = {
+            "camera_id": CAMERA_ID,
+            "event_type": VEHICLE_SAMPLE_EVENT,
+            "timestamp": str(timestamp),
+            "bbox": json.dumps(veh.bbox),
+            "vehicle_class": veh.class_name,
+            "vehicle_confidence": str(round(veh.confidence, 3)),
+            "vehicle_id": veh.vehicle_id,
+            "vehicle_first_seen": str(int(veh.first_seen)),
+            "frame_count": str(veh.frame_count),
+        }
+        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
 
     def _emit_vehicle_idle_event(self, veh: 'TrackedVehicle', timestamp: float):
         """
@@ -781,3 +818,9 @@ class PersonTracker:
 
         # --- Step 6: Update scene state in Redis ---
         self._update_state()
+
+
+# Alias used by tests and the vehicle-attributes service that want to
+# instantiate the tracker without hard-coding the class name. The canonical
+# name stays PersonTracker for backward compat with direct imports.
+Manager = PersonTracker

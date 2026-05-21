@@ -27,6 +27,7 @@ from contracts.streams import (
     PERSON_SNAPSHOT_KEY as _PSNAP_TMPL,
     FRAME_STREAM as _FRAME_TMPL,
     HD_FRAME_KEY as _HD_FRAME_TMPL,
+    VEHICLE_SAMPLE_EVENT,  # noqa: F401  (re-exported)
     stream_key,
 )
 
