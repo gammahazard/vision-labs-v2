@@ -757,7 +757,7 @@ Qwen 3 14B is the model ceiling on a single-host install — no swap to larger m
 - `scripts/prometheus-clean-stale-cameras.sh` — tombstone stale-camera Prom labels
 
 ### Tests
-- 302 tests, 0 quarantined as of 2026-05-20. Run via `source .venv-test/bin/activate && pytest -q`.
+- 312 tests, 0 quarantined as of 2026-05-21. Run via `source .venv-test/bin/activate && pytest -q`.
 - `tests/` files: `test_actions.py`, `test_ai_tool_aggregations.py`, `test_ai_tools_no_nameerror.py` (R3-split regression guard for ai_tools), `test_bot_commands_no_nameerror.py` (R3-split regression guard for Telegram bot commands — includes a recorder that captures `send_text` calls and asserts no `"is not defined"`/`"has no attribute"`/`"cannot import name"` text leaks through a try/except-wrapped NameError), `test_face_db.py`, `test_notifications.py`, `test_routes.py`, `test_scene_analysis.py`, `test_time_rules.py`, `test_tracker.py`, `test_vehicles.py`.
 - `FakeRedis` (in `test_vehicles.py`) is the standard stub. Tests use host Python 3.12; container is 3.11.
 

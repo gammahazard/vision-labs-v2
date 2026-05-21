@@ -177,3 +177,124 @@ class TestRateLimitLogic:
         assert get_cooldown_with_floor(5) == 10   # Floored
         assert get_cooldown_with_floor(10) == 10  # At floor
         assert get_cooldown_with_floor(60) == 60  # Above floor
+
+
+# ===========================================================================
+# Zone Time-of-Day Gate (vehicle idle notifications)
+# ===========================================================================
+class TestZoneAlertGate:
+    """The zone-rule gate decides whether to skip a notification based on
+    `alert_level` and `alert_triggered` on the event. Rules:
+      - No zone set (alert_level=="") → always notify (back-compat)
+      - Zone set + alert_triggered=="True" → notify
+      - Zone set + alert_triggered=="False" → skip
+    """
+
+    @staticmethod
+    def _should_skip(event_data: dict) -> bool:
+        alert_level = event_data.get("alert_level", "")
+        alert_triggered_str = event_data.get("alert_triggered", "False")
+        return bool(alert_level) and alert_triggered_str != "True"
+
+    def test_no_zone_does_not_skip(self):
+        """No alert_level (unzoned vehicle) → always notify."""
+        assert self._should_skip({"alert_level": ""}) is False
+        assert self._should_skip({}) is False
+
+    def test_zone_triggered_does_not_skip(self):
+        """alert_level set + alert_triggered=True → notify."""
+        assert self._should_skip({
+            "alert_level": "night_only",
+            "alert_triggered": "True",
+        }) is False
+
+    def test_zone_not_triggered_skips(self):
+        """alert_level set + alert_triggered=False → skip."""
+        assert self._should_skip({
+            "alert_level": "night_only",
+            "alert_triggered": "False",
+        }) is True
+
+    def test_log_only_zone_skips(self):
+        """`log_only` zones never trigger, so alert_triggered is False → skip."""
+        assert self._should_skip({
+            "alert_level": "log_only",
+            "alert_triggered": "False",
+        }) is True
+
+    def test_always_zone_notifies(self):
+        """`always` zones produce alert_triggered=True → notify."""
+        assert self._should_skip({
+            "alert_level": "always",
+            "alert_triggered": "True",
+        }) is False
+
+
+# ===========================================================================
+# Per-Vehicle Dedup Key Shape
+# ===========================================================================
+class TestVehicleDedupKey:
+    """The per-vehicle dedup key prevents the same TrackedVehicle instance
+    from triggering two Telegram notifications. The key is composed of
+    (camera, vehicle_id, first_seen) so a fresh track after tracker restart
+    or ghost-expiry gets a different key and can notify again.
+    """
+
+    @staticmethod
+    def _dedup_key(event_data: dict) -> str | None:
+        cam = event_data.get("camera_id", "")
+        vid = event_data.get("vehicle_id", "")
+        vfirst = event_data.get("vehicle_first_seen", "")
+        if not (vid and vfirst):
+            return None
+        return f"notify:vehicle_idle:seen:{cam}:{vid}:{vfirst}"
+
+    def test_key_includes_all_three_parts(self):
+        key = self._dedup_key({
+            "camera_id": "cam1",
+            "vehicle_id": "vehicle_0042",
+            "vehicle_first_seen": "1735693200",
+        })
+        assert key == "notify:vehicle_idle:seen:cam1:vehicle_0042:1735693200"
+
+    def test_no_key_without_vehicle_id(self):
+        """Without vehicle_id, dedup is skipped (key=None) — relies on cooldown."""
+        assert self._dedup_key({
+            "camera_id": "cam1",
+            "vehicle_first_seen": "1735693200",
+        }) is None
+
+    def test_no_key_without_first_seen(self):
+        """Without first_seen, dedup is skipped (key=None) — relies on cooldown."""
+        assert self._dedup_key({
+            "camera_id": "cam1",
+            "vehicle_id": "vehicle_0042",
+        }) is None
+
+    def test_different_first_seen_yields_different_key(self):
+        """Same vehicle_id but different first_seen (e.g. tracker restart) → new key."""
+        k1 = self._dedup_key({
+            "camera_id": "cam1",
+            "vehicle_id": "vehicle_0001",
+            "vehicle_first_seen": "1735693200",
+        })
+        k2 = self._dedup_key({
+            "camera_id": "cam1",
+            "vehicle_id": "vehicle_0001",
+            "vehicle_first_seen": "1735696800",
+        })
+        assert k1 != k2
+
+    def test_different_cameras_yield_different_keys(self):
+        """Same vehicle_id on different cameras → different keys."""
+        k1 = self._dedup_key({
+            "camera_id": "cam1",
+            "vehicle_id": "vehicle_0001",
+            "vehicle_first_seen": "1735693200",
+        })
+        k2 = self._dedup_key({
+            "camera_id": "cam2",
+            "vehicle_id": "vehicle_0001",
+            "vehicle_first_seen": "1735693200",
+        })
+        assert k1 != k2

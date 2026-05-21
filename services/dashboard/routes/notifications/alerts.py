@@ -180,6 +180,43 @@ async def notify_vehicle_idle(event_data: dict,
         return 0
 
     cam = event_data.get("camera_id", "")
+
+    # Zone time-of-day gate. The tracker stamps every event with
+    # `alert_triggered` (the result of should_alert(alert_level, time_period)).
+    # If a zone is configured AND it says "don't alert right now" (e.g. a
+    # night_only zone during the day), skip the Telegram send but keep the
+    # event in the feed + journal. Vehicles outside any zone have alert_level=""
+    # and we treat that as "no opinion → notify" so existing configs without
+    # zones don't suddenly go silent.
+    alert_level = event_data.get("alert_level", "")
+    alert_triggered_str = event_data.get("alert_triggered", "False")
+    if alert_level and alert_triggered_str != "True":
+        logger.debug(
+            f"Vehicle idle suppressed by zone rule on {cam or 'global'} "
+            f"(alert_level={alert_level} time_period={event_data.get('time_period', '')})"
+        )
+        return 0
+
+    # Per-vehicle dedup. Key = (camera, tracker_vehicle_id, first_seen). The
+    # same physical car generating a new track after a >15s occlusion gets a
+    # fresh first_seen, so it falls under the per-camera cooldown instead of
+    # this dedup. This catches the obvious double-notify cases: tracker process
+    # restart mid-park, or any future retry/replay of the same event.
+    vid = event_data.get("vehicle_id", "")
+    vfirst = event_data.get("vehicle_first_seen", "")
+    if vid and vfirst:
+        dedup_key = f"notify:vehicle_idle:seen:{cam}:{vid}:{vfirst}"
+        try:
+            first_notify = ctx.r.set(dedup_key, "1", nx=True, ex=3600)
+            if not first_notify:
+                logger.debug(
+                    f"Vehicle idle already notified for {vid}@{vfirst} on {cam}"
+                )
+                return 0
+        except Exception as e:
+            # Best-effort — Redis failure falls back to the cooldown gate.
+            logger.debug(f"Vehicle dedup-key check failed: {e}")
+
     now = time.time()
     cooldown = _get_cooldown("vehicle_cooldown", 60)
     last_sent = _get_last_notification("vehicle_idle", cam)
