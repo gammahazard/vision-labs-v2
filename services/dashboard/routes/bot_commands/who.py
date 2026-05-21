@@ -87,16 +87,6 @@ async def _cmd_who(chat_id: str = "", text: str = "", **kwargs):
             else:
                 parts.append("  • People: none")
 
-            num_vehicles = int(state.get("num_vehicles", "0") or 0)
-            if num_vehicles > 0:
-                parts.append(f"  • Vehicles: {num_vehicles}")
-                try:
-                    vehicles = json.loads(state.get("vehicles", "[]"))
-                    for v in vehicles[:5]:
-                        parts.append(f"    — {v.get('class', 'vehicle')}")
-                except json.JSONDecodeError:
-                    pass
-
         parts.append(f"\n🕐 {_now_str()}")
         await send_text("\n".join(parts), chat_id=chat_id)
     except Exception as e:
