@@ -475,6 +475,22 @@ services:
       - GF_SERVER_HTTP_PORT=3000
       - GF_SECURITY_ALLOW_EMBEDDING=true
       - GF_USERS_ALLOW_SIGN_UP=false
+      # Two TZ vars do two different things:
+      #   TZ                                  — the container OS clock, so
+      #                                         Grafana logs + file mtimes
+      #                                         match the user's wall clock.
+      #   GF_DATE_FORMATS_DEFAULT_TIMEZONE    — Grafana's default UI timezone
+      #                                         for rendering timestamps. Users
+      #                                         can override per-dashboard, but
+      #                                         this controls the out-of-box
+      #                                         view (prevents the "everything
+      #                                         is 4h off in the panels" surprise).
+      # Both are interpolated from .env via the same LOCATION_TIMEZONE that
+      # the dashboard + tracker + recorder use. Default Toronto on a fresh
+      # install — operator changes via Settings panel propagate here on the
+      # next force-recreate (see services/dashboard/routes/setup.py).
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
     depends_on:
       - prometheus
     restart: unless-stopped

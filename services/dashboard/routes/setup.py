@@ -601,6 +601,10 @@ async def apply_config(request: Request):
         affected.add("tracker")
         affected.add("recorder")
         affected.add("camera-ingester")
+        # Grafana reads TZ + GF_DATE_FORMATS_DEFAULT_TIMEZONE from .env via
+        # compose interpolation — without a recreate, dashboard panels keep
+        # rendering timestamps in the old timezone.
+        affected.add("grafana")
     # NOTE: SNAPSHOT_RETENTION_DAYS + CLIP_RETENTION_DAYS DO NOT need a
     # dashboard restart — the retention poller re-reads env each cycle (hourly).
     if "RETENTION_DAYS" in updates:

@@ -324,19 +324,22 @@ class TestConfigApply:
         assert "cam2" in cmd_args
 
     def test_singletons_unaffected_by_expansion(self, fake_redis, restrict_profiles):
-        # dashboard + ollama are top-level services, not profile-gated —
-        # they pass through expansion unchanged and need no --profile flag
+        # dashboard + ollama + grafana are top-level services, not profile-gated —
+        # they pass through expansion unchanged and need no --profile flag.
+        # Grafana is in the list because a timezone change needs it recreated
+        # to pick up GF_DATE_FORMATS_DEFAULT_TIMEZONE from .env.
         with patch.object(orchestrator, "_run_compose",
                           return_value=(True, "")) as mock_run:
             orchestrator.apply_config(
                 fake_redis,
-                ["dashboard", "ollama"],
+                ["dashboard", "ollama", "grafana"],
                 request_id="s1",
             )
         mock_run.assert_called_once()
         cmd_args = mock_run.call_args[0][0]
         assert "dashboard" in cmd_args
         assert "ollama" in cmd_args
+        assert "grafana" in cmd_args
         # No --profile flag — singletons don't need profile gating
         assert "--profile" not in cmd_args
 
