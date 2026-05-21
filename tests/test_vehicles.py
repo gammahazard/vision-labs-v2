@@ -947,3 +947,95 @@ def test_tracker_does_not_emit_sample_when_feature_disabled(monkeypatch):
     samples = [e for e in events if e.get("event_type") == "vehicle_sample"]
     assert samples == []
 
+
+# ===========================================================================
+# vehicle_gone + vehicle_left semantic split (Phase 1 follow-up fix)
+# ===========================================================================
+def test_drive_by_emits_vehicle_gone_but_not_vehicle_left(monkeypatch):
+    """A drive-by car (never went idle) should emit vehicle_gone at ghost
+    expiry but NOT vehicle_left. The vehicle_left event is reserved for
+    user-facing idle-leave notifications — see contracts/streams.py."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import (
+        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL,
+    )
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    bbox = [100, 100, 200, 200]
+
+    # Drive-by: appear at t=0, never go idle (default vehicle_idle_timeout
+    # is 90s; we'll only run for a few seconds).
+    m._process_vehicle_detections(
+        [{"bbox": bbox, "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    # Advance past LOST_TIMEOUT + GHOST_TTL with no new detection so the
+    # ghost expires and the relevant emit fires.
+    # First sweep at LOST_TIMEOUT+ moves the vehicle into the ghost buffer
+    # (ghost_ts = this timestamp). Second sweep at GHOST_TTL+ past that
+    # ghost_ts is what actually fires the ghost-expiry emit.
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    expire_t = stale_t + VEHICLE_GHOST_TTL + 1.0
+    m._process_vehicle_detections([], timestamp=expire_t)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
+    left = [e for e in events if e.get("event_type") == "vehicle_left"]
+
+    assert len(gone) == 1, f"expected 1 vehicle_gone, got {len(gone)}: {events}"
+    assert gone[0]["was_idle"] == "False"
+    assert left == [], f"expected NO vehicle_left for drive-by, got {left}"
+
+
+def test_idle_leave_emits_both_vehicle_gone_and_vehicle_left(monkeypatch):
+    """A car that went idle then left should emit BOTH vehicle_gone
+    (internal — attribute service flush trigger) AND vehicle_left (user-
+    facing idle-leave notification)."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import (
+        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL,
+    )
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    # Force the vehicle into idle_alerted=True state by directly setting the
+    # flag after a normal detection. Going through the natural is_stationary
+    # path would require feeding 5+ same-position frames + crossing the
+    # idle_timeout — slow and unrelated to what this test asserts. The
+    # tracker's idle-detection path has its own tests; we just need a
+    # TrackedVehicle with idle_alerted=True to verify the emit branching.
+    bbox = [100, 100, 200, 200]
+    m._process_vehicle_detections(
+        [{"bbox": bbox, "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    # Mark the one tracked vehicle as having gone idle.
+    veh = next(iter(m.tracked_vehicles.values()))
+    veh.idle_alerted = True
+
+    # First sweep at LOST_TIMEOUT+ moves the vehicle into the ghost buffer
+    # (ghost_ts = this timestamp). Second sweep at GHOST_TTL+ past that
+    # ghost_ts is what actually fires the ghost-expiry emit.
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    expire_t = stale_t + VEHICLE_GHOST_TTL + 1.0
+    m._process_vehicle_detections([], timestamp=expire_t)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
+    left = [e for e in events if e.get("event_type") == "vehicle_left"]
+
+    assert len(gone) == 1
+    assert gone[0]["was_idle"] == "True"
+    assert len(left) == 1, (
+        f"expected 1 vehicle_left for idle-leave, got {len(left)}: {events}"
+    )
+

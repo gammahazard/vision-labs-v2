@@ -31,6 +31,7 @@ from .config import (
     MIN_BBOX_AREA,
     IDENTITY_GRACE_SECONDS,
     VEHICLE_SAMPLE_EVENT,
+    VEHICLE_GONE_EVENT,
     stream_key,
     point_in_polygon,
     should_alert,
@@ -340,14 +341,22 @@ class PersonTracker:
             veh = self.tracked_vehicles.pop(vid)
             self._ghost_vehicles[vid] = (veh, timestamp)
 
-        # --- Step 2b: Expire ghosts past TTL and emit their (deferred) vehicle_left ---
+        # --- Step 2b: Expire ghosts past TTL and emit the track-end events ---
+        # `vehicle_gone` always fires (internal — used by vehicle-attributes
+        # as the buffer-flush trigger for both drive-bys and idle-leaves).
+        # `vehicle_left` fires ONLY when the vehicle had previously gone idle —
+        # drive-by cars never set idle_alerted, so they no longer spam the
+        # events panel + Telegram with exit events. See contracts/streams.py
+        # comment on VEHICLE_GONE_EVENT.
         expired_ghost_ids = [
             vid for vid, (_, ghost_ts) in self._ghost_vehicles.items()
             if timestamp - ghost_ts > VEHICLE_GHOST_TTL
         ]
         for vid in expired_ghost_ids:
             veh, _ = self._ghost_vehicles.pop(vid)
-            self._emit_vehicle_left_event(veh, timestamp)
+            self._emit_vehicle_gone_event(veh, timestamp)
+            if veh.idle_alerted:
+                self._emit_vehicle_left_event(veh, timestamp)
 
     def _try_ghost_match(self, bbox: list, class_name: str, timestamp: float) -> str | None:
         """If a recently-departed vehicle is near this bbox, return its id.
@@ -508,6 +517,37 @@ class PersonTracker:
             f"EVENT: vehicle_left | {veh.class_name} after {visit_duration:.1f}s"
             f"{f' | zone={zone_name}' if zone_name else ''}"
         )
+
+    def _emit_vehicle_gone_event(self, veh: 'TrackedVehicle', timestamp: float):
+        """Emit a vehicle_gone event when a tracked vehicle's ghost expires.
+
+        Fires for EVERY track end — both drive-bys and idle-leaves. Used by
+        `vehicle-attributes-cam{N}` to flush its per-track HD-crop buffer
+        regardless of whether the vehicle ever went idle. Carries `was_idle`
+        so consumers can distinguish without re-deriving from `duration`.
+
+        Drive-by tracks (short duration, never set idle_alerted): only
+        vehicle_gone fires. Idle-leave tracks: BOTH vehicle_gone (internal)
+        AND vehicle_left (user-facing) fire.
+        """
+        visit_duration = veh.last_seen - veh.first_seen
+
+        event = {
+            "camera_id": CAMERA_ID,
+            "event_type": VEHICLE_GONE_EVENT,
+            "timestamp": str(timestamp),
+            "duration": str(round(visit_duration, 1)),
+            "bbox": json.dumps(veh.bbox),
+            "frame_count": str(veh.frame_count),
+            "vehicle_class": veh.class_name,
+            "vehicle_confidence": str(round(veh.confidence, 3)),
+            "vehicle_id": veh.vehicle_id,
+            "vehicle_first_seen": str(int(veh.first_seen)),
+            "was_idle": str(bool(veh.idle_alerted)),
+        }
+
+        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
+        self.total_events += 1
 
     def _load_zones(self):
         """Load zone definitions from Redis (cached)."""

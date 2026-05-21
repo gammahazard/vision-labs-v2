@@ -131,10 +131,10 @@ All paths under `services/`. Every service ID below is profile-gated unless note
   - `sim < match_threshold * 0.6` → keep as unknown.
 
 ### 4.6 `vehicle-attributes/` (per-cam, no GPU in Phase 1)
-- **Per-track HD-crop buffer.** Consumes `events:{cam}` filtered to `vehicle_detected` / `vehicle_sample` / `vehicle_left` / `vehicle_idle`. Maintains in-memory `dict[track_id, TrackBuffer]`; cap 8 crops per track (`MAX_BUFFER_CROPS` env, default 8).
+- **Per-track HD-crop buffer.** Consumes `events:{cam}` filtered to `vehicle_detected` / `vehicle_sample` / `vehicle_gone` / `vehicle_idle`. Maintains in-memory `dict[track_id, TrackBuffer]`; cap 8 crops per track (`MAX_BUFFER_CROPS` env, default 8).
 - **HD frame source:** `GET frame_hd:{cam}` (binary Redis client, 5 s TTL set by camera-ingester). On miss, skip the sample — next event tries again.
 - **Cropping pipeline:** sub→HD bbox scale (×2.571 / ×2.531 at 896×512→2304×1296) → 20% padding (`CROP_PADDING_PCT`) → `cv2.imdecode` → slice → `cv2.imencode` JPEG q=85 (`JPEG_QUALITY`).
-- **Storage:** flushes to `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}` on `vehicle_left` or `vehicle_idle`. Hero = highest-confidence crop. Empty buffer = silent no-op.
+- **Storage:** flushes to `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}` on `vehicle_gone` (internal track-end event, fires for ALL track ends — drive-by + idle-leave) or `vehicle_idle` (preview flush mid-life). Hero = highest-confidence crop. Empty buffer = silent no-op. *Why not `vehicle_left`?* That's now strictly idle-leave-only (user-facing event); drive-by tracks would never flush if we used it.
 - **Registry gate:** exits cleanly at startup if `detect_vehicles=false` OR `detect_vehicle_attributes!=true` (mirrors face-recognizer's pattern). `restart: on-failure` on the compose block leaves clean exits alone (vs `unless-stopped` which would loop).
 - **No GPU in Phase 1** — Dockerfile uses `python:3.11-slim`, no PyTorch/ONNX. Phase 3 will add the multi-head classifier per the spec at `docs/superpowers/specs/2026-05-21-vehicle-attribute-classification-design.md`. The all-null `attributes` block in metadata.json is committed now so Phase 3 only fills values, doesn't restructure.
 - **Producer/consumer:** consumes `events:{cam}` + `frame_hd:{cam}` + `cameras:registry`. Writes filesystem only (no Redis writes in Phase 1).
@@ -637,6 +637,14 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 28. **`EXTRA_COMPOSE_FILES` threads the registry overlay into orchestrator-issued compose calls.** Without it, a registry-pull install would silently rebuild cam2 services from source when the dashboard adds a new camera, because the orchestrator's compose CLI only sees `docker-compose.yml`. `install-linux.sh` writes `EXTRA_COMPOSE_FILES=/workspace/docker-compose.registry.yml` to `.env` on `--pull` (the default). The orchestrator reads it and prepends `-f <each-file>` to every compose invocation. Empty string on `--build` installs — no behavior change there.
 
 29. **Hard line numbers throughout this doc are best-effort.** Treat file/symbol references as truth; if `services/dashboard/server.py:113` doesn't match what's at line 113 today, search the file for the referenced symbol instead. The compose file especially has shifted (cam1 used to be near the top; expanding to 20 slots pushed everything down).
+
+30. **`vehicle_left` ≠ "the car drove out of frame."** As of the Phase 1 follow-up fix, the tracker emits TWO distinct track-end events:
+    - `vehicle_gone` — **internal**, fires at every ghost-buffer expiry (drive-by AND idle-leave). Carries `was_idle: "True"|"False"`. Consumed by the vehicle-attributes service as its buffer-flush trigger. Never shown to users.
+    - `vehicle_left` — **user-facing**, fires only when `veh.idle_alerted=True` was set during the track's life (the car was idle long enough to cross `VEHICLE_IDLE_TIMEOUT`, then drove off). Telegram + events panel render this.
+    
+    Before the fix, `vehicle_left` fired on every ghost expiry — including 0.5s drive-bys that never went idle. Combined with the IoU identity-swap bug (one physical car briefly splits into two `TrackedVehicle` IDs), the events panel got two "left" events for a single car driving past. The semantic split (gone vs left) cleaned up the user-facing noise without breaking the attribute pipeline.
+    
+    **Note:** the underlying IoU identity-swap bug is NOT fixed by this split — it just means drive-by-noise no longer compounds it. See `[[vehicle-left-double-fire-bug]]` memory note for the IoU follow-up work.
 
 ---
 

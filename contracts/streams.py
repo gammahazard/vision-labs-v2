@@ -54,6 +54,16 @@ EVENT_STREAM = "events:{camera_id}"
 # false) + `SAMPLE_INTERVAL_FRAMES` (default 3). See spec §2.2.
 VEHICLE_SAMPLE_EVENT = "vehicle_sample"
 
+# Internal "track ended" event emitted at ghost-buffer expiry for every
+# vehicle the tracker stops tracking — drive-bys AND idle-leaves. Used by
+# `vehicle-attributes-cam{N}` as the buffer-flush trigger so drive-by tracks
+# (which never go idle) still get their per-track snapshot dir written.
+# `vehicle_left` is kept user-facing (idle-leave only, gated on
+# idle_alerted=True) so the events panel + Telegram aren't spammed by
+# drive-by exits. Carries a `was_idle` boolean field so consumers can
+# distinguish without re-deriving from duration.
+VEHICLE_GONE_EVENT = "vehicle_gone"
+
 # Current state of what the camera sees RIGHT NOW (latest detections).
 # This is a Redis key (not a stream) — overwritten on each frame.
 # Published by: tracker

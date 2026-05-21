@@ -103,7 +103,13 @@ def handle_event(event: dict, buffers: dict,
         _open_buffer(event, buffers)
     elif et == "vehicle_sample":
         _accumulate_crop(event, buffers, r_bin, hd_size)
-    elif et in ("vehicle_left", "vehicle_idle"):
+    elif et in ("vehicle_gone", "vehicle_idle"):
+        # `vehicle_gone` fires at ghost-buffer expiry for ALL tracks (drive-by
+        # + idle-leave). `vehicle_idle` fires mid-life when a parked car
+        # crosses the stationary threshold. We previously listened for
+        # `vehicle_left` — that's now idle-leave-only (user-facing event),
+        # so drive-by tracks would never flush. See
+        # contracts/streams.py:VEHICLE_GONE_EVENT.
         _flush(event, buffers, snapshot_root)
 
 
@@ -166,7 +172,16 @@ def _flush(event: dict, buffers: dict,
     if buf is None:
         return
     last_seen = float(event.get("timestamp", "0") or 0)
-    event_kind = "idle" if event.get("event_type") == "vehicle_idle" else "drive_by"
+    # Classify the track: `vehicle_idle` is explicitly idle. `vehicle_gone`
+    # carries `was_idle` (str "True"/"False") so consumers don't have to
+    # re-derive from duration. Defaults to drive_by when neither signal says
+    # idle (covers any future event-shape changes safely).
+    if event.get("event_type") == "vehicle_idle":
+        event_kind = "idle"
+    elif event.get("was_idle") == "True":
+        event_kind = "idle"
+    else:
+        event_kind = "drive_by"
     flush_buffer_to_disk(
         buf,
         last_seen=last_seen,
