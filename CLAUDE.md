@@ -216,7 +216,43 @@ Design spec: `docs/superpowers/specs/2026-05-20-audit-repo-skill-design.md`. Imp
 
 ---
 
-## 13. When in doubt
+## 13. Security automation
+
+The repo has a layered defense setup configured both at the GitHub level (repo Settings → Code security) and via in-repo workflow / config files. The full stack:
+
+| Layer | What it catches | Where it lives |
+|---|---|---|
+| **CodeQL** | Static analysis — path injection, XSS, weak crypto, etc. Auto-runs on every push to main + PR via GitHub default setup. | (no in-repo config — managed via GitHub's default setup) |
+| **Dependabot alerts** | Notifies when any dep has a known CVE in the GitHub Advisory DB. | Repo Settings toggle |
+| **Dependabot security updates** | Auto-opens a PR to upgrade a vulnerable dep whenever an alert fires. | Repo Settings toggle |
+| **Dependabot version updates** | Weekly grouped PRs to bump deps proactively. Patch + minor only — ignores semver-major (manual review for those). | `.github/dependabot.yml` |
+| **Secret scanning alerts + push protection** | Detects committed secrets; push protection BLOCKS pushes containing detected secrets at git push time. | Repo Settings toggle |
+| **Branch protection on main** | Blocks force-push + deletion; requires `pytest` status check on PR merges. Admin can bypass for direct pushes; force/delete is hard-no for everyone including admins. | `gh api repos/.../branches/main/protection` |
+| **`tests.yml`** | Runs the 302-test pytest suite on every push to main + every PR. Required check before PR merge. | `.github/workflows/tests.yml` |
+| **`/audit-repo` skill** | Project-specific audit (docs drift, code quality, architecture, schema-drift between services). See §12. | `.claude/skills/audit-repo/` |
+| **DOMPurify at innerHTML sinks** | Runtime XSS hardening in the dashboard's JS. Every dashboard JS file that writes to `innerHTML` uses a `_safeHtml(html)` helper that wraps `DOMPurify.sanitize(html, {ADD_TAGS: [...], ADD_ATTR: [...]})`. | `services/dashboard/static/js/lib/dompurify.min.js` + `_safeHtml()` defined at the top of `ai.js`, `monitoring.js`, `events.js`, `browse.js` |
+| **Realpath + containment for file paths** | Defense against `?camera=../../etc`-style path traversal in route handlers that interpolate user input into `os.path.join`. The canonical pattern is `os.path.realpath(...).startswith(realpath(BASE) + os.sep)`. | Currently in `routes/events.py:resolve_event_snapshot_path` + the `get_event_snapshot` open() sink. New file-serving routes should follow the same pattern. |
+
+### When something fires
+
+- **CodeQL alert** → appears in repo Security tab. Triage per-alert; dismiss false positives with a documented reason (the comment shows on future readers), fix the real ones in code.
+- **Dependabot alert** → appears in Security tab AND security-updates auto-opens a PR (if both toggles are on).
+- **Dependabot weekly update** → grouped PRs land Monday morning; `tests.yml` gates merge.
+- **Secret push attempt** → blocked at `git push` time with a clear message naming the secret pattern. Use `git rm --cached <file>` + amend / new commit; never `--no-verify` past it.
+
+### Adding a new ecosystem to Dependabot
+
+Edit `.github/dependabot.yml`, add a `- package-ecosystem:` block. Example: if you ever add a `package.json` to the dashboard's static dir, add an `npm` block pointing at that dir with the same grouped-weekly-ignore-major pattern as the existing entries.
+
+### Hard rules
+
+- Never `git push --no-verify` to bypass push protection or pre-commit hooks.
+- Never `--no-gpg-sign` or similar to skip signing if it's wired up.
+- Never disable branch protection to land a "hotfix." Use the admin-bypass (direct push) if truly needed; the protection rule is set up to allow that without disabling.
+
+---
+
+## 14. When in doubt
 
 1. Run the test suite. 302 should pass.
 2. Restart the dashboard. Log should print "Dashboard ready at http://localhost:8080" and "Telegram poller started".
