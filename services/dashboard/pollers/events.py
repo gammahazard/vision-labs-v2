@@ -41,6 +41,7 @@ import cv2
 import numpy as np
 
 import routes as ctx
+from contracts.tz import TZ_LOCAL
 
 logger = logging.getLogger("dashboard.event_poller")
 

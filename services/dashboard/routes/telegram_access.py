@@ -23,6 +23,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 import routes as ctx
+from contracts.tz import TZ_LOCAL
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram-access"])
 

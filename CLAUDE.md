@@ -118,7 +118,7 @@ For services that COPY a single `.py` into their image (tracker, orchestrator), 
 
 ## 7. Test conventions
 
-- 258 tests in `/tests/`. Run via `source .venv-test/bin/activate && pytest -q`.
+- 302 tests in `/tests/`. Run via `source .venv-test/bin/activate && pytest -q`.
 - `FakeRedis` in `tests/test_vehicles.py` is the standard stub for Redis interactions.
 - Tests that monkeypatch `routes.cameras.list_enabled_cameras` etc. — do it on the **module**, not the package facade (e.g. `routes.notifications._shared.TELEGRAM_BOT_TOKEN`, not `routes.notifications.TELEGRAM_BOT_TOKEN`). The package facade re-exports immutable references; patching it doesn't propagate.
 - When a refactor invalidates a test, **prefer fixing the test** over `@pytest.mark.stale`. Stale tests rot. Fix or delete.
@@ -199,7 +199,7 @@ Never cut a tag without user approval — it's a public, hard-to-reverse action.
 
 ## 12. When in doubt
 
-1. Run the test suite. 258 should pass.
+1. Run the test suite. 302 should pass.
 2. Restart the dashboard. Log should print "Dashboard ready at http://localhost:8080" and "Telegram poller started".
 3. Hit `/login.html` in a browser. It should return 200 (auth-exempt).
 4. Check `docker compose logs --since=30s | grep -iE "error|auth.*required"` is empty.
