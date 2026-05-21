@@ -12,6 +12,14 @@
 
 /* global _openEventPhoto */
 
+// DOMPurify config — consistent with other dashboard JS files; strips dangerous
+// attributes from user-supplied face names and event data rendered into innerHTML.
+const _PURIFY_CFG = {
+    ADD_TAGS: ['video', 'figure', 'source'],
+    ADD_ATTR: ['controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload']
+};
+function _safeHtml(html) { return DOMPurify.sanitize(html, _PURIFY_CFG); }
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -63,7 +71,7 @@ async function _loadBrowseHome() {
         html += `<div class="browse-section-header" style="margin-top:12px;">👤 Enrolled Faces</div>`;
         html += `<div class="browse-faces-link"><button class="btn btn-primary browse-faces-btn" onclick="_browseFacesClick()">View Enrolled Faces Gallery</button></div>`;
 
-        container.innerHTML = html;
+        container.innerHTML = _safeHtml(html);
     } catch (e) {
         container.innerHTML = '<div class="browse-empty">Failed to load snapshots.</div>';
     }
@@ -108,7 +116,7 @@ async function _browseDayClick(date) {
             html += "</div>";
         }
 
-        container.innerHTML = html;
+        container.innerHTML = _safeHtml(html);
     } catch (e) {
         container.innerHTML = '<div class="browse-empty">Failed to load day snapshots.</div>';
     }
@@ -159,7 +167,7 @@ async function _browseFacesClick() {
             html += "</div>";
         }
 
-        container.innerHTML = html;
+        container.innerHTML = _safeHtml(html);
     } catch (e) {
         container.innerHTML = '<div class="browse-empty">Failed to load enrolled faces.</div>';
     }

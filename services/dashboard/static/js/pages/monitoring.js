@@ -12,6 +12,14 @@
  *   - Controls the Grafana iframe URL
  */
 
+// DOMPurify config — consistent with other dashboard JS files; strips dangerous
+// attributes from server-supplied container/health data rendered into innerHTML.
+const _PURIFY_CFG = {
+    ADD_TAGS: ['video', 'figure', 'source'],
+    ADD_ATTR: ['controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload']
+};
+function _safeHtml(html) { return DOMPurify.sanitize(html, _PURIFY_CFG); }
+
 (function () {
     "use strict";
 
@@ -198,7 +206,7 @@
             const resp = await fetch("/api/containers");
             const data = await resp.json();
             if (!data.ok) {
-                wrapper.innerHTML = `<div class="mon-iframe-loading"><span>${_escHtml(data.error || "No data")}</span><p class="mon-iframe-hint">Containers panel needs the orchestrator running.</p></div>`;
+                wrapper.innerHTML = _safeHtml(`<div class="mon-iframe-loading"><span>${_escHtml(data.error || "No data")}</span><p class="mon-iframe-hint">Containers panel needs the orchestrator running.</p></div>`);
                 if (ageEl) ageEl.textContent = "";
                 return;
             }
@@ -209,7 +217,7 @@
             }
             renderContainers(wrapper, data.containers || []);
         } catch (e) {
-            wrapper.innerHTML = `<div class="mon-iframe-loading"><span>Network error</span><p class="mon-iframe-hint">${_escHtml(e.message || String(e))}</p></div>`;
+            wrapper.innerHTML = _safeHtml(`<div class="mon-iframe-loading"><span>Network error</span><p class="mon-iframe-hint">${_escHtml(e.message || String(e))}</p></div>`);
         }
     }
 
@@ -235,7 +243,7 @@
                 <td class="container-status">${_escHtml(c.status || "")}${health}</td>
             </tr>`;
         }).join("");
-        wrapper.innerHTML = `
+        wrapper.innerHTML = _safeHtml(`
             <table class="mon-containers-table">
                 <thead><tr><th>Name</th><th>Service</th><th>State</th><th>Status</th></tr></thead>
                 <tbody>${rows}</tbody>
@@ -244,7 +252,7 @@
                 Read-only view from the orchestrator. For start/stop/exec/logs, use the
                 <a href="https://localhost:9443" target="_blank" rel="noopener" style="color:#60a5fa;">Portainer</a>
                 button above.
-            </p>`;
+            </p>`);
     }
 
     // ─── Init ───

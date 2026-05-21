@@ -6,6 +6,18 @@
  */
 
 // ---------------------------------------------------------------------------
+// DOMPurify config — keeps <video>/<figure>/<source> for renderMarkdown-emitted
+// chat content; strips dangerous attributes (onerror, onclick, etc.) globally.
+// Required because renderMarkdown does NOT escape HTML and user-supplied face
+// names / event captions / LLM tool output can otherwise XSS the dashboard tab.
+// ---------------------------------------------------------------------------
+const _PURIFY_CFG = {
+    ADD_TAGS: ['video', 'figure', 'source'],
+    ADD_ATTR: ['controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload']
+};
+function _safeHtml(html) { return DOMPurify.sanitize(html, _PURIFY_CFG); }
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 let aiConfig = { enabled: false, user_name: '', ai_name: 'Atlas' };
@@ -318,7 +330,7 @@ function appendMessageElement(role, content, animate) {
         const sysDiv = document.createElement('div');
         sysDiv.className = 'message-system';
         if (!animate) sysDiv.style.animation = 'none';
-        sysDiv.innerHTML = renderMarkdown(content);
+        sysDiv.innerHTML = _safeHtml(renderMarkdown(content));
         container.appendChild(sysDiv);
         return;
     }
@@ -333,7 +345,7 @@ function appendMessageElement(role, content, animate) {
 
     const bubbleDiv = document.createElement('div');
     bubbleDiv.className = 'message-bubble';
-    bubbleDiv.innerHTML = renderMarkdown(content);
+    bubbleDiv.innerHTML = _safeHtml(renderMarkdown(content));
 
     msgDiv.appendChild(avatarDiv);
     msgDiv.appendChild(bubbleDiv);
@@ -1044,9 +1056,9 @@ async function _refreshDvrRetentionNote() {
         if (typeof rec === 'number') parts.push(`recordings kept <strong>${rec} days</strong>`);
         if (typeof snap === 'number') parts.push(`event snapshots <strong>${snap} days</strong>`);
         if (typeof clip === 'number') parts.push(`AI/Telegram clips <strong>${clip} days</strong>`);
-        note.innerHTML = parts.length
+        note.innerHTML = _safeHtml(parts.length
             ? `🗑️ Retention: ${parts.join(' · ')}. <span style="opacity:0.7;">Change these in the Settings panel on the home page.</span>`
-            : '';
+            : '');
     } catch (e) {
         note.textContent = '';
     }
@@ -1120,10 +1132,10 @@ window._loadRecSegments = async function (date) {
         data.segments.forEach(seg => {
             const card = document.createElement('button');
             card.style.cssText = 'background:var(--bg-elevated,#1e1e2e); border:1px solid var(--border,#333); border-radius:8px; padding:12px; cursor:pointer; text-align:center; transition:all 0.2s;';
-            card.innerHTML = `
+            card.innerHTML = _safeHtml(`
                 <div style="font-size:1.1em; font-weight:600; color:var(--text-primary,#e0e0e0);">${seg.time}</div>
                 <div style="font-size:0.8em; color:var(--text-secondary,#888); margin-top:4px;">${seg.size_mb} MB</div>
-            `;
+            `);
             card.onmouseenter = () => card.style.borderColor = 'var(--accent,#6366f1)';
             card.onmouseleave = () => card.style.borderColor = 'var(--border,#333)';
             card.onclick = () => window._playRecording(date, seg.filename, seg.time);

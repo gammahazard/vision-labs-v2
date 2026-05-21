@@ -14,6 +14,15 @@
  *   - HTML: #eventList, #eventCount in index.html
  */
 
+// DOMPurify config — consistent with other dashboard JS files; strips dangerous
+// attributes from user-supplied event data (face names, captions, camera names)
+// rendered into innerHTML.
+const _PURIFY_CFG = {
+    ADD_TAGS: ['video', 'figure', 'source'],
+    ADD_ATTR: ['controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload']
+};
+function _safeHtml(html) { return DOMPurify.sanitize(html, _PURIFY_CFG); }
+
 // ---------------------------------------------------------------------------
 // DOM Elements
 // ---------------------------------------------------------------------------
@@ -213,7 +222,7 @@ function _renderEventFilterBar() {
               <option value="all">📷 All cameras</option>
            </select>`
         : "";
-    bar.innerHTML = pillsHtml + cameraDropdownHtml;
+    bar.innerHTML = _safeHtml(pillsHtml + cameraDropdownHtml);
     bar.dataset.rendered = "1";
     bar.addEventListener("click", (e) => {
         const btn = e.target.closest(".event-filter-pill");
@@ -354,7 +363,7 @@ async function _loadFallbackEnrolledAngles(personName, gridEl, statsEl) {
         const all = data.faces || [];
         const matches = all.filter(f => (f.name || "").toLowerCase() === (personName || "").toLowerCase());
         if (matches.length === 0) {
-            gridEl.innerHTML = `<div style="grid-column:1/-1;color:#64748b;font-size:12px;text-align:center;padding:12px;">${personName} no longer has enrolled angles.</div>`;
+            gridEl.innerHTML = _safeHtml(`<div style="grid-column:1/-1;color:#64748b;font-size:12px;text-align:center;padding:12px;">${personName} no longer has enrolled angles.</div>`);
             if (statsEl) statsEl.textContent = "";
             return;
         }
@@ -373,7 +382,7 @@ async function _loadFallbackEnrolledAngles(personName, gridEl, statsEl) {
                 </div>`;
         };
 
-        gridEl.innerHTML = matches.slice(0, INITIAL).map(tile).join("");
+        gridEl.innerHTML = _safeHtml(matches.slice(0, INITIAL).map(tile).join(""));
         const remaining = matches.slice(INITIAL);
         if (remaining.length > 0) {
             const moreBtn = document.createElement("button");
@@ -384,7 +393,7 @@ async function _loadFallbackEnrolledAngles(personName, gridEl, statsEl) {
                 moreBtn.remove();
                 const extra = document.createElement("div");
                 extra.style.cssText = "display:contents;";
-                extra.innerHTML = remaining.map(tile).join("");
+                extra.innerHTML = _safeHtml(remaining.map(tile).join(""));
                 gridEl.appendChild(extra);
             };
             gridEl.appendChild(moreBtn);
@@ -480,7 +489,7 @@ function renderEvent(evt, append = false) {
         cameraBadgeHtml = `<span class="event-camera-badge" title="${evt.camera_id}" style="display:inline-block;font-size:10px;font-weight:600;background:rgba(96,165,250,0.18);color:#60a5fa;padding:2px 6px;border-radius:8px;margin-right:6px;letter-spacing:0.02em;">📷 ${camName}</span>`;
     }
 
-    item.innerHTML = `
+    item.innerHTML = _safeHtml(`
         <span class="event-icon">${icon}</span>
         ${photoHtml}
         <div class="event-content">
@@ -488,7 +497,7 @@ function renderEvent(evt, append = false) {
             <div class="event-meta">${meta}</div>
             ${aiHtml}
         </div>
-    `;
+    `);
 
     // Make event item clickable to show detail modal
     item.style.cursor = "pointer";
@@ -594,7 +603,7 @@ function _openEventDetail(data) {
             metaHtml += `<div>⏱️ Duration: <strong>${data.duration}s</strong></div>`;
         }
     }
-    metaEl.innerHTML = metaHtml;
+    metaEl.innerHTML = _safeHtml(metaHtml);
 
     // ----- face_reconciled: render absorbed-faces grid -----
     if (facesWrap) facesWrap.style.display = "none";
@@ -661,7 +670,7 @@ function _openEventDetail(data) {
 
             const initial = pairs.slice(0, INITIAL).map(tile).join("");
             const remaining = pairs.slice(INITIAL);
-            facesGrid.innerHTML = initial;
+            facesGrid.innerHTML = _safeHtml(initial);
 
             if (remaining.length > 0) {
                 // "Show all" sentinel — clicking expands without rebuilding
@@ -673,7 +682,7 @@ function _openEventDetail(data) {
                     moreBtn.remove();
                     const extra = document.createElement("div");
                     extra.style.cssText = "display:contents;";
-                    extra.innerHTML = remaining.map(tile).join("");
+                    extra.innerHTML = _safeHtml(remaining.map(tile).join(""));
                     facesGrid.appendChild(extra);
                 };
                 facesGrid.appendChild(moreBtn);
