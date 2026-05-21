@@ -316,6 +316,23 @@
                         <span class="condition-label" id="condWeatherLabel">Weather</span>
                         <span class="condition-value" id="condWeatherValue">--</span>
                     </div>
+                    <div class="condition-item" id="condWindItem" style="display: none;">
+                        <span class="condition-icon">💨</span>
+                        <span class="condition-label">Wind</span>
+                        <span class="condition-value" id="condWindValue">--</span>
+                    </div>
+                    <div class="condition-item" id="condVisItem" style="display: none;">
+                        <span class="condition-icon">👁️</span>
+                        <span class="condition-label">Visibility</span>
+                        <span class="condition-value" id="condVisValue">--</span>
+                    </div>
+                </div>
+                <!-- Time-of-day schedule (filled by conditions.js): sunrise,
+                     daytime, twilight, night, late_night windows. Mirrors
+                     the same block on single.html so the home page shows
+                     the same conditions detail as a per-camera page. -->
+                <div class="conditions-schedule" id="conditionsSchedule">
+                    <!-- Filled by JS -->
                 </div>
             </div>
         </section>
