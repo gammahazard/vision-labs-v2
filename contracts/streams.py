@@ -45,6 +45,25 @@ DETECTION_STREAM = "detections:{detector_type}:{camera_id}"
 # Consumed by: dashboard event poller (Telegram broadcast + snapshot save + JSONL journal)
 EVENT_STREAM = "events:{camera_id}"
 
+# Per-track sampling trigger emitted by the tracker on matched vehicle updates.
+# Phase 1 of the vehicle-attributes pipeline — consumed by
+# `vehicle-attributes-cam{N}` to know when to crop the current HD frame.
+# Schema-additive: pre-existing consumers ignore unknown `event_type` values.
+# Payload mirrors `vehicle_detected` (same XADD into EVENT_STREAM, different
+# `event_type` field). Gated by tracker env `EMIT_VEHICLE_SAMPLES` (default
+# false) + `SAMPLE_INTERVAL_FRAMES` (default 3). See spec §2.2.
+VEHICLE_SAMPLE_EVENT = "vehicle_sample"
+
+# Internal "track ended" event emitted at ghost-buffer expiry for every
+# vehicle the tracker stops tracking — drive-bys AND idle-leaves. Used by
+# `vehicle-attributes-cam{N}` as the buffer-flush trigger so drive-by tracks
+# (which never go idle) still get their per-track snapshot dir written.
+# `vehicle_left` is kept user-facing (idle-leave only, gated on
+# idle_alerted=True) so the events panel + Telegram aren't spammed by
+# drive-by exits. Carries a `was_idle` boolean field so consumers can
+# distinguish without re-deriving from duration.
+VEHICLE_GONE_EVENT = "vehicle_gone"
+
 # Current state of what the camera sees RIGHT NOW (latest detections).
 # This is a Redis key (not a stream) — overwritten on each frame.
 # Published by: tracker
@@ -90,6 +109,11 @@ VEHICLE_STREAM = "detections:vehicle:{camera_id}"
 # Published by: camera-ingester (HD thread)
 # Consumed by: dashboard (HD live view toggle)
 HD_FRAME_KEY = "frame_hd:{camera_id}"
+
+# Camera registry hash — one field per camera_id, value is JSON camera config
+# Written by: dashboard (add/edit/remove camera)
+# Read by: orchestrator, vehicle-detector, recorder, tracker, vehicle-attributes
+REGISTRY_KEY = "cameras:registry"
 
 # Vehicle detection snapshot — JPEG bytes stored per detection with 24h TTL
 # Published by: tracker (from vehicle-detector frame_bytes)

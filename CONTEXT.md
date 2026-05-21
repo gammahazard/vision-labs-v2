@@ -80,7 +80,7 @@ portainer ──▶ https://localhost:9443 (Docker management UI)
 **This was refactored from a special `front_door` primary on 2026-05-18 (Phase G).** All slots are now symmetric. There is no longer a privileged primary camera. Slots cam1–cam5 originally; cam6–cam10 added 2026-05-19; cam11–cam20 added 2026-05-19. The cap is a docker-compose authoring artifact (each slot is a templated block) — not an architectural limit. **Future work:** the orchestrator could generate slot blocks dynamically via a `docker-compose.override.yml` it writes itself, removing the cap entirely. Not done yet.
 
 - `AVAILABLE_SLOTS = [f"cam{n}" for n in range(1, 21)]` (services/dashboard/cameras.py:82)
-- Each slot has 6 profile-gated services in docker-compose.yml: `camera-ingester-camN`, `pose-detector-camN`, `vehicle-detector-camN`, `face-recognizer-camN`, `tracker-camN`, `recorder-camN`.
+- Each slot has 7 profile-gated services in docker-compose.yml: `camera-ingester-camN`, `pose-detector-camN`, `vehicle-detector-camN`, `face-recognizer-camN`, `tracker-camN`, `recorder-camN`, `vehicle-attributes-camN`.
 - `profiles: ["camN"]` on every block. None of the per-cam services start with bare `docker compose up`; the orchestrator brings them up.
 - Adding a camera in the UI = upsert into `cameras:registry` + publish `cameras:events`. The orchestrator's reconcile loop sees the new slot and runs `docker compose --profile camN up -d <services>`.
 - Removing/disabling a camera = orchestrator runs `compose stop` + `compose rm -f -s` on just that slot's services (never bare `compose down` — that tears down everything).
@@ -130,7 +130,17 @@ All paths under `services/`. Every service ID below is profile-gated unless note
   - `match_threshold * 0.6 ≤ sim < match_threshold` → delete unknown (loose match noise).
   - `sim < match_threshold * 0.6` → keep as unknown.
 
-### 4.6 `tracker/` (per-cam, no GPU)
+### 4.6 `vehicle-attributes/` (per-cam, no GPU in Phase 1)
+- **Per-track HD-crop buffer.** Consumes `events:{cam}` filtered to `vehicle_detected` / `vehicle_sample` / `vehicle_gone` / `vehicle_idle`. Maintains in-memory `dict[track_id, TrackBuffer]`; cap 8 crops per track (`MAX_BUFFER_CROPS` env, default 8).
+- **HD frame source:** `GET frame_hd:{cam}` (binary Redis client, 5 s TTL set by camera-ingester). On miss, skip the sample — next event tries again.
+- **Cropping pipeline:** sub→HD bbox scale (×2.571 / ×2.531 at 896×512→2304×1296) → 20% padding (`CROP_PADDING_PCT`) → `cv2.imdecode` → slice → `cv2.imencode` JPEG q=85 (`JPEG_QUALITY`).
+- **Storage:** flushes to `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}` on `vehicle_gone` (internal track-end event, fires for ALL track ends — drive-by + idle-leave) or `vehicle_idle` (preview flush mid-life). Hero = highest-confidence crop. Empty buffer = silent no-op. *Why not `vehicle_left`?* That's now strictly idle-leave-only (user-facing event); drive-by tracks would never flush if we used it.
+- **Registry gate:** exits cleanly at startup if `detect_vehicles=false` OR `detect_vehicle_attributes!=true` (mirrors face-recognizer's pattern). `restart: on-failure` on the compose block leaves clean exits alone (vs `unless-stopped` which would loop).
+- **No GPU in Phase 1** — Dockerfile uses `python:3.11-slim`, no PyTorch/ONNX. Phase 3 will add the multi-head classifier per the spec at `docs/superpowers/specs/2026-05-21-vehicle-attribute-classification-design.md`. The all-null `attributes` block in metadata.json is committed now so Phase 3 only fills values, doesn't restructure.
+- **Producer/consumer:** consumes `events:{cam}` + `frame_hd:{cam}` + `cameras:registry`. Writes filesystem only (no Redis writes in Phase 1).
+- **Tracker integration:** tracker emits `vehicle_sample` event every `SAMPLE_INTERVAL_FRAMES` matched updates when `EMIT_VEHICLE_SAMPLES=1` (default 0). Tracker code at `services/tracker/core/manager.py:_emit_vehicle_sample_event`.
+
+### 4.7 `tracker/` (per-cam, no GPU)
 - **Reads:** `detections:pose:{camN}` (consumer group `trackers`) + `detections:vehicle:{camN}` (consumer group `vehicle_trackers`). Plus `identity_state:{camN}` (every 2s), `zones:{camN}` (cached 10s), `config:{camN}` (every 10 messages).
 - **Writes:** `events:{camN}` stream (maxlen 5000) — events `person_appeared`, `person_left`, `person_identified`, `action_changed`, `vehicle_detected`, `vehicle_idle`. Updates `state:{camN}` hash with `num_people` + `people` JSON.
 - **Snapshot persistence on event:**
@@ -143,19 +153,19 @@ All paths under `services/`. Every service ID below is profile-gated unless note
   - Identity grace period — when `suppress_known=1` config, defers `person_appeared` for 4s; if face-recognizer identifies the person within the window, the event is suppressed entirely.
   - Vehicle idle detection requires ≥5 center-history samples AND the current center stays within `max(20 px, bbox_w * 0.15)` of the **median** of the rolling 20-sample center history (per `TrackedVehicle.is_stationary` in `services/tracker/core/state.py`), AND no prior `idle_alerted` flag. The bbox-scaled threshold replaced an earlier absolute 30 px cap so distant/small vehicles don't oscillate the flag. The 20 px floor / 15% width was bumped from `8 px / 10% width` after cam1 live data showed YOLO bbox jitter (~5-8 px frame-to-frame on a parked car) flipping `is_stationary` False on single noisy frames, which reset `idle_alerted` and re-emitted `vehicle_idle` every few minutes.
 
-### 4.7 `recorder/` (per-cam, host-net)
+### 4.8 `recorder/` (per-cam, host-net)
 - ffmpeg `-c copy -f segment` (no transcode) into `/recordings/{camN}/YYYY-MM-DD/HH-MM.ts` (1-hour MPEG-TS segments).
 - **Bind-mount target:** `./data/recordings/` on the host (browseable from Windows Explorer via `\\wsl$\<distro>\...`).
 - **RTSP URL resolution:** `RTSP_URL` env first; falls back to `cameras:registry[CAMERA_ID].rtsp_sub` — `_load_rtsp_from_registry()`.
 - **Retention:** `cleanup_old_recordings()` deletes day-folders older than `RETENTION_DAYS=3` every 6 hours (`CLEANUP_INTERVAL`).
 - **Host network** required to reach LAN RTSP URLs.
 
-### 4.8 `dashboard/` — see §6 for full breakdown.
+### 4.9 `dashboard/` — see §6 for full breakdown.
 - FastAPI + Jinja-free static frontend + WebSocket + REST + background asyncio pollers.
 - Port 8080 (the only user-facing port besides Grafana/Prom/Portainer).
 - Always-on (NOT profile-gated). Single instance regardless of camera count.
 
-### 4.9 `orchestrator/`
+### 4.10 `orchestrator/`
 - Owns the Docker socket. Tiny image (alpine docker:24-cli + py3-redis).
 - **4 background threads** (each on its own redis.Redis connection):
   1. Main event listener — subscribes `cameras:events` (registry mutations) → full reconcile.
@@ -174,7 +184,7 @@ All paths under `services/`. Every service ID below is profile-gated unless note
   - NEVER `--remove-orphans` (deletes out-of-profile services).
   - Always pass an explicit `<services>` list filtered by `-{slot}` suffix.
 
-### 4.10 `prometheus/`, `grafana/`, `redis-exporter`, `dcgm-exporter`, `node-exporter`
+### 4.11 `prometheus/`, `grafana/`, `redis-exporter`, `dcgm-exporter`, `node-exporter`
 - All host-network. Scrapes via `localhost:9100/9121/9400/8080`.
 - **Prometheus** bound to `127.0.0.1:9090` only (so LAN can't hit the admin API). `--storage.tsdb.retention.time=30d` + `--storage.tsdb.retention.size=5GB`. `--web.enable-admin-api` enabled for `scripts/prometheus-clean-stale-cameras.sh`.
 - **Grafana**: provisioning + dashboards bind-mounted RO; port 3000; admin/visionlabs; anonymous viewer enabled so the monitoring page can embed without sign-in. Host-bound (LAN-reachable) as a trade-off for the iframe embed. Dashboard auto-refresh = 15s.
@@ -182,7 +192,7 @@ All paths under `services/`. Every service ID below is profile-gated unless note
 - **dcgm-exporter**: GPU metrics with `gpu` (index) and `modelName` labels; Grafana labels use both to produce "GPU0 util (RTX 5070 Ti)" style legends.
 - **node-exporter**: host disk / memory / CPU / network on `127.0.0.1:9100`. Mounts `/proc`, `/sys`, and `/` (no rslave on WSL2). The dashboard's Grafana "Host" row uses this for disk-usage gauge, free-space trendline, CPU and memory.
 
-### 4.11 `portainer/`
+### 4.12 `portainer/`
 - Web UI at `https://localhost:9443`. Optional but pre-installed for users who want a GUI on top of Docker. **Portainer ships with `Content-Security-Policy: frame-ancestors 'none'`** so it can NOT be iframe-embedded; the monitoring page's "Containers" tab is a read-only listing fed by the orchestrator (see §6 routes/containers), with an "↗ Open Portainer" button that opens it in a new tab.
 
 ---
@@ -447,13 +457,14 @@ Base64 images would blow the LLM context (51KB JPEG ≈ 53k tokens vs 8k limit).
 ## 10. Docker Compose layout
 
 ### Per-cam profile block structure
-Each cam slot has 6 services with `profiles: ["camN"]`:
+Each cam slot has 7 services with `profiles: ["camN"]`:
 1. `recorder-camN` (host network)
 2. `camera-ingester-camN` (host network)
 3. `pose-detector-camN` (GPU)
 4. `vehicle-detector-camN` (GPU)
 5. `face-recognizer-camN` (GPU, exposes 8081 internal-only)
 6. `tracker-camN` (no GPU)
+7. `vehicle-attributes-camN` (no GPU, exits cleanly if `detect_vehicle_attributes!=true`)
 
 Slot block ranges in docker-compose.yml: cam1's `recorder-cam1` block starts around line 371, cam5 around line 957, cam20 around line 3012; the file is ~3200 lines after 2026-05-19's expansion. Run `grep -n "^  recorder-camN:" docker-compose.yml` to find the exact line for any slot — these numbers drift quickly. **Future work:** dynamic slot generation via orchestrator-written `docker-compose.override.yml` would remove the 20-slot ceiling entirely.
 
@@ -627,6 +638,14 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 
 29. **Hard line numbers throughout this doc are best-effort.** Treat file/symbol references as truth; if `services/dashboard/server.py:113` doesn't match what's at line 113 today, search the file for the referenced symbol instead. The compose file especially has shifted (cam1 used to be near the top; expanding to 20 slots pushed everything down).
 
+30. **`vehicle_left` ≠ "the car drove out of frame."** As of the Phase 1 follow-up fix, the tracker emits TWO distinct track-end events:
+    - `vehicle_gone` — **internal**, fires at every ghost-buffer expiry (drive-by AND idle-leave). Carries `was_idle: "True"|"False"`. Consumed by the vehicle-attributes service as its buffer-flush trigger. Never shown to users.
+    - `vehicle_left` — **user-facing**, fires only when `veh.idle_alerted=True` was set during the track's life (the car was idle long enough to cross `VEHICLE_IDLE_TIMEOUT`, then drove off). Telegram + events panel render this.
+    
+    Before the fix, `vehicle_left` fired on every ghost expiry — including 0.5s drive-bys that never went idle. Combined with the IoU identity-swap bug (one physical car briefly splits into two `TrackedVehicle` IDs), the events panel got two "left" events for a single car driving past. The semantic split (gone vs left) cleaned up the user-facing noise without breaking the attribute pipeline.
+    
+    **Note:** the underlying IoU identity-swap bug is NOT fixed by this split — it just means drive-by-noise no longer compounds it. See `[[vehicle-left-double-fire-bug]]` memory note for the IoU follow-up work.
+
 ---
 
 ## 15. Recent architectural decisions
@@ -711,7 +730,7 @@ Qwen 3 14B is the model ceiling on a single-host install — no swap to larger m
 ## 16. File index (where to look)
 
 ### Top of repo
-- `docker-compose.yml` — main compose file. 10 always-on services + 6 per-cam services × 20 profile-gated slots = 120 profile-gated. ~104 KB.
+- `docker-compose.yml` — main compose file. 10 always-on services + 7 per-cam services × 20 profile-gated slots = 140 profile-gated. ~104 KB.
 - `docker-compose.registry.yml` — overlay to pull pre-built images from GHCR
 - `docker-compose.qnap.yml` — overlay to flip qnap-* volumes to CIFS mounts
 - `.env` / `.env.example` — runtime config

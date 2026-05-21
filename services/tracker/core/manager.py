@@ -6,6 +6,7 @@ in sync. The big one — ~700 lines of pipeline logic.
 """
 
 import json
+import os
 import time
 
 import redis
@@ -29,6 +30,8 @@ from .config import (
     VEHICLE_GHOST_MAX_DIST_RATIO,
     MIN_BBOX_AREA,
     IDENTITY_GRACE_SECONDS,
+    VEHICLE_SAMPLE_EVENT,
+    VEHICLE_GONE_EVENT,
     stream_key,
     point_in_polygon,
     should_alert,
@@ -36,6 +39,14 @@ from .config import (
 )
 from .iou import compute_iou
 from .state import TrackedPerson, TrackedVehicle
+
+# Phase 1 of the vehicle-attributes pipeline. Off by default until the
+# consumer (vehicle-attributes-cam{N}) is wired up. See spec §2.2.
+# These are module-level so importlib.reload(manager) re-reads them when
+# tests monkeypatch os.environ before reloading.
+EMIT_VEHICLE_SAMPLES = os.getenv("EMIT_VEHICLE_SAMPLES", "0") == "1"
+SAMPLE_INTERVAL_FRAMES = max(1, int(os.getenv("SAMPLE_INTERVAL_FRAMES", "3")))
+
 
 class PersonTracker:
     """
@@ -46,7 +57,8 @@ class PersonTracker:
     Emits events when people appear or leave.
     """
 
-    def __init__(self, r: redis.Redis, iou_threshold: float, lost_timeout: float):
+    def __init__(self, r: redis.Redis, iou_threshold: float = VEHICLE_IOU_THRESHOLD,
+                 lost_timeout: float = VEHICLE_LOST_TIMEOUT):
         self.r = r
         self.iou_threshold = iou_threshold
         self.lost_timeout = lost_timeout
@@ -237,6 +249,18 @@ class PersonTracker:
                     best_iou = iou
                     best_match_id = vid
 
+            # IoU match can fail across consecutive frames when a fast-moving
+            # car shifts by more than half its width — IoU drops below
+            # VEHICLE_IOU_THRESHOLD even though it's clearly the same car.
+            # Mirror _try_ghost_match's center-distance heuristic here for
+            # the live-track case. Same-class only; same VEHICLE_GHOST_MAX_DIST_RATIO
+            # threshold. Catches the "drive-by car briefly splits into two
+            # TrackedVehicles" bug reported on cam1 (bboxes 50px apart on
+            # consecutive frames, IoU≈0.14). See test
+            # test_drive_by_with_low_iou_consecutive_frames_does_not_double_track.
+            if not best_match_id:
+                best_match_id = self._try_live_center_match(bbox, class_name)
+
             # Try ghost re-association before treating as a brand-new vehicle.
             # A ghost is a recently-lost vehicle (within VEHICLE_GHOST_TTL).
             # If the new detection is close enough in space + same class, we
@@ -282,6 +306,12 @@ class PersonTracker:
                     veh.idle_alerted = True
                     self._emit_vehicle_idle_event(veh, timestamp)
 
+                # Phase 1: emit a sampling event every Nth matched update
+                # so vehicle-attributes-cam{N} can pull the HD frame at a
+                # known cadence. Cheap pubsub-equivalent — costs one XADD.
+                if EMIT_VEHICLE_SAMPLES and veh.frame_count % SAMPLE_INTERVAL_FRAMES == 0:
+                    self._emit_vehicle_sample_event(veh, timestamp)
+
             else:
                 # --- New vehicle: create tracker and emit detection event ---
                 vid = f"vehicle_{self._next_vehicle_id:04d}"
@@ -323,14 +353,57 @@ class PersonTracker:
             veh = self.tracked_vehicles.pop(vid)
             self._ghost_vehicles[vid] = (veh, timestamp)
 
-        # --- Step 2b: Expire ghosts past TTL and emit their (deferred) vehicle_left ---
+        # --- Step 2b: Expire ghosts past TTL and emit the track-end events ---
+        # `vehicle_gone` always fires (internal — used by vehicle-attributes
+        # as the buffer-flush trigger for both drive-bys and idle-leaves).
+        # `vehicle_left` fires ONLY when the vehicle had previously gone idle —
+        # drive-by cars never set idle_alerted, so they no longer spam the
+        # events panel + Telegram with exit events. See contracts/streams.py
+        # comment on VEHICLE_GONE_EVENT.
         expired_ghost_ids = [
             vid for vid, (_, ghost_ts) in self._ghost_vehicles.items()
             if timestamp - ghost_ts > VEHICLE_GHOST_TTL
         ]
         for vid in expired_ghost_ids:
             veh, _ = self._ghost_vehicles.pop(vid)
-            self._emit_vehicle_left_event(veh, timestamp)
+            self._emit_vehicle_gone_event(veh, timestamp)
+            if veh.idle_alerted:
+                self._emit_vehicle_left_event(veh, timestamp)
+
+    def _try_live_center_match(self, bbox: list, class_name: str) -> str | None:
+        """Fallback live-track match by center distance when IoU failed.
+
+        When a vehicle drifts fast enough that consecutive-frame bboxes have
+        IoU below VEHICLE_IOU_THRESHOLD, the standard match step misses it
+        and the tracker spawns a new TrackedVehicle for the same physical
+        car. This helper checks whether any currently-tracked vehicle of the
+        SAME class is within `bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO` of the
+        new bbox's center; if so, return its id so the match step reuses it.
+
+        Same-class only — mirrors the ghost-match's safety rule. Cars
+        don't morph into trucks mid-track. Note: the standard IoU step
+        deliberately doesn't check class (handles YOLO class flicker on
+        the same vehicle); we restrict the looser center-distance path
+        only.
+        """
+        if not self.tracked_vehicles:
+            return None
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        bbox_w = max(1.0, bbox[2] - bbox[0])
+        max_dist = bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO
+        best_id = None
+        best_dist = max_dist
+        for vid, veh in self.tracked_vehicles.items():
+            if veh.class_name != class_name:
+                continue
+            vx = (veh.bbox[0] + veh.bbox[2]) / 2
+            vy = (veh.bbox[1] + veh.bbox[3]) / 2
+            dist = ((cx - vx) ** 2 + (cy - vy) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_id = vid
+        return best_id
 
     def _try_ghost_match(self, bbox: list, class_name: str, timestamp: float) -> str | None:
         """If a recently-departed vehicle is near this bbox, return its id.
@@ -389,6 +462,26 @@ class PersonTracker:
             f"EVENT: vehicle_detected | {veh.class_name} ({veh.confidence:.2f})"
             f"{f' | zone={zone_name}' if zone_name else ''}"
         )
+
+    def _emit_vehicle_sample_event(self, veh: 'TrackedVehicle', timestamp: float):
+        """Emit a low-weight sampling event the attribute service uses to
+        decide when to crop the current HD frame for this track.
+
+        Mirrors vehicle_detected payload so a consumer can treat both as
+        `(track_id, bbox, timestamp)` carriers without branching on event_type.
+        """
+        event = {
+            "camera_id": CAMERA_ID,
+            "event_type": VEHICLE_SAMPLE_EVENT,
+            "timestamp": str(timestamp),
+            "bbox": json.dumps(veh.bbox),
+            "vehicle_class": veh.class_name,
+            "vehicle_confidence": str(round(veh.confidence, 3)),
+            "vehicle_id": veh.vehicle_id,
+            "vehicle_first_seen": str(int(veh.first_seen)),
+            "frame_count": str(veh.frame_count),
+        }
+        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
 
     def _emit_vehicle_idle_event(self, veh: 'TrackedVehicle', timestamp: float):
         """
@@ -471,6 +564,37 @@ class PersonTracker:
             f"EVENT: vehicle_left | {veh.class_name} after {visit_duration:.1f}s"
             f"{f' | zone={zone_name}' if zone_name else ''}"
         )
+
+    def _emit_vehicle_gone_event(self, veh: 'TrackedVehicle', timestamp: float):
+        """Emit a vehicle_gone event when a tracked vehicle's ghost expires.
+
+        Fires for EVERY track end — both drive-bys and idle-leaves. Used by
+        `vehicle-attributes-cam{N}` to flush its per-track HD-crop buffer
+        regardless of whether the vehicle ever went idle. Carries `was_idle`
+        so consumers can distinguish without re-deriving from `duration`.
+
+        Drive-by tracks (short duration, never set idle_alerted): only
+        vehicle_gone fires. Idle-leave tracks: BOTH vehicle_gone (internal)
+        AND vehicle_left (user-facing) fire.
+        """
+        visit_duration = veh.last_seen - veh.first_seen
+
+        event = {
+            "camera_id": CAMERA_ID,
+            "event_type": VEHICLE_GONE_EVENT,
+            "timestamp": str(timestamp),
+            "duration": str(round(visit_duration, 1)),
+            "bbox": json.dumps(veh.bbox),
+            "frame_count": str(veh.frame_count),
+            "vehicle_class": veh.class_name,
+            "vehicle_confidence": str(round(veh.confidence, 3)),
+            "vehicle_id": veh.vehicle_id,
+            "vehicle_first_seen": str(int(veh.first_seen)),
+            "was_idle": str(bool(veh.idle_alerted)),
+        }
+
+        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
+        self.total_events += 1
 
     def _load_zones(self):
         """Load zone definitions from Redis (cached)."""
@@ -781,3 +905,9 @@ class PersonTracker:
 
         # --- Step 6: Update scene state in Redis ---
         self._update_state()
+
+
+# Alias used by tests and the vehicle-attributes service that want to
+# instantiate the tracker without hard-coding the class name. The canonical
+# name stays PersonTracker for backward compat with direct imports.
+Manager = PersonTracker

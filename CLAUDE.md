@@ -89,7 +89,7 @@ That means:
 - Removing a camera = `hdel` + publish. Orchestrator runs `--profile camN down`.
 - **All env vars are inherited from the host's `.env`.** A new cam slot does not need extra config — it gets `REDIS_PASSWORD`, `DETECTOR_GPU`, etc. automatically.
 
-**To add more than 20 cam slots:** duplicate a `camN` block in `docker-compose.yml` (6 services per slot — recorder, camera-ingester, pose-detector, vehicle-detector, face-recognizer, tracker), add the new slot to `AVAILABLE_SLOTS` in `services/dashboard/cameras.py`, and append to `ALLOWED_PROFILES` env on the orchestrator. **The right long-term fix is dynamic slot generation:** the orchestrator could write per-camera `docker-compose.override.yml` entries on the fly when a camera is added, removing the static cap entirely. Not done yet; flagged as future work in CONTEXT.md.
+**To add more than 20 cam slots:** duplicate a `camN` block in `docker-compose.yml` (7 services per slot — recorder, camera-ingester, pose-detector, vehicle-detector, face-recognizer, tracker, vehicle-attributes), add the new slot to `AVAILABLE_SLOTS` in `services/dashboard/cameras.py`, and append to `ALLOWED_PROFILES` env on the orchestrator. **The right long-term fix is dynamic slot generation:** the orchestrator could write per-camera `docker-compose.override.yml` entries on the fly when a camera is added, removing the static cap entirely. Not done yet; flagged as future work in CONTEXT.md.
 
 ---
 

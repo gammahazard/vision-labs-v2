@@ -8,6 +8,7 @@ and path traversal protection.
 NO real Redis or GPU — tracker logic and routes are tested with FakeRedis.
 """
 
+import json
 import os
 import sys
 import time
@@ -886,4 +887,266 @@ class TestVehicleGhostBuffer:
             f"Ghost re-association reset first_seen — duration counter "
             f"will misreport ({rehydrated.first_seen} vs {first_seen})"
         )
+
+
+# ===========================================================================
+# Tracker — vehicle_sample event emission (Phase 1 vehicle-attributes)
+# ===========================================================================
+def test_tracker_emits_vehicle_sample_every_n_updates(monkeypatch):
+    """With EMIT_VEHICLE_SAMPLES=1 and SAMPLE_INTERVAL_FRAMES=3, the third
+    matched update on an existing vehicle emits `vehicle_sample`. The 1st
+    and 2nd matched updates do not."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("SAMPLE_INTERVAL_FRAMES", "3")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    bbox = [100, 100, 200, 200]
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=0.0)
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=1.0)
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=2.0)
+    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                    "confidence": 0.8}], timestamp=3.0)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    sample_events = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    detected_events = [e for e in events if e.get("event_type") == "vehicle_detected"]
+
+    assert len(detected_events) == 1
+    assert len(sample_events) == 1
+    s = sample_events[0]
+    assert s["vehicle_id"].startswith("vehicle_")
+    assert json.loads(s["bbox"]) == bbox
+
+
+def test_tracker_does_not_emit_sample_when_feature_disabled(monkeypatch):
+    """Default env (EMIT_VEHICLE_SAMPLES unset) ⇒ zero sample events even
+    across many matched updates."""
+    monkeypatch.delenv("EMIT_VEHICLE_SAMPLES", raising=False)
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    bbox = [100, 100, 200, 200]
+    for t in range(0, 10):
+        m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                        "confidence": 0.8}], timestamp=float(t))
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    samples = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    assert samples == []
+
+
+# ===========================================================================
+# IoU identity-swap regression — same car across consecutive frames whose
+# bboxes shifted enough to drop below the IoU threshold should still match
+# the existing TrackedVehicle, not spawn a new one. Live cam1 data showed
+# this failing with bboxes [756.4, 320.7, 830.3, 355.8] (frame N) →
+# [706.7, 329.3, 781.2, 366.6] (frame N+1, 225ms later, IoU≈0.14). Two
+# TrackedVehicles were created for the same physical car, producing two
+# vehicle_detected events + later two vehicle_gone events.
+# ===========================================================================
+def test_drive_by_with_low_iou_consecutive_frames_does_not_double_track(monkeypatch):
+    """Two consecutive detections of the SAME physical car whose bboxes
+    shifted enough to have IoU < threshold (fast-moving / large between-
+    frame motion). Must match to the same TrackedVehicle via the
+    center-distance fallback, not spawn a second one."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Live data from cam1, 2026-05-21 — same car 225ms apart, IoU≈0.14
+    m._process_vehicle_detections(
+        [{"bbox": [756.4, 320.7, 830.3, 355.8],
+          "class_name": "car", "confidence": 0.82}],
+        timestamp=0.0,
+    )
+    m._process_vehicle_detections(
+        [{"bbox": [706.7, 329.3, 781.2, 366.6],
+          "class_name": "car", "confidence": 0.78}],
+        timestamp=0.225,
+    )
+
+    # Exactly one TrackedVehicle should exist
+    assert len(m.tracked_vehicles) == 1, (
+        f"expected 1 tracked vehicle (IoU swap should match via center "
+        f"fallback), got {len(m.tracked_vehicles)}: "
+        f"{list(m.tracked_vehicles.keys())}"
+    )
+
+    # Exactly one vehicle_detected event in the stream
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    detected = [e for e in events if e.get("event_type") == "vehicle_detected"]
+    assert len(detected) == 1, (
+        f"expected 1 vehicle_detected, got {len(detected)}: {events}"
+    )
+
+
+def test_two_genuinely_different_cars_far_apart_dont_merge(monkeypatch):
+    """Two cars at very different positions in the frame should NOT match
+    via center-distance fallback. Verifies the fallback isn't over-eager.
+    Center distance ~750 px is well beyond `bbox_w * 2.0 = ~150 px`."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Car 1 at left edge, Car 2 at right edge — same camera frame
+    m._process_vehicle_detections(
+        [{"bbox": [50, 320, 130, 360],   # left-side car
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    m._process_vehicle_detections(
+        [{"bbox": [800, 320, 880, 360],  # right-side car, ~750px away
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=0.225,
+    )
+
+    assert len(m.tracked_vehicles) == 2, (
+        f"expected 2 distinct tracks for far-apart cars, got "
+        f"{len(m.tracked_vehicles)}"
+    )
+
+
+def test_center_fallback_respects_class_match(monkeypatch):
+    """A car and a truck with low IoU but close centers must NOT merge via
+    the new center-distance fallback. Class match is enforced ONLY in the
+    fallback (mirroring _try_ghost_match's behavior); the existing IoU
+    step is class-blind, which is intentional — handles the
+    car↔truck-class-flicker case where YOLO gives a different class on
+    consecutive frames for the same physical vehicle."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Two adjacent bboxes, no overlap → IoU=0 (below threshold). Centers
+    # are 80px apart, bbox_w=60, so threshold = 60×2.0 = 120 → within range.
+    # If class check is skipped on the fallback, these would incorrectly
+    # merge. With the check, they stay separate.
+    m._process_vehicle_detections(
+        [{"bbox": [400, 300, 460, 340],
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    m._process_vehicle_detections(
+        [{"bbox": [480, 300, 540, 340],
+          "class_name": "truck", "confidence": 0.8}],
+        timestamp=0.1,
+    )
+    assert len(m.tracked_vehicles) == 2
+
+
+# ===========================================================================
+# vehicle_gone + vehicle_left semantic split (Phase 1 follow-up fix)
+# ===========================================================================
+def test_drive_by_emits_vehicle_gone_but_not_vehicle_left(monkeypatch):
+    """A drive-by car (never went idle) should emit vehicle_gone at ghost
+    expiry but NOT vehicle_left. The vehicle_left event is reserved for
+    user-facing idle-leave notifications — see contracts/streams.py."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import (
+        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL,
+    )
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    bbox = [100, 100, 200, 200]
+
+    # Drive-by: appear at t=0, never go idle (default vehicle_idle_timeout
+    # is 90s; we'll only run for a few seconds).
+    m._process_vehicle_detections(
+        [{"bbox": bbox, "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    # Advance past LOST_TIMEOUT + GHOST_TTL with no new detection so the
+    # ghost expires and the relevant emit fires.
+    # First sweep at LOST_TIMEOUT+ moves the vehicle into the ghost buffer
+    # (ghost_ts = this timestamp). Second sweep at GHOST_TTL+ past that
+    # ghost_ts is what actually fires the ghost-expiry emit.
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    expire_t = stale_t + VEHICLE_GHOST_TTL + 1.0
+    m._process_vehicle_detections([], timestamp=expire_t)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
+    left = [e for e in events if e.get("event_type") == "vehicle_left"]
+
+    assert len(gone) == 1, f"expected 1 vehicle_gone, got {len(gone)}: {events}"
+    assert gone[0]["was_idle"] == "False"
+    assert left == [], f"expected NO vehicle_left for drive-by, got {left}"
+
+
+def test_idle_leave_emits_both_vehicle_gone_and_vehicle_left(monkeypatch):
+    """A car that went idle then left should emit BOTH vehicle_gone
+    (internal — attribute service flush trigger) AND vehicle_left (user-
+    facing idle-leave notification)."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import (
+        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL,
+    )
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    # Force the vehicle into idle_alerted=True state by directly setting the
+    # flag after a normal detection. Going through the natural is_stationary
+    # path would require feeding 5+ same-position frames + crossing the
+    # idle_timeout — slow and unrelated to what this test asserts. The
+    # tracker's idle-detection path has its own tests; we just need a
+    # TrackedVehicle with idle_alerted=True to verify the emit branching.
+    bbox = [100, 100, 200, 200]
+    m._process_vehicle_detections(
+        [{"bbox": bbox, "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    # Mark the one tracked vehicle as having gone idle.
+    veh = next(iter(m.tracked_vehicles.values()))
+    veh.idle_alerted = True
+
+    # First sweep at LOST_TIMEOUT+ moves the vehicle into the ghost buffer
+    # (ghost_ts = this timestamp). Second sweep at GHOST_TTL+ past that
+    # ghost_ts is what actually fires the ghost-expiry emit.
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    expire_t = stale_t + VEHICLE_GHOST_TTL + 1.0
+    m._process_vehicle_detections([], timestamp=expire_t)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
+    left = [e for e in events if e.get("event_type") == "vehicle_left"]
+
+    assert len(gone) == 1
+    assert gone[0]["was_idle"] == "True"
+    assert len(left) == 1, (
+        f"expected 1 vehicle_left for idle-leave, got {len(left)}: {events}"
+    )
 

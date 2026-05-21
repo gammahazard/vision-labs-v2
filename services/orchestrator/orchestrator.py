@@ -134,6 +134,9 @@ CONFIG_APPLY_ALLOWED_SERVICES = {
     # via compose interpolation; a timezone change needs grafana recreated
     # so dashboards stop rendering panels 4 hours off.
     "grafana",
+    # Phase 1 of the vehicle-attributes pipeline. Per-cam profile-gated
+    # service; same per-cam-expansion contract as the other detectors.
+    "vehicle-attributes",
 }
 
 # Bare service names from CONFIG_APPLY_ALLOWED_SERVICES that don't actually
@@ -147,6 +150,7 @@ CONFIG_APPLY_ALLOWED_SERVICES = {
 PER_CAM_SERVICE_PREFIXES = {
     "recorder", "pose-detector", "vehicle-detector",
     "face-recognizer", "camera-ingester", "tracker",
+    "vehicle-attributes",
 }
 
 

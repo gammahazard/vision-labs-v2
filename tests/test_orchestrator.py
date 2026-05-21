@@ -647,6 +647,38 @@ class TestExpandPerCamServices:
         assert "vehicle-detector-cam1" not in expanded
         assert set(profiles) == {"cam1", "cam2"}
 
+    def test_vehicle_attributes_bare_name_expands_to_enabled_cams(
+        self, fake_redis, restrict_profiles
+    ):
+        """`vehicle-attributes` is a new per-cam service prefix added in
+        Phase 1 of the attribute classifier work. Bare-name expansion must
+        work the same way as `vehicle-detector` etc."""
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam2": json.dumps({"id": "cam2", "enabled": True}),
+        }
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["vehicle-attributes"],
+        )
+        assert "vehicle-attributes-cam1" in expanded
+        assert "vehicle-attributes-cam2" in expanded
+        assert "vehicle-attributes" not in expanded
+        assert set(profiles) == {"cam1", "cam2"}
+
+    def test_vehicle_attributes_pre_expanded_passes_through(
+        self, fake_redis, restrict_profiles
+    ):
+        """The detector-flag toggle path (cameras.py:upsert_camera) publishes
+        pre-expanded `vehicle-attributes-cam2` for per-camera changes."""
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam2": json.dumps({"id": "cam2", "enabled": True}),
+        }
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["vehicle-attributes-cam2"],
+        )
+        assert expanded == ["vehicle-attributes-cam2"]
+        assert profiles == ["cam2"]
+
 
 # ===========================================================================
 # 4. desired_profiles — Redis-failure sentinel

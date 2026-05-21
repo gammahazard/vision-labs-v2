@@ -160,6 +160,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes:
       - ./contracts:/app/contracts:ro
     depends_on:
@@ -245,6 +247,35 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+
+  vehicle-attributes-cam1:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam1"]
+    environment:
+      - CAMERA_ID=cam1
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam1:
+        condition: service_started
+    restart: on-failure
 
   # ---------------------------------------------------------------------------
   # Ollama — Local LLM inference (Qwen 3 14B)
@@ -655,6 +686,35 @@ services:
         condition: service_healthy
     restart: on-failure
 
+  vehicle-attributes-cam2:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam2"]
+    environment:
+      - CAMERA_ID=cam2
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam2:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam2:
     build:
       context: ./services/face-recognizer
@@ -704,6 +764,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes:
       - ./contracts:/app/contracts:ro
     depends_on:
@@ -807,6 +869,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam3:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam3"]
+    environment:
+      - CAMERA_ID=cam3
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam3:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam3:
     build: { context: ./services/face-recognizer }
     profiles: ["cam3"]
@@ -851,6 +942,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -949,6 +1042,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam4:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam4"]
+    environment:
+      - CAMERA_ID=cam4
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam4:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam4:
     build: { context: ./services/face-recognizer }
     profiles: ["cam4"]
@@ -993,6 +1115,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -1091,6 +1215,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam5:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam5"]
+    environment:
+      - CAMERA_ID=cam5
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam5:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam5:
     build: { context: ./services/face-recognizer }
     profiles: ["cam5"]
@@ -1135,6 +1288,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -1233,6 +1388,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam6:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam6"]
+    environment:
+      - CAMERA_ID=cam6
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam6:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam6:
     build: { context: ./services/face-recognizer }
     profiles: ["cam6"]
@@ -1277,6 +1461,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -1375,6 +1561,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam7:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam7"]
+    environment:
+      - CAMERA_ID=cam7
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam7:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam7:
     build: { context: ./services/face-recognizer }
     profiles: ["cam7"]
@@ -1419,6 +1634,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -1517,6 +1734,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam8:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam8"]
+    environment:
+      - CAMERA_ID=cam8
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam8:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam8:
     build: { context: ./services/face-recognizer }
     profiles: ["cam8"]
@@ -1561,6 +1807,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -1659,6 +1907,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam9:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam9"]
+    environment:
+      - CAMERA_ID=cam9
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam9:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam9:
     build: { context: ./services/face-recognizer }
     profiles: ["cam9"]
@@ -1703,6 +1980,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -1801,6 +2080,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam10:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam10"]
+    environment:
+      - CAMERA_ID=cam10
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam10:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam10:
     build: { context: ./services/face-recognizer }
     profiles: ["cam10"]
@@ -1845,6 +2153,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -1943,6 +2253,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam11:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam11"]
+    environment:
+      - CAMERA_ID=cam11
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam11:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam11:
     build: { context: ./services/face-recognizer }
     profiles: ["cam11"]
@@ -1987,6 +2326,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -2085,6 +2426,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam12:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam12"]
+    environment:
+      - CAMERA_ID=cam12
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam12:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam12:
     build: { context: ./services/face-recognizer }
     profiles: ["cam12"]
@@ -2129,6 +2499,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -2227,6 +2599,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam13:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam13"]
+    environment:
+      - CAMERA_ID=cam13
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam13:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam13:
     build: { context: ./services/face-recognizer }
     profiles: ["cam13"]
@@ -2271,6 +2672,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -2369,6 +2772,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam14:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam14"]
+    environment:
+      - CAMERA_ID=cam14
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam14:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam14:
     build: { context: ./services/face-recognizer }
     profiles: ["cam14"]
@@ -2413,6 +2845,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -2511,6 +2945,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam15:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam15"]
+    environment:
+      - CAMERA_ID=cam15
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam15:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam15:
     build: { context: ./services/face-recognizer }
     profiles: ["cam15"]
@@ -2555,6 +3018,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -2653,6 +3118,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam16:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam16"]
+    environment:
+      - CAMERA_ID=cam16
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam16:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam16:
     build: { context: ./services/face-recognizer }
     profiles: ["cam16"]
@@ -2697,6 +3191,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -2795,6 +3291,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam17:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam17"]
+    environment:
+      - CAMERA_ID=cam17
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam17:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam17:
     build: { context: ./services/face-recognizer }
     profiles: ["cam17"]
@@ -2839,6 +3364,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -2937,6 +3464,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam18:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam18"]
+    environment:
+      - CAMERA_ID=cam18
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam18:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam18:
     build: { context: ./services/face-recognizer }
     profiles: ["cam18"]
@@ -2981,6 +3537,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -3079,6 +3637,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam19:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam19"]
+    environment:
+      - CAMERA_ID=cam19
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam19:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam19:
     build: { context: ./services/face-recognizer }
     profiles: ["cam19"]
@@ -3123,6 +3710,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -3221,6 +3810,35 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: on-failure
 
+  vehicle-attributes-cam20:
+    build:
+      context: ./services/vehicle-attributes
+    profiles: ["cam20"]
+    environment:
+      - CAMERA_ID=cam20
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PORT=6379
+      - SNAPSHOT_ROOT=/data/snapshots/vehicles
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
+      - MAX_BUFFER_CROPS=${MAX_BUFFER_CROPS:-8}
+      - MIN_CROP_AREA_HD_PX=${MIN_CROP_AREA_HD_PX:-2500}
+      - CROP_PADDING_PCT=${CROP_PADDING_PCT:-0.20}
+      - JPEG_QUALITY=${JPEG_QUALITY:-85}
+      - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
+      - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+    volumes:
+      - ./contracts:/app/contracts:ro
+      - ./:/workspace:ro
+      - snapshot-data:/data/snapshots
+    depends_on:
+      redis:
+        condition: service_healthy
+      tracker-cam20:
+        condition: service_started
+    restart: on-failure
+
   face-recognizer-cam20:
     build: { context: ./services/face-recognizer }
     profiles: ["cam20"]
@@ -3265,6 +3883,8 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      - EMIT_VEHICLE_SAMPLES=${EMIT_VEHICLE_SAMPLES:-0}
+      - SAMPLE_INTERVAL_FRAMES=${SAMPLE_INTERVAL_FRAMES:-3}
     volumes: [ "./contracts:/app/contracts:ro" ]
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
@@ -3340,6 +3960,7 @@ volumes:
   # See docker-compose.qnap.yml for the QNAP/CIFS-backed versions of these.
   # qnap-recordings is no longer a named volume — recordings are bind-mounted
   # to ./data/recordings on the WSL host for easy Windows Explorer access.
+  snapshot-data:
   qnap-snapshots:
   qnap-events:
   qnap-telegram:

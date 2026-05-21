@@ -10,10 +10,13 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ### Added
 - **Edit pencil ✏ on every camera row** — modal to rename, edit lat/lon, toggle detectors without delete + re-add. Reuses `data-requires=` so `detect_faces → detect_persons` is gated inside the modal too.
+- **Vehicle attributes Phase 1** — new per-cam `vehicle-attributes-cam{N}` service buffers HD crops per tracked vehicle and writes `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}` on `vehicle_gone` / `vehicle_idle`. No classifier yet — Phase 3 ships ML. New `detect_vehicle_attributes` flag (hard-depends on `detect_vehicles`); tracker emits `vehicle_sample` every Nth matched update (gated by `EMIT_VEHICLE_SAMPLES`, off by default). Orchestrator allowlist + per-cam expansion extended. Browse renders grouped cards above the flat snapshot grid. *Requires new service image build + tracker rebuild.*
 
 ### Fixed
 - **Detector-flag dependencies enforced** — UI (`js/lib/checkbox-dependencies.js`, generic `data-requires=`) + server (`cameras.py:_validate_camera`) both gate `detect_faces` on `detect_persons`. Wired into setup, add-camera, edit-camera.
 - **Mid-run `detect_*` toggles actually start/stop the detector** — `cameras.py:upsert_camera` publishes pre-expanded service names (`vehicle-detector-cam2`) on `config:apply`; orchestrator's `apply_config` allowlist + `_expand_per_cam_services` extended to pass `{prefix}-{profile}` through verbatim, targeting only the affected camera. *Requires orchestrator rebuild.*
+- **`vehicle_left` spamming the events panel for drive-by cars** — split the producer: new internal `vehicle_gone` event fires at every ghost-buffer expiry (carries `was_idle`, drives the attribute-service flush). `vehicle_left` now gated on `idle_alerted=True` — strict "your parked car drove off" semantic. *Requires tracker + vehicle-attributes rebuild.*
+- **IoU identity-swap on fast-moving vehicles** — consecutive-frame bbox shift could drop IoU below threshold (live: 50 px shift, IoU≈0.14 < 0.2) and spawn a second TrackedVehicle for the same car. Added `_try_live_center_match` (mirror of `_try_ghost_match`, same-class, `bbox_w × 2.0` threshold) as a fallback after the IoU step. *Requires tracker rebuild.*
 
 ---
 

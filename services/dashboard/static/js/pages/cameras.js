@@ -365,6 +365,7 @@ async function handleAddCamera(event) {
         body.detect_persons = $('camDetectPersons').checked;
         body.detect_vehicles = $('camDetectVehicles').checked;
         body.detect_faces = $('camDetectFaces').checked;
+        body.detect_vehicle_attributes = $('camDetectVehicleAttributes').checked;
 
         const res = await fetch('/api/cameras', {
             method: 'POST',
@@ -435,11 +436,13 @@ async function openEditModal(camId) {
         $('editDetectPersons').checked = cam.detect_persons !== false;
         $('editDetectVehicles').checked = cam.detect_vehicles !== false;
         $('editDetectFaces').checked = cam.detect_faces !== false;
+        $('editDetectVehicleAttributes').checked = cam.detect_vehicle_attributes === true;
 
-        // Fire change on the parent so checkbox-dependencies.js syncs the
-        // child (faces) disabled state. Programmatic `el.checked = X` does
+        // Fire change on the parents so checkbox-dependencies.js syncs the
+        // children's disabled state. Programmatic `el.checked = X` does
         // not fire change events on its own.
         $('editDetectPersons').dispatchEvent(new Event('change'));
+        $('editDetectVehicles').dispatchEvent(new Event('change'));
 
         $('editMsg').className = 'cam-msg';
         $('editMsg').textContent = '';
@@ -464,6 +467,7 @@ async function handleSaveEdit(event) {
     const detect_persons = $('editDetectPersons').checked;
     const detect_vehicles = $('editDetectVehicles').checked;
     const detect_faces = $('editDetectFaces').checked;
+    const detect_vehicle_attributes = $('editDetectVehicleAttributes').checked;
 
     if (!name) {
         $('editMsg').textContent = 'Display name is required';
@@ -489,6 +493,7 @@ async function handleSaveEdit(event) {
         detect_persons,
         detect_vehicles,
         detect_faces,
+        detect_vehicle_attributes,
     };
     // Location: empty input means clear it (send 0 to be falsy on the server).
     body.location_lat = Number.isFinite(lat) ? lat : 0;
