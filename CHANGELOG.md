@@ -7,6 +7,14 @@ Images for each tagged release are published to GitHub Container Registry at `gh
 ## [Unreleased]
 
 ### Added
+
+### Fixed
+
+### Changed
+
+## [0.2.0] — 2026-05-21
+
+### Added
 - `services/dashboard/static/js/lib/safe-html.js` — single canonical declaration of `_PURIFY_CFG` + `_safeHtml()`. Replaces four duplicate `const _PURIFY_CFG = {...}` declarations that previously lived at the top of `events.js`, `browse.js`, `ai.js`, `monitoring.js` and collided whenever two of those modules loaded on the same page. See **Fixed** below.
 - `CHANGELOG.md` — this file.
 - `install-linux.sh` defaults to pulling from GHCR; `--build` flag for forkers.
@@ -132,6 +140,7 @@ First tagged release. Triggers initial publish of 9 service images to GHCR.
 - LAN-only by design; expose via reverse proxy + `DASHBOARD_BEHIND_TLS=true` if needed.
 - AI chat with Qwen 3 14B is reliable for single-purpose questions; compound multi-part questions can be muddled (see suggestion chips in the AI tab).
 
-[Unreleased]: https://github.com/gammahazard/vision-labs-v2/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/gammahazard/vision-labs-v2/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gammahazard/vision-labs-v2/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/gammahazard/vision-labs-v2/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gammahazard/vision-labs-v2/releases/tag/v0.1.0
