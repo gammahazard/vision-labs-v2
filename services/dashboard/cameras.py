@@ -148,6 +148,10 @@ def _validate_camera(entry: dict) -> Optional[str]:
     # downstream services don't sit idle on an impossible config.
     if entry.get("detect_faces") and entry.get("detect_persons") is False:
         return "'detect_faces' requires 'detect_persons' to be true"
+    # Same shape as detect_faces dependency. The vehicle-attributes service
+    # can't classify what the vehicle detector never sees.
+    if entry.get("detect_vehicle_attributes") and entry.get("detect_vehicles") is False:
+        return "'detect_vehicle_attributes' requires 'detect_vehicles' to be true"
     return None
 
 
@@ -341,9 +345,10 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
         # rest with `up -d --force-recreate`.
         if existing:
             detector_to_service = {
-                "detect_persons":  f"pose-detector-{cid}",
-                "detect_vehicles": f"vehicle-detector-{cid}",
-                "detect_faces":    f"face-recognizer-{cid}",
+                "detect_persons":            f"pose-detector-{cid}",
+                "detect_vehicles":           f"vehicle-detector-{cid}",
+                "detect_faces":              f"face-recognizer-{cid}",
+                "detect_vehicle_attributes": f"vehicle-attributes-{cid}",
             }
             changed_services = [
                 svc for flag, svc in detector_to_service.items()
