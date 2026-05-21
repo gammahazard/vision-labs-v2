@@ -14,11 +14,9 @@
 
 // DOMPurify config — consistent with other dashboard JS files; strips dangerous
 // attributes from server-supplied container/health data rendered into innerHTML.
-const _PURIFY_CFG = {
-    ADD_TAGS: ['video', 'figure', 'source'],
-    ADD_ATTR: ['controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload']
-};
-function _safeHtml(html) { return DOMPurify.sanitize(html, _PURIFY_CFG); }
+// `_safeHtml` + `_PURIFY_CFG` are defined in js/lib/safe-html.js — single
+// declaration site so two dashboard JS modules loading on the same page don't
+// collide on the const.
 
 (function () {
     "use strict";

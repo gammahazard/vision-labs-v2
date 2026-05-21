@@ -605,13 +605,14 @@
         window.EVENT_FEED_LOAD_MORE = true;
     </script>
     <script src="js/lib/dompurify.min.js?v=1"></script>
-    <script src="js/dashboard/events.js?v=23"></script>
+    <script src="js/lib/safe-html.js?v=1"></script>
+    <script src="js/dashboard/events.js?v=24"></script>
     <script src="js/core/nav.js?v=4"></script>
     <!-- Account + Browse panels on the home page — both share their scripts
          with single.html so behavior matches one-to-one. -->
     <script src="js/core/auth.js?v=7"></script>
     <script src="js/dashboard/settings.js?v=2"></script>
-    <script src="js/dashboard/browse.js?v=3"></script>
+    <script src="js/dashboard/browse.js?v=5"></script>
     <!-- Manual init: faces.js + events.js usually wait for app.js DOMContentLoaded;
          here we trigger them directly since app.js is not loaded on the grid page. -->
     <script>

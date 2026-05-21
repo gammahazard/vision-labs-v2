@@ -10,12 +10,10 @@
 // chat content; strips dangerous attributes (onerror, onclick, etc.) globally.
 // Required because renderMarkdown does NOT escape HTML and user-supplied face
 // names / event captions / LLM tool output can otherwise XSS the dashboard tab.
+// `_safeHtml` + `_PURIFY_CFG` are defined in js/lib/safe-html.js — single
+// declaration site so two dashboard JS modules loading on the same page don't
+// collide on the const.
 // ---------------------------------------------------------------------------
-const _PURIFY_CFG = {
-    ADD_TAGS: ['video', 'figure', 'source'],
-    ADD_ATTR: ['controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload']
-};
-function _safeHtml(html) { return DOMPurify.sanitize(html, _PURIFY_CFG); }
 
 // ---------------------------------------------------------------------------
 // State
