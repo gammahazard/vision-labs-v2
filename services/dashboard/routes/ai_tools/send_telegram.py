@@ -33,8 +33,38 @@ import collections
 import threading
 import time
 
+# Sliding-window rate limit for the send_telegram AI tool. Prevents the
+# chat model from spamming Telegram when it loops or interprets a single
+# user message as a chain of independent send requests. The window is
+# in-memory (per-process); the dashboard is a single process so this is
+# fine for a LAN deployment.
+_SEND_TG_MAX_PER_WINDOW = 10
+_SEND_TG_WINDOW_SEC = 60.0
+_send_tg_history: collections.deque = collections.deque()
+_send_tg_lock = threading.Lock()
 
-SCHEMA = {'type': 'function', 'function': {'name': 'send_telegram', 'description': 'Send a message to the user via Telegram right now. Can include a live camera snapshot or a 5-second video clip. When the user asks for media from a specific camera, pass `camera`; otherwise defaults to primary.', 'parameters': {'type': 'object', 'properties': {'message': {'type': 'string', 'description': 'The message text to send'}, 'include_snapshot': {'type': 'boolean', 'description': 'If true, attach the latest live camera frame to the message.'}, 'include_clip': {'type': 'boolean', 'description': 'If true, capture and attach a 5-second video clip from the camera.'}, 'camera': {'type': 'string', 'description': "Camera id (e.g. 'cam1') for the snapshot/clip. Default = primary. Ignored for text-only messages."}}, 'required': ['message']}}}
+
+def _send_telegram_rate_check() -> tuple[bool, float]:
+    """Sliding-window rate limit. Returns (allowed, wait_seconds_if_blocked).
+
+    When blocked, `wait` is the time until the oldest entry in the window
+    ages out (i.e., how long the caller would have to wait to retry
+    successfully). When allowed, the current call is recorded in the
+    window and `wait` is 0.0.
+    """
+    now = time.monotonic()
+    with _send_tg_lock:
+        # Drop entries older than the window.
+        while _send_tg_history and _send_tg_history[0] <= now - _SEND_TG_WINDOW_SEC:
+            _send_tg_history.popleft()
+        if len(_send_tg_history) >= _SEND_TG_MAX_PER_WINDOW:
+            wait = _SEND_TG_WINDOW_SEC - (now - _send_tg_history[0])
+            return False, max(wait, 0.0)
+        _send_tg_history.append(now)
+        return True, 0.0
+
+
+SCHEMA ={'type': 'function', 'function': {'name': 'send_telegram', 'description': 'Send a message to the user via Telegram right now. Can include a live camera snapshot or a 5-second video clip. When the user asks for media from a specific camera, pass `camera`; otherwise defaults to primary.', 'parameters': {'type': 'object', 'properties': {'message': {'type': 'string', 'description': 'The message text to send'}, 'include_snapshot': {'type': 'boolean', 'description': 'If true, attach the latest live camera frame to the message.'}, 'include_clip': {'type': 'boolean', 'description': 'If true, capture and attach a 5-second video clip from the camera.'}, 'camera': {'type': 'string', 'description': "Camera id (e.g. 'cam1') for the snapshot/clip. Default = primary. Ignored for text-only messages."}}, 'required': ['message']}}}
 
 
 async def _tool_send_telegram(args: dict) -> str:
