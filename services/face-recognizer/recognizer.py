@@ -906,11 +906,17 @@ def run():
                         maxlen=MAX_IDENTITY_STREAM_LEN,
                     )
 
-                    # Update current identity state (for dashboard overlay)
+                    # Update current identity state (for dashboard overlay).
+                    # TTL of 5 minutes so a crashed/down face-recognizer can't
+                    # keep a stale identity hash visible to the tracker
+                    # indefinitely — tracker reads this hash on a 2 s poll, so
+                    # 300 s is generous head-room while still self-cleaning if
+                    # this container dies.
                     r.hset(
                         IDENTITY_KEY,
                         mapping={k.encode(): v.encode() for k, v in identity_data.items()},
                     )
+                    r.expire(IDENTITY_KEY, 300)
 
                 # Acknowledge
                 r.xack(DETECTION_STREAM, CONSUMER_GROUP, message_id)
