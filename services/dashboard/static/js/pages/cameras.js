@@ -365,6 +365,7 @@ async function handleAddCamera(event) {
         body.detect_persons = $('camDetectPersons').checked;
         body.detect_vehicles = $('camDetectVehicles').checked;
         body.detect_faces = $('camDetectFaces').checked;
+        body.detect_vehicle_attributes = $('camDetectVehicleAttributes').checked;
 
         const res = await fetch('/api/cameras', {
             method: 'POST',
