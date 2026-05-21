@@ -12,11 +12,13 @@ ENDPOINTS:
     GET  /api/browse/faces           — List enrolled faces with photo URLs
 """
 
+import json
 import os
+import re
 from datetime import datetime
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 import httpx
 
 import routes as ctx
@@ -145,6 +147,105 @@ async def list_day_snapshots(date: str, camera: str = ""):
     # Re-sort by time desc across cameras
     snapshots.sort(key=lambda s: s["time"], reverse=True)
     return snapshots
+
+
+@router.get("/tracks/{date}")
+async def list_day_tracks(date: str, camera: str = ""):
+    """List per-track snapshot groups for a day (Phase 1 vehicle-attributes
+    layout). Each entry is one track_id directory with hero + angle thumbs.
+
+    Returns [{
+        track_id, camera, date, time, hero_url, angle_urls: [...],
+        vehicle_class, event_kind, duration_seconds, voting_samples,
+        attributes  // null fields in Phase 1, populated in Phase 3
+    }] sorted newest-first.
+    """
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return JSONResponse(status_code=400, content={"error": "invalid date"})
+
+    base = ctx.VEHICLE_SNAPSHOT_DIR
+    # Enumerate camera subdirs (same logic as _is_camera_dir)
+    if camera:
+        cams_to_scan = [camera]
+    else:
+        cams_to_scan = []
+        if os.path.isdir(base):
+            for name in os.listdir(base):
+                if os.path.isdir(os.path.join(base, name)) and _is_camera_dir(name):
+                    cams_to_scan.append(name)
+
+    tracks = []
+    for cam in cams_to_scan:
+        cam_safe = re.sub(r"[^a-zA-Z0-9_-]", "", cam)
+        day_dir = os.path.join(base, cam_safe, date)
+        if not os.path.isdir(day_dir):
+            continue
+        for entry in os.scandir(day_dir):
+            if not entry.is_dir():
+                continue
+            meta_path = os.path.join(entry.path, "metadata.json")
+            if not os.path.isfile(meta_path):
+                continue
+            try:
+                with open(meta_path) as fh:
+                    meta = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            track_id = meta.get("track_id", entry.name)
+            angles = sorted(
+                f.name for f in os.scandir(entry.path)
+                if f.is_file() and f.name.startswith("angle_")
+                and f.name.endswith(".jpg")
+            )
+            tracks.append({
+                "track_id": track_id,
+                "camera": cam_safe,
+                "date": date,
+                "time": datetime.fromtimestamp(meta.get("first_seen", 0)).strftime("%H:%M:%S"),
+                "first_seen": meta.get("first_seen"),
+                "hero_url": f"/api/browse/tracks/{date}/{cam_safe}/{track_id}/hero.jpg",
+                "angle_urls": [
+                    f"/api/browse/tracks/{date}/{cam_safe}/{track_id}/{a}"
+                    for a in angles
+                ],
+                "vehicle_class": meta.get("vehicle_class", "vehicle"),
+                "event_kind": meta.get("event_kind", ""),
+                "duration_seconds": meta.get("duration_seconds", 0),
+                "voting_samples": meta.get("voting_samples", 1),
+                "attributes": meta.get("attributes", {}),
+            })
+
+    tracks.sort(key=lambda t: t.get("first_seen") or 0, reverse=True)
+    return tracks
+
+
+@router.get("/tracks/{date}/{camera}/{track_id}/{filename}",
+            name="serve_track_image")
+async def serve_track_image(date: str, camera: str, track_id: str,
+                            filename: str):
+    """Serve hero.jpg or angle_NN.jpg from a per-track directory.
+
+    Defense: all four path components match strict character classes AND
+    the resolved real path must stay inside VEHICLE_SNAPSHOT_DIR (same
+    containment check pattern as routes/events.py:get_event_snapshot).
+    """
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return JSONResponse(status_code=400, content={"error": "invalid date"})
+    if not re.match(r"^[a-zA-Z0-9_-]+$", camera):
+        return JSONResponse(status_code=400, content={"error": "invalid camera"})
+    if not re.match(r"^[a-zA-Z0-9_-]+$", track_id):
+        return JSONResponse(status_code=400, content={"error": "invalid track_id"})
+    if not re.match(r"^(hero\.jpg|angle_\d{2}\.jpg)$", filename):
+        return JSONResponse(status_code=400, content={"error": "invalid filename"})
+
+    candidate = os.path.realpath(os.path.join(ctx.VEHICLE_SNAPSHOT_DIR, camera,
+                                              date, track_id, filename))
+    root_real = os.path.realpath(ctx.VEHICLE_SNAPSHOT_DIR)
+    if not candidate.startswith(root_real + os.sep):
+        return JSONResponse(status_code=400, content={"error": "out of range"})
+    if not os.path.isfile(candidate):
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return FileResponse(candidate, media_type="image/jpeg")
 
 
 @router.get("/snapshot/{camera_or_legacy}/{date}/{filename}")
