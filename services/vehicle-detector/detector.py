@@ -313,11 +313,19 @@ def run():
                             })
 
                     # --- Publish to detection stream ---
+                    # `frame_width`/`frame_height` are shipped so the tracker can
+                    # normalize bbox centers when matching against zone polygons
+                    # (which are stored in 0–1 normalized coords). Without this,
+                    # cameras that only run vehicle detection — no pose to back-
+                    # fill the dimensions — fall through to the tracker's 640×480
+                    # default and every zone match comes out wrong.
                     det_msg = {
                         "camera_id": cam_id,
                         "detector_type": "vehicle",
                         "timestamp": str(ts),
                         "frame_number": str(frame_num),
+                        "frame_width": str(frame.shape[1]),
+                        "frame_height": str(frame.shape[0]),
                         "detections": json.dumps(detections),
                         "inference_ms": str(round(inference_ms, 1)),
                     }
