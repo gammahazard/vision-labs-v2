@@ -42,7 +42,6 @@ updates:
       - "python"
     commit-message:
       prefix: "deps(dashboard)"
-      include: "scope"
     groups:
       dashboard-python:
         patterns:
@@ -63,7 +62,6 @@ updates:
       - "python"
     commit-message:
       prefix: "deps(tracker)"
-      include: "scope"
     groups:
       tracker-python:
         patterns:
@@ -84,7 +82,6 @@ updates:
       - "python"
     commit-message:
       prefix: "deps(recorder)"
-      include: "scope"
     groups:
       recorder-python:
         patterns:
@@ -105,7 +102,6 @@ updates:
       - "python"
     commit-message:
       prefix: "deps(camera-ingester)"
-      include: "scope"
     groups:
       camera-ingester-python:
         patterns:
@@ -131,7 +127,6 @@ updates:
       - "ci"
     commit-message:
       prefix: "ci(deps)"
-      include: "scope"
     groups:
       github-actions:
         patterns:
