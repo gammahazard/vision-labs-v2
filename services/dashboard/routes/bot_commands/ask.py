@@ -190,6 +190,8 @@ async def _cmd_ask(chat_id: str = "", text: str = "", **kwargs):
                         path_parts = url.replace("/api/browse/snapshot/", "").split("/", 1)
                         if len(path_parts) == 2:
                             date_part, fname = path_parts
+                            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_part):
+                                continue
                             safe_name = os.path.basename(fname)
                             snap_dir = ctx.VEHICLE_SNAPSHOT_DIR or "/data/vehicle_snapshots"
                             snap_path = os.path.join(snap_dir, date_part, safe_name)
