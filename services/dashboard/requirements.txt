@@ -4,38 +4,38 @@
 # FastAPI serves the WebSocket + REST API, OpenCV draws detection overlays.
 
 # Web framework and ASGI server
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
+fastapi==0.136.1
+uvicorn[standard]==0.47.0
 
 # Redis client for reading streams and config
-redis==5.2.1
+redis==5.3.1
 
 # OpenCV headless for drawing bounding boxes on frames
-opencv-python-headless==4.10.0.84
+opencv-python-headless==4.13.0.92
 
 # NumPy for frame decoding
-numpy>=1.24.0
+numpy>=1.26.4
 
 # HTTP client for proxying face enrollment requests
-httpx==0.27.0
+httpx==0.28.1
 
 # Sunrise/sunset calculations for time-of-day rules (used by /api/conditions)
 astral==3.2
 
 # Ollama client for local LLM (AI assistant)
-ollama>=0.4.0
+ollama>=0.6.2
 
 # Multipart form parsing (required for file uploads / img2img)
-python-multipart>=0.0.6
+python-multipart>=0.0.29
 
 # Image processing for PNG metadata embedding
-Pillow>=10.0.0
+Pillow>=10.4.0
 
 
 
 # Prometheus metrics exposition (monitoring integration)
-prometheus_client>=0.20.0
+prometheus_client>=0.25.0
 
 # bcrypt for password hashing — replaces salted-SHA-256 with lazy migration
 # on next successful login (see routes/auth.py)
-bcrypt>=4.0.0
+bcrypt>=4.3.0
