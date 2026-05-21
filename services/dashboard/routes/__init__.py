@@ -58,4 +58,6 @@ DEFAULT_CONFIG = {
     "vehicle_cooldown": "60",      # Seconds between vehicle notifications
     "vehicle_confidence_thresh": "0.35",  # Vehicle detector YOLO confidence
     "vehicle_idle_timeout": "90",  # Seconds before vehicle_idle alert
+    "min_keypoints": "3",          # Min visible body keypoints to accept a detection (pose-detector)
+    "kp_confidence_thresh": "0.3", # Per-keypoint visibility threshold (pose-detector)
 }
