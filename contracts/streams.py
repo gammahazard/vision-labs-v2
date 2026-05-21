@@ -100,6 +100,11 @@ VEHICLE_STREAM = "detections:vehicle:{camera_id}"
 # Consumed by: dashboard (HD live view toggle)
 HD_FRAME_KEY = "frame_hd:{camera_id}"
 
+# Camera registry hash — one field per camera_id, value is JSON camera config
+# Written by: dashboard (add/edit/remove camera)
+# Read by: orchestrator, vehicle-detector, recorder, tracker, vehicle-attributes
+REGISTRY_KEY = "cameras:registry"
+
 # Vehicle detection snapshot — JPEG bytes stored per detection with 24h TTL
 # Published by: tracker (from vehicle-detector frame_bytes)
 # Consumed by: dashboard (event feed + browse area)
