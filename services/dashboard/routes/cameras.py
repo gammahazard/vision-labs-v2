@@ -107,7 +107,8 @@ async def _ffprobe_rtsp(url: str, timeout: float = 8.0) -> dict:
     except FileNotFoundError:
         return {"ok": False, "error": "ffprobe not installed in dashboard container"}
     except Exception as e:
-        return {"ok": False, "error": str(e)[:200]}
+        logger.exception("ffprobe RTSP probe error")
+        return {"ok": False, "error": "RTSP probe failed — see dashboard logs for details"}
 
 
 @router.post("/test-rtsp")
@@ -166,11 +167,12 @@ async def discover_cameras(request: Request):
         loop = asyncio.get_event_loop()
         cameras = await loop.run_in_executor(None, scan_subnet, cidr)
     except ValueError as e:
-        return JSONResponse({"cameras": [], "error": str(e)}, status_code=400)
+        logger.warning(f"ONVIF scan invalid CIDR: {e}")
+        return JSONResponse({"cameras": [], "error": "Invalid CIDR — see dashboard logs for details"}, status_code=400)
     except Exception as e:
         logger.warning(f"ONVIF scan failed: {e}", exc_info=True)
         return JSONResponse(
-            {"cameras": [], "error": f"scan failed: {e}"},
+            {"cameras": [], "error": "ONVIF scan failed — see dashboard logs for details"},
             status_code=500,
         )
 

@@ -91,8 +91,8 @@ async def list_days(camera: str = ""):
     try:
         day_map = _enumerate_day_dirs(camera=camera)
     except Exception as e:
-        ctx.logger.warning(f"Browse days error: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        ctx.logger.exception("Browse days error")
+        return JSONResponse(status_code=500, content={"error": "Failed to list days — see dashboard logs for details"})
 
     days = []
     for date_str in sorted(day_map.keys(), reverse=True):
@@ -139,8 +139,8 @@ async def list_day_snapshots(date: str, camera: str = ""):
                     "url": f"/api/browse/snapshot/{cam_segment}/{date}/{fname}",
                 })
     except Exception as e:
-        ctx.logger.warning(f"Browse day {date} error: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        ctx.logger.exception(f"Browse day {date} error")
+        return JSONResponse(status_code=500, content={"error": "Failed to list snapshots — see dashboard logs for details"})
 
     # Re-sort by time desc across cameras
     snapshots.sort(key=lambda s: s["time"], reverse=True)

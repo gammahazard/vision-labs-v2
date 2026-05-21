@@ -206,8 +206,8 @@ async def monitoring_health():
             "total_events": events_len,
         }
     except Exception as e:
-        logger.error(f"Health endpoint error: {e}")
-        return {"error": str(e)}
+        logger.exception("Health endpoint error")
+        return {"error": "Health check failed — see dashboard logs for details"}
 
 
 # ---------------------------------------------------------------------------

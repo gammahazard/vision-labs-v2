@@ -327,8 +327,9 @@ async def telegram_validate_token(request: Request):
                 f"https://api.telegram.org/bot{token}/getMe", timeout=10
             )
     except _httpx.HTTPError as e:
+        logger.warning(f"Telegram API request failed: {e}")
         return JSONResponse(
-            {"ok": False, "error": f"Couldn't reach Telegram: {e}"},
+            {"ok": False, "error": "Couldn't reach Telegram — check network connectivity"},
             status_code=502,
         )
     data = resp.json() if resp.status_code == 200 else {}
@@ -430,8 +431,9 @@ async def telegram_save(request: Request):
     }
     result = update_env(updates)
     if not result["ok"]:
+        logger.error(f"update_env failed (telegram/save): {result['error']}")
         return JSONResponse(
-            {"ok": False, "error": result["error"]}, status_code=500
+            {"ok": False, "error": "Failed to write configuration — see dashboard logs for details"}, status_code=500
         )
 
     # Best-effort confirmation message. We send NOW with the freshly-supplied
@@ -570,7 +572,8 @@ async def apply_config(request: Request):
 
     result = update_env(updates)
     if not result["ok"]:
-        return JSONResponse({"ok": False, "error": result["error"]}, status_code=500)
+        logger.error(f"update_env failed (apply-config): {result['error']}")
+        return JSONResponse({"ok": False, "error": "Failed to write configuration — see dashboard logs for details"}, status_code=500)
 
     # Figure out which services need to restart so the orchestrator knows
     # what to recreate. Detectors picking up DETECTOR_GPU + POSE/VEHICLE_MODEL
@@ -644,7 +647,7 @@ async def complete_setup(request: Request):
         _write_state(state)
     except OSError as e:
         logger.error(f"Couldn't write setup state: {e}")
-        return JSONResponse(status_code=500, content={"error": f"couldn't write state: {e}"})
+        return JSONResponse(status_code=500, content={"error": "Failed to write setup state — see dashboard logs for details"})
 
     logger.info(f"Setup completed: {steps}")
     return {"ok": True, "completed_at": state["completed_at"]}

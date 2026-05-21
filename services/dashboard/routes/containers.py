@@ -20,6 +20,7 @@ PROXY VS DIRECT:
     through to Portainer (also has the socket, in its own access UI).
 """
 import json
+import logging
 import time
 
 import redis
@@ -27,6 +28,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 import routes as ctx
+
+logger = logging.getLogger("dashboard.containers")
 
 router = APIRouter(prefix="/api", tags=["containers"])
 
@@ -52,9 +55,10 @@ async def list_containers():
     try:
         raw = ctx.r.get("orchestrator:containers")
     except redis.RedisError as e:
+        logger.exception("Redis error fetching container state")
         return JSONResponse(
             status_code=503,
-            content={"ok": False, "error": f"redis unreachable: {e}"},
+            content={"ok": False, "error": "Redis unreachable — see dashboard logs for details"},
         )
     if not raw:
         # TTL expired — orchestrator probably down.

@@ -419,10 +419,10 @@ async def chat(req: ChatRequest):
         )
     except Exception as e:
         ai_state.collect_media(request_id)  # Clean up on error
-        logger.exception(f"AI chat error: {e}")
+        logger.exception("AI chat error")
         return JSONResponse(
             status_code=500,
-            content={"error": f"AI unavailable: {str(e)}"},
+            content={"error": "AI unavailable — see dashboard logs for details"},
         )
 
 
@@ -605,7 +605,7 @@ async def analyze_image(req: VisionRequest):
         return JSONResponse(status_code=504,
                             content={"error": f"Vision model timed out ({int(timeout)}s)"})
     except Exception as e:
-        logger.error(f"Vision analysis error: {e}")
+        logger.exception("Vision analysis error")
         return JSONResponse(status_code=500,
-                            content={"error": f"Vision model error: {str(e)}"})
+                            content={"error": "Vision model error — see dashboard logs for details"})
 
