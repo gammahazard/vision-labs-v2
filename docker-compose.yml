@@ -275,7 +275,7 @@ services:
         condition: service_healthy
       tracker-cam1:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   # ---------------------------------------------------------------------------
   # Ollama — Local LLM inference (Qwen 3 14B)
@@ -713,7 +713,7 @@ services:
         condition: service_healthy
       tracker-cam2:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam2:
     build:
@@ -896,7 +896,7 @@ services:
         condition: service_healthy
       tracker-cam3:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam3:
     build: { context: ./services/face-recognizer }
@@ -1069,7 +1069,7 @@ services:
         condition: service_healthy
       tracker-cam4:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam4:
     build: { context: ./services/face-recognizer }
@@ -1242,7 +1242,7 @@ services:
         condition: service_healthy
       tracker-cam5:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam5:
     build: { context: ./services/face-recognizer }
@@ -1415,7 +1415,7 @@ services:
         condition: service_healthy
       tracker-cam6:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam6:
     build: { context: ./services/face-recognizer }
@@ -1588,7 +1588,7 @@ services:
         condition: service_healthy
       tracker-cam7:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam7:
     build: { context: ./services/face-recognizer }
@@ -1761,7 +1761,7 @@ services:
         condition: service_healthy
       tracker-cam8:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam8:
     build: { context: ./services/face-recognizer }
@@ -1934,7 +1934,7 @@ services:
         condition: service_healthy
       tracker-cam9:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam9:
     build: { context: ./services/face-recognizer }
@@ -2107,7 +2107,7 @@ services:
         condition: service_healthy
       tracker-cam10:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam10:
     build: { context: ./services/face-recognizer }
@@ -2280,7 +2280,7 @@ services:
         condition: service_healthy
       tracker-cam11:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam11:
     build: { context: ./services/face-recognizer }
@@ -2453,7 +2453,7 @@ services:
         condition: service_healthy
       tracker-cam12:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam12:
     build: { context: ./services/face-recognizer }
@@ -2626,7 +2626,7 @@ services:
         condition: service_healthy
       tracker-cam13:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam13:
     build: { context: ./services/face-recognizer }
@@ -2799,7 +2799,7 @@ services:
         condition: service_healthy
       tracker-cam14:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam14:
     build: { context: ./services/face-recognizer }
@@ -2972,7 +2972,7 @@ services:
         condition: service_healthy
       tracker-cam15:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam15:
     build: { context: ./services/face-recognizer }
@@ -3145,7 +3145,7 @@ services:
         condition: service_healthy
       tracker-cam16:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam16:
     build: { context: ./services/face-recognizer }
@@ -3318,7 +3318,7 @@ services:
         condition: service_healthy
       tracker-cam17:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam17:
     build: { context: ./services/face-recognizer }
@@ -3491,7 +3491,7 @@ services:
         condition: service_healthy
       tracker-cam18:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam18:
     build: { context: ./services/face-recognizer }
@@ -3664,7 +3664,7 @@ services:
         condition: service_healthy
       tracker-cam19:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam19:
     build: { context: ./services/face-recognizer }
@@ -3837,7 +3837,7 @@ services:
         condition: service_healthy
       tracker-cam20:
         condition: service_started
-    restart: unless-stopped
+    restart: on-failure
 
   face-recognizer-cam20:
     build: { context: ./services/face-recognizer }

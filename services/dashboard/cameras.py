@@ -350,9 +350,20 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
                 "detect_faces":              f"face-recognizer-{cid}",
                 "detect_vehicle_attributes": f"vehicle-attributes-{cid}",
             }
+            # Per-flag defaults — detect_vehicle_attributes opts in (default
+            # False) while the original three default on. A single
+            # `.get(flag, True)` would miss the absent→True transition for
+            # vehicle_attributes and skip publishing config:apply.
+            detector_defaults = {
+                "detect_persons":            True,
+                "detect_vehicles":           True,
+                "detect_faces":              True,
+                "detect_vehicle_attributes": False,
+            }
             changed_services = [
                 svc for flag, svc in detector_to_service.items()
-                if bool(existing.get(flag, True)) != bool(entry.get(flag, True))
+                if bool(existing.get(flag, detector_defaults[flag]))
+                   != bool(entry.get(flag, detector_defaults[flag]))
             ]
             if changed_services:
                 try:
