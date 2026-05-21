@@ -49,6 +49,11 @@ Drive-bys are the *better* training-data + voting case despite having fewer fram
 
 Single-purpose Python service, one container per active camera profile (mirrors the existing per-cam services).
 
+**Hard dependency:** `detect_vehicle_attributes=true` requires `detect_vehicles=true` on the same camera (you can't classify attributes for vehicles that aren't being detected in the first place). This mirrors the existing `detect_faces` → `detect_persons` dependency. Enforced in three places:
+1. **UI** — checkbox auto-disabled when parent is unchecked (see §9.3)
+2. **Server validation** — `_validate_camera` rejects inconsistent combinations (see §9.4)
+3. **Service startup gate** — `vehicle-attributes-cam{N}` reads both flags at startup, exits cleanly if either is false (mirror of face-recognizer's existing pattern at `recognizer.py:734-736`)
+
 ```
                                         ┌──────────────────────────┐
                                         │ vehicle-attributes-cam1  │
@@ -396,7 +401,200 @@ Phase 5 (filtering / AI queries / attribute-conditioned notifications) is open-e
 
 ---
 
-## 9. What this PR does NOT solve
+## 9. Deployment surfaces (verified against current code)
+
+Every surface the user touches that must learn about the new flag. File:line references verified 2026-05-21 against the live code.
+
+### 9.1 Setup wizard — Step 4 first-camera form
+
+**File:** `services/dashboard/static/setup.html:173-178` currently has:
+
+```html
+<fieldset class="detection-flags">
+    <legend>What should this camera detect?</legend>
+    <label><input type="checkbox" id="detectPersons" checked> Persons</label>
+    <label><input type="checkbox" id="detectVehicles" checked> Vehicles</label>
+    <label><input type="checkbox" id="detectFaces" checked> Faces (requires person detection)</label>
+</fieldset>
+```
+
+**Add a fourth checkbox:**
+
+```html
+<label>
+    <input type="checkbox" id="detectVehicleAttributes" data-requires="detectVehicles">
+    Vehicle attributes
+    <span class="hint">(make / color / body — requires HD stream + vehicle detection, ~150–200 MB extra VRAM/camera)</span>
+</label>
+```
+
+**Default unchecked** — opt-in, unlike the legacy three which default to true.
+
+**JS change (`setup.js`):** the existing `addCamera()` POST payload (around `setup.js:583-585`) gets one new field:
+
+```js
+detect_vehicle_attributes: document.getElementById('detectVehicleAttributes').checked,
+```
+
+### 9.2 Cameras tab — add-camera form
+
+**File:** `services/dashboard/static/cameras.html:148-154` has the existing three checkboxes in a `<div class="full">` block. Add the fourth in the same block with the same `data-requires=` attribute.
+
+**Also fix a smaller docs gap noted in agent verification:** cameras.html currently shows "Faces (identity)" with no dependency hint, while setup.html says "Faces (requires person detection)". Standardize on the parenthetical-hint form in both places.
+
+### 9.3 Generic UI dependency-enforcement (separate PR)
+
+To avoid hardcoding parent/child lookups, use a `data-requires=` attribute pattern. Single JS function bound at DOM-ready scans every `input[data-requires]` and wires:
+
+- On parent change: if parent unchecked → child auto-unchecked + disabled. If parent checked → child enabled (but not auto-checked).
+- On init: same sync.
+
+This pattern is generic enough to cover both today's `detect_faces` → `detect_persons` (which is currently soft-enforced via help text only) AND the new `detect_vehicle_attributes` → `detect_vehicles`. Lives in a small new module loaded by both `setup.html` and `cameras.html`.
+
+### 9.4 Server validation — `_validate_camera`
+
+**File:** `services/dashboard/cameras.py:107-144`. Add three new validation gates after the existing rtsp_main check:
+
+```python
+# Hard dependencies — child detectors require their parent enabled.
+# Today's UI surfaces these as helper-text only; enforce server-side
+# so a curl/CLI client can't bypass.
+if entry.get("detect_faces") and not entry.get("detect_persons", True):
+    return "'detect_faces' requires 'detect_persons' to be true"
+if entry.get("detect_vehicle_attributes") and not entry.get("detect_vehicles", True):
+    return "'detect_vehicle_attributes' requires 'detect_vehicles' to be true"
+
+# HD stream required for vehicle attribute classification — runs the
+# classifier against the higher-resolution frame, sub-stream crops are
+# too small (see §1.1).
+if entry.get("detect_vehicle_attributes") and not entry.get("rtsp_main"):
+    return "'detect_vehicle_attributes' requires 'rtsp_main' (HD stream URL)"
+```
+
+### 9.5 Server defaults — `upsert_camera`
+
+**File:** `services/dashboard/cameras.py:301-313`. Add a new default below the existing three:
+
+```python
+entry.setdefault("detect_persons", True)
+entry.setdefault("detect_vehicles", True)
+entry.setdefault("detect_faces", True)
+entry.setdefault("detect_vehicle_attributes", False)   # ← new; opt-in
+```
+
+The new flag defaults to `False` (unlike the legacy three) because it's an entirely new optional service with a real GPU cost. Existing registry entries without the field continue to behave as if it's false.
+
+### 9.6 Slot estimator — `setup.js:estimateSlots`
+
+**File:** `setup.js:349-358`. The current formula:
+
+```js
+const perCam = tier === 'small' ? 2.0 : 2.8;
+```
+
+doesn't account for optional per-camera overheads. After vehicle attributes ships, the estimator should accept the user's intended default for `detect_vehicle_attributes` and bump `perCam` by ~0.2 GB when it's on. For v1 keep the estimator alone (defaults to OFF, no impact); revisit when the feature ships.
+
+### 9.7 Tier interaction
+
+- **small tier** (<7 GB VRAM): keep `detect_vehicle_attributes` OFF by default. Add helper text in the wizard noting it's not recommended on small-tier hardware.
+- **mid tier** (7-14 GB): OFF by default; user can opt in per camera.
+- **full tier** (16+ GB): OFF by default; user can opt in per camera.
+
+The wizard could also offer a global "Enable vehicle attributes by default for new cameras" toggle on the tier-selection screen, but that's polish — skip for v1.
+
+### 9.8 GPU assignment
+
+The existing `gpu_id` flag on each camera entry routes the per-cam services to a specific GPU (via `DETECTOR_GPU` env). `vehicle-attributes-cam{N}` should inherit the same `gpu_id` — no new flag needed.
+
+---
+
+## 10. Mid-run mutability gap (verified against current code)
+
+**Confirmed at `services/orchestrator/orchestrator.py:327`:**
+
+```python
+def desired_profiles(r: redis.Redis) -> set | None:
+    ...
+    for cid, val in raw.items():
+        ...
+        if not entry.get("enabled", True):
+            continue                          # ← reconcile gate is `enabled`-only
+        eid = entry.get("id", cid)
+        if eid in ALLOWED_PROFILES:
+            out.add(eid)
+    return out
+```
+
+The orchestrator's `reconcile()` loop compares running profiles vs `desired_profiles(r)` to decide what to up/down. `desired_profiles` only looks at the camera's `enabled` flag — **not** at per-detector flags.
+
+Consequence: if a user has `detect_vehicles=false` initially, the `vehicle-detector-camN` container starts, reads the flag, exits cleanly with code 0. Docker's `restart: unless-stopped` policy does NOT restart on a clean exit. The container stays exited.
+
+If the user later flips `detect_vehicles=true` on the registry entry:
+- Dashboard publishes `cameras:events` with `{"action": "upsert", "camera_id": "camN"}` (cameras.py:316-321)
+- Orchestrator's `listen_loop` receives → calls `reconcile()`
+- `desired_profiles` returns the same set (camera was already `enabled=true`)
+- `running_profiles` returns the same set (camera's *other* services still running)
+- Diff is empty → no compose action
+- `vehicle-detector-camN` stays exited → **vehicle detection doesn't actually start**
+
+Same will apply to the new `detect_vehicle_attributes` flag, plus its sibling `vehicle-attributes-camN` service.
+
+### 10.1 Workarounds (today)
+
+| Workaround | Cost | User-visible |
+|---|---|---|
+| Delete the camera + re-add it | Loses any per-cam config in Redis (zones, etc.); brings up all services fresh | Multi-step UI flow, user has to re-enter URL, etc. |
+| Manual `docker compose --profile camN up -d --force-recreate <service>` | Requires shell access | CLI-only, not exposed in the dashboard |
+
+### 10.2 The fix (recommended as a v1 prerequisite)
+
+Extend `cameras.py:upsert_camera` to detect detector-flag changes (compare new entry against `existing` it already loads at lines 301-303) and, on a change, publish to the `config:apply` Redis channel — the SAME channel the settings panel uses, which the orchestrator's per-cam expansion logic from PR #10 already handles correctly.
+
+Concretely, in `upsert_camera` after line 313:
+
+```python
+# Detect detector-flag changes mid-life and trigger a force-recreate of
+# the affected per-cam services. Without this, toggling `detect_X` on an
+# existing camera has no effect — the existing detector container is
+# already exited (clean exit code 0 on the previous startup flag-check),
+# and Docker's restart policy won't bring it back. Reuses the
+# `config:apply` channel that the settings-panel + orchestrator's
+# per-cam expansion (PR #10) already understand.
+if existing:
+    detector_to_service = {
+        "detect_persons":            f"pose-detector-{cid}",
+        "detect_vehicles":           f"vehicle-detector-{cid}",
+        "detect_faces":              f"face-recognizer-{cid}",
+        "detect_vehicle_attributes": f"vehicle-attributes-{cid}",
+    }
+    changed_services = [
+        svc for flag, svc in detector_to_service.items()
+        if bool(existing.get(flag, True)) != bool(entry.get(flag, True))
+    ]
+    if changed_services:
+        ctx.r.publish("config:apply", json.dumps({
+            "request_id": f"detector-toggle-{int(time.time() * 1000)}",
+            "services": changed_services,
+            "keys_changed": ["detect_*"],
+        }))
+```
+
+The orchestrator's `apply_config` (PR #10) already handles the per-cam name expansion + `--force-recreate`. This change is ~15 lines, no new infrastructure.
+
+### 10.3 Why this matters for the v1 of vehicle attributes
+
+If we don't fix this before the attribute feature ships, users who add `detect_vehicle_attributes=true` to a pre-existing camera will hit silent failure — the new `vehicle-attributes-camN` container won't start. They'd think the feature is broken when it's actually the mutability gap.
+
+Cleanest order:
+1. Ship the mid-run fix (`upsert_camera` → `config:apply`) as a standalone small PR first
+2. Add the missing `detect_faces` → `detect_persons` server validation in the same PR (related)
+3. Then start the attribute classifier work
+
+This way the dependency-enforcement infrastructure is in place before any of the attribute-specific code lands.
+
+---
+
+## 11. What this PR does NOT solve
 
 - **Track fragmentation** — fast drive-bys still spawn multiple `vehicle_detected` events (see PR #17 known limitations). Each track gets its own attribute set, so the Browse UI will show two grouped cards for one physical drive-by car. The fix is Hungarian-style matching or Kalman prediction, both out of scope.
 - **Class label flip during a track** — YOLO classifies a pickup truck as "car" early in the track, "truck" later. The tracker's mode-of-history class settles fine, but the first `vehicle_detected` event row in the feed still shows whichever class was first observed. Independent of attribute classification.
