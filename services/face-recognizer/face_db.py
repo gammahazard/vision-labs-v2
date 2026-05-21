@@ -66,8 +66,24 @@ class FaceDB:
         self._load_cache()
 
     def _init_db(self):
-        """Create tables if they don't exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        """Create tables if they don't exist.
+
+        Sets `journal_mode=WAL` so concurrent readers don't block writers
+        (and vice versa) — multiple face-recognizer containers
+        (cam1, cam2, …) all open the same `faces.db`, and the dashboard
+        reads it for the enrolled-names list. The default rollback
+        journal serializes EVERY reader behind a writer, which produced
+        `database is locked` errors under multi-cam enroll/save load.
+        WAL is a one-time PRAGMA — it persists in the DB file header
+        once set, so subsequent connections inherit it automatically.
+
+        Every other `sqlite3.connect(...)` call in this module sets
+        `timeout=10.0` for the same reason: any contention that does
+        slip past WAL gets a chance to drain instead of immediately
+        raising `OperationalError: database is locked`.
+        """
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS known_faces (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +148,7 @@ class FaceDB:
         """
         new_cache: list[dict] = []
         new_unknown_cache: list[dict] = []
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             for row in conn.execute(
                 "SELECT id, name, embedding, sex_override, age_override "
                 "FROM known_faces"
@@ -182,7 +198,7 @@ class FaceDB:
         embedding = embedding / np.linalg.norm(embedding)
         emb_bytes = embedding.astype(np.float32).tobytes()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             cursor = conn.execute(
                 "INSERT INTO known_faces (name, embedding, photo, sex, age) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -241,7 +257,7 @@ class FaceDB:
 
     def list_faces(self) -> list[dict]:
         """Return all enrolled faces (without embeddings)."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             cursor = conn.execute(
                 "SELECT id, name, created_at, sex, age, "
                 "sex_override, age_override FROM known_faces "
@@ -264,7 +280,7 @@ class FaceDB:
         Pass None to clear (revert to model output). Returns the number
         of rows updated.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             cursor = conn.execute(
                 "UPDATE known_faces SET sex_override = ?, age_override = ? "
                 "WHERE name = ?",
@@ -275,7 +291,7 @@ class FaceDB:
 
     def get_photo(self, face_id: int) -> bytes | None:
         """Get the JPEG thumbnail for a specific known face."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             row = conn.execute(
                 "SELECT photo FROM known_faces WHERE id = ?", (face_id,)
             ).fetchone()
@@ -283,7 +299,7 @@ class FaceDB:
 
     def delete(self, face_id: int) -> bool:
         """Remove an enrolled known face by ID."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             cursor = conn.execute(
                 "DELETE FROM known_faces WHERE id = ?", (face_id,)
             )
@@ -329,7 +345,7 @@ class FaceDB:
             similarity = float(np.dot(embedding, cached["embedding"]))
             if similarity >= UNKNOWN_DEDUP_THRESHOLD:
                 # Same person — increment sighting count
-                with sqlite3.connect(self.db_path) as conn:
+                with sqlite3.connect(self.db_path, timeout=10.0) as conn:
                     conn.execute(
                         "UPDATE unknown_faces SET sighting_count = sighting_count + 1, "
                         "last_seen = CURRENT_TIMESTAMP WHERE id = ?",
@@ -341,7 +357,7 @@ class FaceDB:
 
         # New unknown person — save
         emb_bytes = embedding.astype(np.float32).tobytes()
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             cursor = conn.execute(
                 "INSERT INTO unknown_faces (embedding, photo, sex, age) "
                 "VALUES (?, ?, ?, ?)",
@@ -363,7 +379,7 @@ class FaceDB:
         if len(self._unknown_cache) <= MAX_UNKNOWN_FACES:
             return
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             conn.execute(
                 "DELETE FROM unknown_faces WHERE id NOT IN "
                 "(SELECT id FROM unknown_faces ORDER BY last_seen DESC LIMIT ?)",
@@ -373,7 +389,7 @@ class FaceDB:
 
         # Reload cache
         self._unknown_cache = []
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             for row in conn.execute(
                 "SELECT id, embedding, sighting_count FROM unknown_faces"
             ):
@@ -386,7 +402,7 @@ class FaceDB:
 
     def list_unknowns(self) -> list[dict]:
         """Return all unknown faces (for the dashboard gallery)."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             cursor = conn.execute(
                 "SELECT id, first_seen, last_seen, sighting_count, sex, age "
                 "FROM unknown_faces ORDER BY last_seen DESC"
@@ -402,7 +418,7 @@ class FaceDB:
 
     def get_unknown_photo(self, uid: int) -> bytes | None:
         """Get the JPEG thumbnail for an unknown face."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             row = conn.execute(
                 "SELECT photo FROM unknown_faces WHERE id = ?", (uid,)
             ).fetchone()
@@ -415,7 +431,7 @@ class FaceDB:
         Moves embedding + photo from unknown_faces → known_faces.
         Returns the new known face ID, or None if unknown not found.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             row = conn.execute(
                 "SELECT embedding, photo, sex, age FROM unknown_faces WHERE id = ?",
                 (uid,),
@@ -442,7 +458,7 @@ class FaceDB:
 
     def delete_unknown(self, uid: int) -> bool:
         """Remove an unknown face entry."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             cursor = conn.execute(
                 "DELETE FROM unknown_faces WHERE id = ?", (uid,)
             )
@@ -490,7 +506,7 @@ class FaceDB:
 
         promoted: list[dict] = []
         candidate_ids = [uid for uid, _ in candidates]
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             for uid, sim in candidates:
                 row = conn.execute(
                     "SELECT embedding, photo, sex, age FROM unknown_faces WHERE id = ?",
@@ -608,7 +624,7 @@ class FaceDB:
         promoted_count = 0
         promoted_by_name: dict[str, list[dict]] = {}
         all_to_remove = [uid for uid, _n, _s in to_promote] + to_delete
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10.0) as conn:
             for uid, name, sim in to_promote:
                 row = conn.execute(
                     "SELECT embedding, photo, sex, age FROM unknown_faces WHERE id = ?",
