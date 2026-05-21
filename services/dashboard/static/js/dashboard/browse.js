@@ -8,29 +8,71 @@
  *
  * PUBLIC API:
  *   initBrowse()  — called by app.js on page load
+ *
+ * CLICK BINDING:
+ *   The HTML this script builds is run through `_safeHtml()` (DOMPurify) and
+ *   DOMPurify strips inline event handlers (`onclick`, `onerror`, …) by
+ *   design — they're a classic XSS vector. So instead of `onclick="..."`
+ *   attributes, every clickable element carries a `data-action` tag and the
+ *   delegated listener below dispatches based on `data-action` of the
+ *   closest ancestor. Adding a new clickable thing = give it a `data-action`
+ *   and one `case` in `_handleBrowseClick`.
  */
 
 /* global _openEventPhoto */
 
-// DOMPurify config — consistent with other dashboard JS files; strips dangerous
-// attributes from user-supplied face names and event data rendered into innerHTML.
-const _PURIFY_CFG = {
-    ADD_TAGS: ['video', 'figure', 'source'],
-    ADD_ATTR: ['controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload']
-};
-function _safeHtml(html) { return DOMPurify.sanitize(html, _PURIFY_CFG); }
+// `_safeHtml` + `_PURIFY_CFG` are defined in js/lib/safe-html.js — see that
+// file for the rationale. Same identifiers, single declaration site.
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 let _browseCurrentView = "home"; // "home" | "day" | "faces"
 let _browseCurrentDate = "";
+let _browseListenerBound = false;
 
 // ---------------------------------------------------------------------------
 // Init — called from app.js
 // ---------------------------------------------------------------------------
 function initBrowse() {
+    _bindBrowseClickListener();
     _loadBrowseHome();
+}
+
+// Delegated click handler on #browseContent. Bound once. Looks at the
+// closest [data-action] ancestor of the click target and dispatches.
+function _bindBrowseClickListener() {
+    if (_browseListenerBound) return;
+    const container = document.getElementById("browseContent");
+    if (!container) return;
+    container.addEventListener("click", _handleBrowseClick);
+    _browseListenerBound = true;
+}
+
+function _handleBrowseClick(ev) {
+    const target = ev.target.closest("[data-action]");
+    if (!target) return;
+    const action = target.getAttribute("data-action");
+    switch (action) {
+        case "day":
+            _browseDayClick(target.getAttribute("data-date"));
+            break;
+        case "faces":
+            _browseFacesClick();
+            break;
+        case "back":
+            _browseBackHome();
+            break;
+        case "open":
+            _openEventPhoto(
+                target.getAttribute("data-url"),
+                target.getAttribute("data-label") || "",
+            );
+            break;
+        default:
+            // Unknown action — ignore.
+            break;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +101,7 @@ async function _loadBrowseHome() {
             html += '<div class="browse-day-grid">';
             for (const day of days) {
                 html += `
-                    <div class="browse-day-card" onclick="_browseDayClick('${day.date}')">
+                    <div class="browse-day-card" data-action="day" data-date="${day.date}" role="button" tabindex="0">
                         <span class="browse-day-date">${day.date}</span>
                         <span class="browse-day-count">${day.count} snapshot${day.count !== 1 ? "s" : ""}</span>
                     </div>`;
@@ -69,7 +111,7 @@ async function _loadBrowseHome() {
 
         // Enrolled faces section
         html += `<div class="browse-section-header" style="margin-top:12px;">👤 Enrolled Faces</div>`;
-        html += `<div class="browse-faces-link"><button class="btn btn-primary browse-faces-btn" onclick="_browseFacesClick()">View Enrolled Faces Gallery</button></div>`;
+        html += `<div class="browse-faces-link"><button class="btn btn-primary browse-faces-btn" data-action="faces">View Enrolled Faces Gallery</button></div>`;
 
         container.innerHTML = _safeHtml(html);
     } catch (e) {
@@ -93,7 +135,7 @@ async function _browseDayClick(date) {
         const snapshots = await resp.json();
 
         let html = `<div class="browse-nav">
-            <button class="browse-back-btn" onclick="_browseBackHome()">← Back</button>
+            <button class="browse-back-btn" data-action="back">← Back</button>
             <span class="browse-nav-title">${date} — ${snapshots.length} snapshot${snapshots.length !== 1 ? "s" : ""}</span>
         </div>`;
 
@@ -104,9 +146,8 @@ async function _browseDayClick(date) {
             for (const snap of snapshots) {
                 const label = `${snap.time} — ${snap.vehicle_class}`;
                 html += `
-                    <div class="browse-thumb-card" onclick="_openEventPhoto('${snap.url}', '${label.replace(/'/g, "\\'")}')">
-                        <img class="browse-thumb-img" src="${snap.url}" alt="${label}" loading="lazy"
-                            onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23333%22 width=%221%22 height=%221%22/></svg>'">
+                    <div class="browse-thumb-card" data-action="open" data-url="${snap.url}" data-label="${label}" role="button" tabindex="0">
+                        <img class="browse-thumb-img" src="${snap.url}" alt="${label}" loading="lazy">
                         <div class="browse-thumb-label">
                             <span class="browse-thumb-time">${snap.time}</span>
                             <span class="browse-thumb-class">${snap.vehicle_class}</span>
@@ -137,7 +178,7 @@ async function _browseFacesClick() {
         const faces = await resp.json();
 
         let html = `<div class="browse-nav">
-            <button class="browse-back-btn" onclick="_browseBackHome()">← Back</button>
+            <button class="browse-back-btn" data-action="back">← Back</button>
             <span class="browse-nav-title">Enrolled Faces — ${Array.isArray(faces) ? faces.length : 0} ${Array.isArray(faces) && faces.length === 1 ? "person" : "people"}</span>
         </div>`;
 
@@ -153,14 +194,12 @@ async function _browseFacesClick() {
                 html += `
                     <div class="browse-face-card">
                         <img class="browse-face-img" src="${photoUrl}" alt="${name}" loading="lazy"
-                            onclick="_openEventPhoto('${photoUrl}', '${name.replace(/'/g, "\\'")}')"
-                            onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23333%22 width=%221%22 height=%221%22/></svg>'">
+                            data-action="open" data-url="${photoUrl}" data-label="${name}" role="button" tabindex="0">
                         <div class="browse-face-name">${name}</div>
                         <div class="browse-face-sightings">${angleCount} angle${angleCount !== 1 ? "s" : ""} enrolled</div>
                         ${angleCount > 1 ? `<div class="browse-face-angles">${angles.map(a =>
                     `<img class="browse-face-angle-thumb" src="${a.photo_url}" alt="${name}"
-                                onclick="_openEventPhoto('${a.photo_url}', '${name.replace(/'/g, "\\'")} — angle')"
-                                onerror="this.style.display='none'" loading="lazy">`
+                                data-action="open" data-url="${a.photo_url}" data-label="${name} — angle" loading="lazy">`
                 ).join("")}</div>` : ""}
                     </div>`;
             }
