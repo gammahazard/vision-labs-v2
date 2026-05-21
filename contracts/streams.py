@@ -45,6 +45,15 @@ DETECTION_STREAM = "detections:{detector_type}:{camera_id}"
 # Consumed by: dashboard event poller (Telegram broadcast + snapshot save + JSONL journal)
 EVENT_STREAM = "events:{camera_id}"
 
+# Per-track sampling trigger emitted by the tracker on matched vehicle updates.
+# Phase 1 of the vehicle-attributes pipeline — consumed by
+# `vehicle-attributes-cam{N}` to know when to crop the current HD frame.
+# Schema-additive: pre-existing consumers ignore unknown `event_type` values.
+# Payload mirrors `vehicle_detected` (same XADD into EVENT_STREAM, different
+# `event_type` field). Gated by tracker env `EMIT_VEHICLE_SAMPLES` (default
+# false) + `SAMPLE_INTERVAL_FRAMES` (default 3). See spec §2.2.
+VEHICLE_SAMPLE_EVENT = "vehicle_sample"
+
 # Current state of what the camera sees RIGHT NOW (latest detections).
 # This is a Redis key (not a stream) — overwritten on each frame.
 # Published by: tracker
