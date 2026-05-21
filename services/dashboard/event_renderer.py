@@ -91,18 +91,29 @@ def render_event(evt: dict) -> dict:
         if action and action != "unknown": parts.append(action)
         if zone: parts.append(f"📍{zone}")
         if alert: parts.append("🚨 Alert")
-        # Photo: prefer the known-face thumbnail (consumer resolves identity →
-        # face_id), else fall back to the event snapshot saved on disk.
+        # Photo:
+        # - For known identities, show the enrolled face thumbnail (works for
+        #   both appeared and left events).
+        # - For unknowns, only fall back to the event snapshot for APPEARED
+        #   events. The dashboard's event poller doesn't save snapshots for
+        #   *_left events (see pollers/events.py dispatch — only the 4
+        #   `appeared / identified / detected / idle` event types get
+        #   _save_snapshot called). Previously this branch set
+        #   kind="event_snapshot" for person_left too, which made the
+        #   frontend fire a `/api/events/{id}/snapshot` request → 404 every
+        #   time. Suppressing the photo for unknown-left avoids that 404
+        #   and the resulting console noise + dashboard log noise.
         if identity:
             photo = {"kind": "face", "identity_name": identity,
                      "event_id": None, "camera_id": evt.get("camera_id") or None,
                      "snapshot_key": None, "caption": display_name}
-        else:
+        elif is_appeared:
             photo = {"kind": "event_snapshot", "identity_name": None,
                      "event_id": evt.get("id"),
                      "camera_id": evt.get("camera_id") or None,
                      "snapshot_key": None,
                      "caption": display_name or "Camera snapshot"}
+        # else: person_left + unknown → no photo (no snapshot exists)
 
     elif et == "person_identified":
         css_classes.append("appeared")

@@ -9,6 +9,7 @@ file change. ``__init__.py`` aggregates SCHEMA from every tool module into the
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 
 
@@ -20,6 +21,15 @@ from ._shared import (
 )
 
 logger = logging.getLogger("dashboard.ai")
+
+# Mirror the recorder's own RECORDING_DIR default so the lookup path stays
+# in sync with where ffmpeg actually wrote segments. Previously this was
+# hardcoded to `/data/recordings`, which worked in default deployments by
+# coincidence (same as docker-compose's bind mount target). Anyone setting
+# `RECORDING_DIR` to a non-default path — NAS mount, external archive disk —
+# would have this tool silently return "no recordings" while the recorder
+# wrote happily to the actual path.
+RECORDING_DIR = os.environ.get("RECORDING_DIR", "/data/recordings")
 
 
 SCHEMA = {'type': 'function', 'function': {'name': 'find_dvr_segment', 'description': "Find the DVR (.ts) recording segment that covers a given camera + date + time, and return a deep-link URL so the user can open it in the DVR tab. Use this when the user asks to see/review past footage (e.g. 'show me yesterday's busiest hour', 'I want to see the clip from 1pm'). DOES NOT extract or send video — returns a clickable URL to the existing DVR tab. Recommended workflow: (1) call query_event_patterns to find the busy hour, (2) call this with that hour as `time`, (3) format the response's deep_link as a markdown link for the user to click.", 'parameters': {'type': 'object', 'properties': {'camera': {'type': 'string', 'description': "Camera id (e.g. 'cam1'). Omit for primary camera. Must be a SINGLE camera, not 'all'."}, 'date': {'type': 'string', 'description': "Date — 'today', 'yesterday', or YYYY-MM-DD. Default 'today'."}, 'time': {'type': 'string', 'description': "Hour or time to find (e.g. '13:00', '1:00 PM', '17'). Omit to list all segments for that day."}}, 'required': []}}}
@@ -70,7 +80,7 @@ def _tool_find_dvr_segment(args: dict) -> str:
         if not (0 <= hh < 24 and 0 <= mm < 60):
             return json.dumps({'error': f'Time out of range: {time_str}'})
         target_minutes = hh * 60 + mm
-    day_dir = Path(f'/data/recordings/{cam}/{target_date}')
+    day_dir = Path(RECORDING_DIR) / cam / str(target_date)
     if not day_dir.is_dir():
         return json.dumps({'error': f'No recordings found for {cam} on {target_date}', 'hint': 'Check /api/recordings/dates?camera=<id> for available dates.'})
     seg_re = re.compile('^(\\d{2})-(\\d{2})\\.ts$')

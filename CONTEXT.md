@@ -108,7 +108,7 @@ All paths under `services/`. Every service ID below is profile-gated unless note
 ### 4.3 `pose-detector/` (per-cam, GPU)
 - **YOLOv8s-pose** by default (`POSE_MODEL=/models/yolov8s-pose.pt`; nano `yolov8n-pose.pt` for small tier).
 - **Reads:** `frames:{camN}` via consumer group `pose_detectors`. Registry flag `detect_persons` gates startup (clean exit if false).
-- **Writes:** `detections:pose:{camN}` stream + `detection_frame:pose:{camN}` key (the exact JPEG inferred on, used by the WebSocket to align bboxes — see gotcha §14.4).
+- **Writes:** `detections:pose:{camN}` stream (embeds `frame_bytes` in entries that have detections — paired with the bboxes, so the tracker's person-snapshot path + face-recognizer's face-crop path both work against the exact frame the bbox was computed from, no temporal drift) + `detection_frame:pose:{camN}` key (the exact JPEG inferred on, used by the WebSocket to align bboxes — see gotcha §14.4).
 - **Hot-reloads** `config:{camN}` for confidence/min_keypoints every 25 frames.
 
 ### 4.4 `vehicle-detector/` (per-cam, GPU)
@@ -118,7 +118,7 @@ All paths under `services/`. Every service ID below is profile-gated unless note
 
 ### 4.5 `face-recognizer/` (per-cam, GPU, REST API)
 - **InsightFace `buffalo_l`** model, `onnxruntime-gpu` (no PyTorch — saves ~5 GB image size).
-- **Reads:** `detections:pose:{camN}` (consumer group `face_recognizers`). Crops face region from person bbox of latest `frames:{camN}` entry. Registry flag `detect_faces`.
+- **Reads:** `detections:pose:{camN}` (consumer group `face_recognizers`). Crops face region from person bbox using the `frame_bytes` shipped on the same detection message — same frame the bbox was computed from, no temporal drift. Falls back to `xrevrange(frames:{camN}, count=1)` if `frame_bytes` is missing (defensive path for rolling upgrades where face-rec is ahead of the pose-detector). Registry flag `detect_faces`.
 - **Writes:** `identities:{camN}` stream + `identity_state:{camN}` hash. Emits `face_enrolled` / `face_reconciled` to `events:{camN}` on enrollment/labeling/reconcile.
 - **Storage:** SQLite at `/data/faces.db` (volume `face-data`, mounted by ALL face-recognizer-camN containers — they share the DB). Tables: `known_faces` (id/name/embedding/photo BLOB/created_at), `unknown_faces` (id/embedding/photo/first_seen/last_seen/sighting_count).
 - **HTTP (port 8081, NOT exposed to host)** — accessed only by the dashboard via internal Docker DNS `face-recognizer-cam1:8081`:

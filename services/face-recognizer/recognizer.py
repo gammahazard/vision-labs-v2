@@ -822,13 +822,29 @@ def run():
                     frames_processed += 1
                     continue
 
-                # Get the matching frame for face cropping
-                frames = r.xrevrange(FRAME_STREAM, count=1)
-                if not frames:
-                    r.xack(DETECTION_STREAM, CONSUMER_GROUP, message_id)
-                    continue
+                # Get the frame this detection was computed from. The
+                # pose-detector ships `frame_bytes` in the same stream
+                # message as the detection (since the bbox-frame-alignment
+                # fix), so the bbox + the face crop come from the same
+                # moment in time. Previously this did
+                # `xrevrange(FRAME_STREAM, count=1)` which grabbed the
+                # LATEST frame regardless of which frame the detection was
+                # actually from — for a person walking, the face was
+                # cropped from a frame several frames AFTER the detection,
+                # producing partially-off-the-face crops + bad embeddings
+                # + wrong/missed identity matches. Same bug class as the
+                # person-snapshot-bbox issue.
+                #
+                # Fallback to xrevrange only if frame_bytes is missing
+                # (older pose-detector image during a rolling upgrade).
+                frame_bytes = data.get(b"frame_bytes", None)
+                if not frame_bytes:
+                    frames = r.xrevrange(FRAME_STREAM, count=1)
+                    if not frames:
+                        r.xack(DETECTION_STREAM, CONSUMER_GROUP, message_id)
+                        continue
+                    frame_bytes = frames[0][1][b"frame"]
 
-                frame_bytes = frames[0][1][b"frame"]
                 np_arr = np.frombuffer(frame_bytes, np.uint8)
                 frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
