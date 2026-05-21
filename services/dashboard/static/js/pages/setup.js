@@ -583,6 +583,7 @@ async function addCamera() {
         detect_persons: document.getElementById('detectPersons').checked,
         detect_vehicles: document.getElementById('detectVehicles').checked,
         detect_faces: document.getElementById('detectFaces').checked,
+        detect_vehicle_attributes: document.getElementById('detectVehicleAttributes')?.checked || false,
         gpu_id: 0,
     };
 
