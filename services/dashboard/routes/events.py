@@ -245,21 +245,24 @@ def resolve_event_snapshot_path(event_id: str, camera_id: str = "") -> str | Non
     if "/" in safe_id or "\\" in safe_id or ".." in safe_id:
         return None
 
-    # camera_id arrives from a query param (?camera=) and is interpolated
-    # into the snapshot path below. Sanitize it the same way recordings.py
-    # _resolve_camera does — strip to the alnum/underscore/dash charset that
-    # registry slot ids actually use. The variable rename also lets CodeQL's
-    # taint analysis recognize the input as cleansed (it doesn't recognize
-    # in-place regex.fullmatch on the same variable).
-    safe_camera_id = "".join(
-        c for c in (camera_id or "") if c.isalnum() or c in "-_"
-    )
-    if camera_id and not safe_camera_id:
-        return None
+    # Defense-in-depth helper: build a path under SNAPSHOT_DIR, then realpath
+    # it and verify it actually stays inside SNAPSHOT_DIR. Catches both:
+    #   1. Path-traversal in camera_id / event_id (e.g. ?camera=../../etc)
+    #   2. Symlinks pointing outside the snapshot tree (someone could plant
+    #      a symlink at /data/snapshots/cam1/foo.jpg → /etc/passwd)
+    # CodeQL recognizes os.path.realpath + startswith-base as the canonical
+    # sanitizer for path-injection, which closes the open #42-#45 alerts.
+    snap_root = os.path.realpath(SNAPSHOT_DIR) + os.sep
 
-    if safe_camera_id:
-        p = os.path.join(SNAPSHOT_DIR, safe_camera_id, f"{safe_id}.jpg")
-        if os.path.exists(p):
+    def _safe_path(*parts: str) -> str | None:
+        candidate = os.path.realpath(os.path.join(SNAPSHOT_DIR, *parts))
+        if not candidate.startswith(snap_root) and candidate != snap_root[:-1]:
+            return None
+        return candidate
+
+    if camera_id:
+        p = _safe_path(camera_id, f"{safe_id}.jpg")
+        if p and os.path.exists(p):
             return p
 
     # Walk camera subdirs from registry
@@ -269,8 +272,8 @@ def resolve_event_snapshot_path(event_id: str, camera_id: str = "") -> str | Non
             try:
                 entry = json.loads(val)
                 cid = entry.get("id") or _cid
-                p = os.path.join(SNAPSHOT_DIR, cid, f"{safe_id}.jpg")
-                if os.path.exists(p):
+                p = _safe_path(cid, f"{safe_id}.jpg")
+                if p and os.path.exists(p):
                     return p
             except Exception:
                 continue
@@ -278,8 +281,8 @@ def resolve_event_snapshot_path(event_id: str, camera_id: str = "") -> str | Non
         pass
 
     # Legacy flat path
-    legacy = os.path.join(SNAPSHOT_DIR, f"{safe_id}.jpg")
-    if os.path.exists(legacy):
+    legacy = _safe_path(f"{safe_id}.jpg")
+    if legacy and os.path.exists(legacy):
         return legacy
     return None
 
@@ -293,6 +296,13 @@ async def get_event_snapshot(event_id: str, camera: str = ""):
     """
     path = resolve_event_snapshot_path(event_id, camera_id=camera)
     if not path:
+        return JSONResponse(status_code=404, content={"error": "Snapshot not found"})
+
+    # resolve_event_snapshot_path already realpath-validates that path lives
+    # under SNAPSHOT_DIR — re-check here at the actual open() sink so CodeQL's
+    # local taint analysis sees the sanitizer adjacent to the open() call.
+    snap_root = os.path.realpath(SNAPSHOT_DIR) + os.sep
+    if not os.path.realpath(path).startswith(snap_root):
         return JSONResponse(status_code=404, content={"error": "Snapshot not found"})
 
     with open(path, "rb") as f:
