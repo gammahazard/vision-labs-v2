@@ -128,6 +128,20 @@ CONFIG_APPLY_ALLOWED_SERVICES = {
     # retention is handled by dashboard's hot-reload poller so no restart
     # needed for those two.
     "recorder",
+    "tracker",
+}
+
+# Bare service names from CONFIG_APPLY_ALLOWED_SERVICES that don't actually
+# exist in docker-compose.yml as-is — they live as profile-gated per-camera
+# variants (e.g. `recorder-cam1`, `recorder-cam2`, …). When the dashboard
+# publishes one of these names on config:apply we have to expand it against
+# the currently-enabled camera profiles before invoking compose, otherwise
+# `docker compose up -d --force-recreate recorder` fails with "no such
+# service: recorder" and NOTHING gets restarted (including any singletons
+# in the same command, since compose treats the whole invocation atomically).
+PER_CAM_SERVICE_PREFIXES = {
+    "recorder", "pose-detector", "vehicle-detector",
+    "face-recognizer", "camera-ingester", "tracker",
 }
 
 # ---------------------------------------------------------------------------
@@ -564,11 +578,50 @@ def probe_listen_loop(r: redis.Redis) -> None:
 # ---------------------------------------------------------------------------
 # Config-apply listener — recreate services on .env changes
 # ---------------------------------------------------------------------------
+def _expand_per_cam_services(r: redis.Redis, services: list) -> tuple[list, list]:
+    """Expand bare per-cam service names (e.g. `recorder`) into their per-camera
+    variants (`recorder-cam1`, `recorder-cam2`, …) against the currently-enabled
+    profiles in `cameras:registry`. Returns (expanded_service_list, profile_list).
+
+    Singletons (`dashboard`, `ollama`) pass through unchanged. Bare per-cam
+    names with no enabled cameras drop out entirely — there's nothing to
+    restart on a slot that isn't running.
+
+    `desired_profiles(r)` is the source of truth (registry-enabled +
+    ALLOWED_PROFILES filtered). If it returns None (Redis hiccup), we treat
+    it as the empty set rather than expanding against ALLOWED_PROFILES — same
+    reconcile-safety logic that prevents a Redis blip from tearing down
+    cameras.
+    """
+    cams = desired_profiles(r)
+    if cams is None:
+        cams = set()
+
+    expanded: list[str] = []
+    profiles: set[str] = set()
+    for svc in services:
+        if svc in PER_CAM_SERVICE_PREFIXES:
+            for cam in sorted(cams):
+                expanded.append(f"{svc}-{cam}")
+                profiles.add(cam)
+        else:
+            expanded.append(svc)
+    return expanded, sorted(profiles)
+
+
 def apply_config(r: redis.Redis, services: list, request_id: str) -> None:
     """Force-recreate the specified services so they pick up new env values.
 
     Filters against CONFIG_APPLY_ALLOWED_SERVICES so a malformed/malicious
-    message can't try to recreate arbitrary services.
+    message can't try to recreate arbitrary services, then expands bare
+    per-cam names (`recorder` → `recorder-cam1`, `recorder-cam2`) against
+    the registry. The bare names ALWAYS need expansion — docker-compose.yml
+    only defines profile-gated per-cam variants, never the bare top-level
+    service. Without this expansion the compose CLI errors out with
+    "no such service: recorder" and (because compose treats the whole
+    invocation atomically) any singletons in the same payload — like
+    `dashboard` — don't restart either. Symptom from the user side is
+    "I changed retention but it didn't take effect."
     """
     valid = [s for s in services if s in CONFIG_APPLY_ALLOWED_SERVICES]
     rejected = [s for s in services if s not in CONFIG_APPLY_ALLOWED_SERVICES]
@@ -580,16 +633,36 @@ def apply_config(r: redis.Redis, services: list, request_id: str) -> None:
         _audit(r, "apply", "config", True, "no services", request_id=request_id)
         return
 
-    logger.info(f"config:apply {request_id}: recreating {valid}")
+    # Expand bare per-cam names against the currently-enabled camera profiles.
+    expanded, profiles = _expand_per_cam_services(r, valid)
+    if not expanded:
+        logger.info(
+            f"config:apply {request_id}: nothing to restart after expansion "
+            f"(no enabled per-cam profiles for {valid})"
+        )
+        _audit(r, "apply", "config", True, "no services after expansion",
+               request_id=request_id)
+        return
+
+    # `--profile camN` flags must be passed for compose to resolve the
+    # profile-gated services. Pass one per active profile.
+    profile_args: list[str] = []
+    for p in profiles:
+        profile_args.extend(["--profile", p])
+
+    logger.info(
+        f"config:apply {request_id}: recreating {expanded} "
+        f"(profiles={profiles or 'none'})"
+    )
     # `up -d --force-recreate <services>` recreates the named services
     # with their current env vars from compose+.env. Other services stay put.
     ok, err = _run_compose(
-        ["up", "-d", "--force-recreate", "--no-deps"] + valid,
+        profile_args + ["up", "-d", "--force-recreate", "--no-deps"] + expanded,
         timeout=240,
     )
     _audit(
         r, "apply", "config", ok,
-        f"{','.join(valid)}" + (f" — {err}" if err else ""),
+        f"{','.join(expanded)}" + (f" — {err}" if err else ""),
         request_id=request_id,
     )
 

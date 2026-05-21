@@ -285,9 +285,22 @@ class TestProfileAllowlist:
 class TestConfigApply:
     """`config:apply` lets the setup wizard recreate services after writing
     new .env values. Like profiles, the service list is allowlisted so a
-    malformed/malicious message can't target arbitrary containers."""
+    malformed/malicious message can't target arbitrary containers. Bare
+    per-cam service names get expanded against the registry (`recorder` →
+    `recorder-cam1`, …) before invoking compose."""
 
-    def test_allowed_services_pass_through(self, fake_redis):
+    @staticmethod
+    def _seed_cameras(fake_redis, cams):
+        """Put `cams` in the registry as enabled cameras so the expansion
+        helper has something to expand against."""
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            cam: json.dumps({"id": cam, "enabled": True}) for cam in cams
+        }
+
+    def test_per_cam_services_expanded_against_registry(self, fake_redis, restrict_profiles):
+        # Two cameras enabled — `pose-detector` expands to two variants,
+        # each `--profile camN` flag is passed so compose can resolve them
+        self._seed_cameras(fake_redis, ["cam1", "cam2"])
         with patch.object(orchestrator, "_run_compose",
                           return_value=(True, "")) as mock_run:
             orchestrator.apply_config(
@@ -300,11 +313,71 @@ class TestConfigApply:
         assert "up" in cmd_args
         assert "--force-recreate" in cmd_args
         assert "--no-deps" in cmd_args
-        assert "pose-detector" in cmd_args
-        assert "vehicle-detector" in cmd_args
+        # Per-cam expansion produced four service names
+        assert "pose-detector-cam1" in cmd_args
+        assert "pose-detector-cam2" in cmd_args
+        assert "vehicle-detector-cam1" in cmd_args
+        assert "vehicle-detector-cam2" in cmd_args
+        # Profile flags
+        assert "--profile" in cmd_args
+        assert "cam1" in cmd_args
+        assert "cam2" in cmd_args
 
-    def test_disallowed_services_filtered_out(self, fake_redis):
+    def test_singletons_unaffected_by_expansion(self, fake_redis, restrict_profiles):
+        # dashboard + ollama are top-level services, not profile-gated —
+        # they pass through expansion unchanged and need no --profile flag
+        with patch.object(orchestrator, "_run_compose",
+                          return_value=(True, "")) as mock_run:
+            orchestrator.apply_config(
+                fake_redis,
+                ["dashboard", "ollama"],
+                request_id="s1",
+            )
+        mock_run.assert_called_once()
+        cmd_args = mock_run.call_args[0][0]
+        assert "dashboard" in cmd_args
+        assert "ollama" in cmd_args
+        # No --profile flag — singletons don't need profile gating
+        assert "--profile" not in cmd_args
+
+    def test_mixed_singleton_and_per_cam(self, fake_redis, restrict_profiles):
+        # Real-world payload: TZ change → dashboard + tracker + recorder
+        self._seed_cameras(fake_redis, ["cam1"])
+        with patch.object(orchestrator, "_run_compose",
+                          return_value=(True, "")) as mock_run:
+            orchestrator.apply_config(
+                fake_redis,
+                ["dashboard", "recorder", "tracker"],
+                request_id="m1",
+            )
+        mock_run.assert_called_once()
+        cmd_args = mock_run.call_args[0][0]
+        assert "dashboard" in cmd_args
+        assert "recorder-cam1" in cmd_args
+        assert "tracker-cam1" in cmd_args
+        # Bare per-cam names removed from the expanded list (only the cam-
+        # suffixed variants remain). `in` is exact-element match for lists.
+        assert "recorder" not in cmd_args
+        assert "tracker" not in cmd_args
+        assert "--profile" in cmd_args
+        assert "cam1" in cmd_args
+
+    def test_per_cam_with_no_enabled_cameras_audits_skip(self, fake_redis, restrict_profiles):
+        # Registry empty → `recorder` expands to nothing → no compose call,
+        # audit row is success=1 with "no services after expansion"
+        # (this isn't a failure; there's just nothing to restart)
+        with patch.object(orchestrator, "_run_compose") as mock_run:
+            orchestrator.apply_config(fake_redis, ["recorder"], request_id="e1")
+        mock_run.assert_not_called()
+        entries = fake_redis._streams.get(orchestrator.AUDIT_STREAM, [])
+        assert len(entries) == 1
+        _, fields = entries[0]
+        assert fields["success"] == "1"
+        assert "no services after expansion" in fields["detail"]
+
+    def test_disallowed_services_filtered_out(self, fake_redis, restrict_profiles):
         # "orchestrator" + "redis" + arbitrary names must be filtered out
+        # BEFORE expansion — allowlist check is the security gate
         with patch.object(orchestrator, "_run_compose",
                           return_value=(True, "")) as mock_run:
             orchestrator.apply_config(
@@ -312,30 +385,28 @@ class TestConfigApply:
                 ["orchestrator", "redis", "/bin/sh"],
                 request_id="x",
             )
-        # Every service was rejected → no subprocess call
         mock_run.assert_not_called()
         entries = fake_redis._streams.get(orchestrator.AUDIT_STREAM, [])
         assert len(entries) == 1
         _, fields = entries[0]
-        # Empty-valid case is logged as success with "no services" detail
         assert fields["success"] == "1"
         assert fields["detail"] == "no services"
 
-    def test_mixed_services_only_valid_passed(self, fake_redis):
-        # Half-and-half: pose-detector OK, "evil" filtered
+    def test_mixed_allowed_and_disallowed(self, fake_redis, restrict_profiles):
+        # `dashboard` (singleton, allowed) + `evil-svc` (filtered out)
         with patch.object(orchestrator, "_run_compose",
                           return_value=(True, "")) as mock_run:
             orchestrator.apply_config(
                 fake_redis,
-                ["pose-detector", "evil-svc"],
+                ["dashboard", "evil-svc"],
                 request_id="y",
             )
         mock_run.assert_called_once()
         cmd_args = mock_run.call_args[0][0]
-        assert "pose-detector" in cmd_args
+        assert "dashboard" in cmd_args
         assert "evil-svc" not in cmd_args
 
-    def test_audit_includes_request_id(self, fake_redis):
+    def test_audit_includes_request_id(self, fake_redis, restrict_profiles):
         with patch.object(orchestrator, "_run_compose", return_value=(True, "")):
             orchestrator.apply_config(fake_redis, ["dashboard"], request_id="req-42")
         entries = fake_redis._streams.get(orchestrator.AUDIT_STREAM, [])
@@ -344,8 +415,8 @@ class TestConfigApply:
         assert fields.get("request_id") == "req-42"
         assert fields["action"] == "apply"
 
-    def test_compose_failure_audits_failure_with_error(self, fake_redis):
-        # Subprocess returned non-zero → audit row is success=0 with the error tail
+    def test_compose_failure_audits_failure_with_error(self, fake_redis, restrict_profiles):
+        # Subprocess returned non-zero → audit row is success=0 with error tail
         with patch.object(orchestrator, "_run_compose",
                           return_value=(False, "image pull failed")):
             orchestrator.apply_config(fake_redis, ["dashboard"], request_id="z")
@@ -353,6 +424,109 @@ class TestConfigApply:
         _, fields = entries[0]
         assert fields["success"] == "0"
         assert "image pull failed" in fields["detail"]
+
+    def test_redis_hiccup_returns_empty_expansion_for_per_cam(self, fake_redis, restrict_profiles):
+        # If `desired_profiles` returns None (Redis error reading the
+        # registry), per-cam expansion produces []. Same safety logic as
+        # reconcile — don't blindly expand against ALLOWED_PROFILES on a
+        # Redis hiccup; that could touch disabled slots.
+        fake_redis.hgetall_should_raise = True
+        with patch.object(orchestrator, "_run_compose") as mock_run:
+            orchestrator.apply_config(fake_redis, ["recorder"], request_id="h1")
+        mock_run.assert_not_called()
+        entries = fake_redis._streams.get(orchestrator.AUDIT_STREAM, [])
+        _, fields = entries[0]
+        assert "no services after expansion" in fields["detail"]
+
+
+# ===========================================================================
+# 3b. _expand_per_cam_services helper (load-bearing for #3)
+# ===========================================================================
+class TestExpandPerCamServices:
+    """The expansion helper is the load-bearing piece of the per-cam
+    config-apply fix. Tested standalone here because apply_config's tests
+    mix it with allowlist + compose-invocation behavior."""
+
+    def test_singletons_passthrough(self, fake_redis, restrict_profiles):
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["dashboard", "ollama"],
+        )
+        assert expanded == ["dashboard", "ollama"]
+        assert profiles == []
+
+    def test_per_cam_expanded_against_registry(self, fake_redis, restrict_profiles):
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+        }
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["recorder"],
+        )
+        assert expanded == ["recorder-cam1"]
+        assert profiles == ["cam1"]
+
+    def test_disabled_camera_not_in_expansion(self, fake_redis, restrict_profiles):
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam2": json.dumps({"id": "cam2", "enabled": False}),
+        }
+        expanded, _ = orchestrator._expand_per_cam_services(
+            fake_redis, ["recorder"],
+        )
+        assert expanded == ["recorder-cam1"]
+        assert "recorder-cam2" not in expanded
+
+    def test_mixed_per_cam_and_singleton(self, fake_redis, restrict_profiles):
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam2": json.dumps({"id": "cam2", "enabled": True}),
+        }
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["dashboard", "recorder", "pose-detector"],
+        )
+        assert "dashboard" in expanded
+        assert "recorder-cam1" in expanded
+        assert "recorder-cam2" in expanded
+        assert "pose-detector-cam1" in expanded
+        assert "pose-detector-cam2" in expanded
+        # Bare per-cam names never appear in the expanded list
+        assert "recorder" not in expanded
+        assert "pose-detector" not in expanded
+        assert set(profiles) == {"cam1", "cam2"}
+
+    def test_camera_outside_allowlist_excluded_from_expansion(self, fake_redis, restrict_profiles):
+        # restrict_profiles caps ALLOWED_PROFILES to {cam1, cam2, cam3}.
+        # cam99 enabled in registry but outside that set must NOT expand —
+        # desired_profiles() filters by allowlist before returning.
+        fake_redis._hashes[orchestrator.REGISTRY_KEY] = {
+            "cam1": json.dumps({"id": "cam1", "enabled": True}),
+            "cam99": json.dumps({"id": "cam99", "enabled": True}),
+        }
+        expanded, _ = orchestrator._expand_per_cam_services(
+            fake_redis, ["recorder"],
+        )
+        assert "recorder-cam1" in expanded
+        assert "recorder-cam99" not in expanded
+
+    def test_redis_hiccup_returns_empty_for_per_cam(self, fake_redis, restrict_profiles):
+        # `desired_profiles` returns None on Redis error → expansion treats
+        # as empty rather than expanding against ALLOWED_PROFILES blindly.
+        fake_redis.hgetall_should_raise = True
+        expanded, _ = orchestrator._expand_per_cam_services(
+            fake_redis, ["recorder"],
+        )
+        assert expanded == []
+
+    def test_redis_hiccup_does_not_block_singletons(self, fake_redis, restrict_profiles):
+        # Even with the registry unreachable, singletons should still pass
+        # through. The Redis hiccup only affects per-cam expansion.
+        fake_redis.hgetall_should_raise = True
+        expanded, profiles = orchestrator._expand_per_cam_services(
+            fake_redis, ["dashboard", "recorder"],
+        )
+        assert "dashboard" in expanded
+        assert "recorder" not in expanded
+        assert "recorder-cam1" not in expanded
+        assert profiles == []
 
 
 # ===========================================================================
