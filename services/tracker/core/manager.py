@@ -244,8 +244,14 @@ class PersonTracker:
 
                 # Store/update snapshot if frame bytes provided
                 if frame_bytes and not veh.snapshot_key:
-                    snap_key = stream_key(_VSNAP_TMPL, camera_id=CAMERA_ID, timestamp=int(veh.first_seen))
-                    bbox_key = stream_key(_VSNAP_BBOX_TMPL, camera_id=CAMERA_ID, timestamp=int(veh.first_seen))
+                    # Millisecond resolution to keep two cars that arrive in
+                    # the same second from overwriting each other's snapshots.
+                    # The key shape is stable: dashboards read whatever
+                    # snapshot_key the event payload carries, so producer-side
+                    # resolution can widen without consumer changes.
+                    snap_ts = int(veh.first_seen * 1000)
+                    snap_key = stream_key(_VSNAP_TMPL, camera_id=CAMERA_ID, timestamp=snap_ts)
+                    bbox_key = stream_key(_VSNAP_BBOX_TMPL, camera_id=CAMERA_ID, timestamp=snap_ts)
                     self.r.setex(snap_key, 86400, frame_bytes)
                     self.r.setex(bbox_key, 86400, json.dumps(bbox))
                     veh.snapshot_key = snap_key
@@ -267,8 +273,12 @@ class PersonTracker:
 
                 # Store snapshot in Redis with 24h TTL
                 if frame_bytes:
-                    snap_key = stream_key(_VSNAP_TMPL, camera_id=CAMERA_ID, timestamp=int(timestamp))
-                    bbox_key = stream_key(_VSNAP_BBOX_TMPL, camera_id=CAMERA_ID, timestamp=int(timestamp))
+                    # Millisecond resolution — see note in the existing-vehicle
+                    # branch above. Prevents collisions for two cars arriving
+                    # in the same second on the same camera.
+                    snap_ts = int(timestamp * 1000)
+                    snap_key = stream_key(_VSNAP_TMPL, camera_id=CAMERA_ID, timestamp=snap_ts)
+                    bbox_key = stream_key(_VSNAP_BBOX_TMPL, camera_id=CAMERA_ID, timestamp=snap_ts)
                     self.r.setex(snap_key, 86400, frame_bytes)
                     self.r.setex(bbox_key, 86400, json.dumps(bbox))
                     veh.snapshot_key = snap_key
