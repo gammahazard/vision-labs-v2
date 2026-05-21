@@ -539,7 +539,7 @@ bash scripts/restore.sh ~/vl-backup-YYYYMMDD-HHMMSS.tar.gz
 ## 12. Authentication model
 
 - **No server-side session store.** Tokens are signed HMAC, fully self-contained.
-- **Token format:** `username:timestamp:hmac_sha256_signature` (auth.py:143). Key from env `SECRET_KEY` or generated into `app_config` SQLite table.
+- **Token format:** `username:must_change_flag:timestamp:hmac_sha256_signature` (auth.py:143). 4-part; old 3-part tokens are rejected (users re-login). `must_change_flag` is `1` when login detected the default admin/admin combo so the middleware can force a password rotation before letting the user past. Key from env `SECRET_KEY` or generated into `app_config` SQLite table.
 - **Cookie:** `vl_session` (httponly, samesite=lax, max_age=86400, path=/).
 - **`validate_session(token) → username | None`** — used by HTTP middleware AND WebSocket (websocket.py:112 — middleware doesn't intercept WS upgrades, so each handler must call it).
 - **First-run admin/admin:** `init_auth_db()` creates the default user if the users table is empty. Login endpoint detects the combo and returns `must_change_password: true` — UI forces rotation before letting through.

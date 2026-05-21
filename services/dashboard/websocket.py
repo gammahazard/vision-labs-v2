@@ -584,3 +584,14 @@ def register(app: FastAPI):
             logger.info("WebSocket client disconnected")
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
+        finally:
+            # Close the per-session binary Redis connection — without this,
+            # every WebSocket session leaked a connection until the pool
+            # exhausted (same bug class as the build_clip leak fixed earlier
+            # this cycle). The inner try is paranoid: if close() raises for
+            # any reason we don't want to mask the original exception that
+            # may have brought us here.
+            try:
+                r_bin.close()
+            except Exception:
+                pass
