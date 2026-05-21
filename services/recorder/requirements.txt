@@ -2,4 +2,4 @@
 # camera's RTSP URL from cameras:registry when the RTSP_URL env var is
 # empty (the slot-based-camera case: cam3, cam4, cam5 don't have a
 # hardcoded URL in docker-compose.yml).
-redis==5.2.1
+redis==5.3.1
