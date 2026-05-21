@@ -129,6 +129,10 @@ CONFIG_APPLY_ALLOWED_SERVICES = {
     # needed for those two.
     "recorder",
     "tracker",
+    # Grafana picks up `TZ` + `GF_DATE_FORMATS_DEFAULT_TIMEZONE` from .env
+    # via compose interpolation; a timezone change needs grafana recreated
+    # so dashboards stop rendering panels 4 hours off.
+    "grafana",
 }
 
 # Bare service names from CONFIG_APPLY_ALLOWED_SERVICES that don't actually

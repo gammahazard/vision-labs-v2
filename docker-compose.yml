@@ -351,6 +351,14 @@ services:
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - LOCATION_LAT=${LOCATION_LAT:-43.6532}
       - LOCATION_LON=${LOCATION_LON:--79.3832}
+      # Retention values surface in the DVR tab via /api/conditions and gate
+      # the dashboard's retention_poller (which prunes /data/snapshots + the
+      # clips dirs). Before these were passed through, os.getenv fell back to
+      # hardcoded defaults (28/4/3) and the DVR tab always showed those —
+      # so user-set values in .env never reached the UI nor the prune loop.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
+      - SNAPSHOT_RETENTION_DAYS=${SNAPSHOT_RETENTION_DAYS:-4}
+      - CLIP_RETENTION_DAYS=${CLIP_RETENTION_DAYS:-3}
     depends_on:
       redis:
         condition: service_healthy
@@ -365,7 +373,7 @@ services:
   # directly to 1-hour MPEG-TS segments via ffmpeg copy (no transcode).
   # Storage layout:
   #   /recordings/{camera_id}/YYYY-MM-DD/HH-MM.ts
-  # Retention is short (RETENTION_DAYS=3) because we're on local disk.
+  # Retention defaults to 7d (override in .env via Settings panel).
   # When the QNAP arrives, change the `qnap-recordings` volume to an NFS mount
   # and bump RETENTION_DAYS — no code changes needed.
   recorder-cam1:
@@ -388,7 +396,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -412,7 +425,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -457,6 +475,22 @@ services:
       - GF_SERVER_HTTP_PORT=3000
       - GF_SECURITY_ALLOW_EMBEDDING=true
       - GF_USERS_ALLOW_SIGN_UP=false
+      # Two TZ vars do two different things:
+      #   TZ                                  — the container OS clock, so
+      #                                         Grafana logs + file mtimes
+      #                                         match the user's wall clock.
+      #   GF_DATE_FORMATS_DEFAULT_TIMEZONE    — Grafana's default UI timezone
+      #                                         for rendering timestamps. Users
+      #                                         can override per-dashboard, but
+      #                                         this controls the out-of-box
+      #                                         view (prevents the "everything
+      #                                         is 4h off in the panels" surprise).
+      # Both are interpolated from .env via the same LOCATION_TIMEZONE that
+      # the dashboard + tracker + recorder use. Default Toronto on a fresh
+      # install — operator changes via Settings panel propagate here on the
+      # next force-recreate (see services/dashboard/routes/setup.py).
+      - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
     depends_on:
       - prometheus
     restart: unless-stopped
@@ -692,7 +726,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -829,7 +868,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -966,7 +1010,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -1103,7 +1152,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -1240,7 +1294,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -1377,7 +1436,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -1514,7 +1578,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -1651,7 +1720,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -1788,7 +1862,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -1925,7 +2004,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -2062,7 +2146,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -2199,7 +2288,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -2336,7 +2430,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -2473,7 +2572,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -2610,7 +2714,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -2747,7 +2856,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -2884,7 +2998,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
@@ -3021,7 +3140,12 @@ services:
       - REDIS_PORT=6379
       - RECORDING_DIR=/recordings
       - SEGMENT_DURATION=3600
-      - RETENTION_DAYS=3
+      # Read from .env (falls back to 7d if unset). The Settings panel writes
+      # this key into .env via /api/setup/apply-config, then the orchestrator
+      # force-recreates the recorder so this interpolation picks up the new
+      # value at container start. Previously hardcoded to 3 — that meant the
+      # Settings panel's retention slider had no effect on the running recorder.
+      - RETENTION_DAYS=${RETENTION_DAYS:-7}
       - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
     restart: unless-stopped
