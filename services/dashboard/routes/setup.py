@@ -589,9 +589,18 @@ async def apply_config(request: Request):
         "LOCATION_TIMEZONE", "LOCATION_NAME", "LOCATION_REGION",
         "LOCATION_LAT", "LOCATION_LON",
     )):
-        # TZ is module-level constant in 13+ files — dashboard restart is the
-        # safe way to update it. Location fields are read at startup too.
+        # Every service that imports `contracts.tz.TZ_LOCAL` reads the env
+        # var at process startup and caches the resolved ZoneInfo at module
+        # scope — so a restart is the only way to pick up a new timezone.
+        # Restarting just `dashboard` left the recorder writing segment
+        # filenames in the wrong day folder + the tracker stamping events
+        # with the wrong local time. Per-cam services (tracker, recorder,
+        # camera-ingester) get expanded against the registry by the
+        # orchestrator's apply_config — see services/orchestrator/orchestrator.py.
         affected.add("dashboard")
+        affected.add("tracker")
+        affected.add("recorder")
+        affected.add("camera-ingester")
     # NOTE: SNAPSHOT_RETENTION_DAYS + CLIP_RETENTION_DAYS DO NOT need a
     # dashboard restart — the retention poller re-reads env each cycle (hourly).
     if "RETENTION_DAYS" in updates:
