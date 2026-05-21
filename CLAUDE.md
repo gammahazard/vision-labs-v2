@@ -197,7 +197,26 @@ Never cut a tag without user approval — it's a public, hard-to-reverse action.
 
 ---
 
-## 12. When in doubt
+## 12. The `/audit-repo` skill
+
+`.claude/skills/audit-repo/` is a project-local Claude Code skill triggered by `/audit-repo`. It fans out subagents to verify four kinds of repo health:
+
+- **Drift** — every concrete factual claim in `CONTEXT.md`, `CLAUDE.md`, `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`, `DETAILED_README.md` checked against actual code (file:line evidence required per finding; self-citation gate catches mapper hallucinations).
+- **Quality** — per-module audit of dead imports, unused functions, missing tests, CLAUDE.md §8 convention violations, security smells, resource leaks, size-too-large files, anti-patterns.
+- **Architecture** — node-by-node mapping of imports, callers, Redis streams, HTTP routes, line counts, with severity-tagged notes.
+- **Schema-drift** — every cross-file Redis stream / Redis hash / SQL table contract checked for producer-consumer field-name alignment. Catches the May 2026 bot_commands regression class before it ships.
+
+Reports land under `audits/` (gitignored): `SUMMARY.md` is the entry point, then per-track `drift.md`, `quality.md`, `architecture.md`, `schema-drift.md`.
+
+**Run it before releases or when something feels off.** Expensive — expect ~30-40 minutes wall-clock and 100+ subagent dispatches per full run. The drift track may batch verifiers under per-account session rate-limit pressure (hard rules preserved per-claim within batches).
+
+The first live run on 2026-05-20 found 5 latent NameError bugs of the same family as the v0.1.1 bot_commands regression — bugs the existing `test_ai_tools_no_nameerror.py` missed because of test-fixture early-returns. If you're looking at audit output and it says "EVIDENCE-OR-NOTHING" / "MEMORY IS NOT EVIDENCE" rules were applied, trust the file:line citations — they are independently verified each run.
+
+Design spec: `docs/superpowers/specs/2026-05-20-audit-repo-skill-design.md`. Implementation plan: `docs/superpowers/plans/2026-05-20-audit-repo-skill.md`.
+
+---
+
+## 13. When in doubt
 
 1. Run the test suite. 258 should pass.
 2. Restart the dashboard. Log should print "Dashboard ready at http://localhost:8080" and "Telegram poller started".
