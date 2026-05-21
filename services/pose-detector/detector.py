@@ -372,7 +372,15 @@ def run():
                     kp_conf_thresh=current_kp_confidence,
                 )
 
-                # Publish detections to Redis
+                # Publish detections to Redis. `frame_bytes` is included only
+                # when we actually have person detections — the tracker uses
+                # it to pair the bbox with the exact source frame for the
+                # person_appeared snapshot (otherwise the tracker fell back
+                # to `xrevrange` for the latest frame at emit time, which is
+                # several frames AHEAD of the bbox by the time the 4s
+                # announce grace period expires → "bbox on empty floor where
+                # the person walked away from"). Mirrors the vehicle-detector
+                # pattern at vehicle-detector/detector.py.
                 detection_data = {
                     "camera_id": CAMERA_ID,
                     "detector_type": "pose",
@@ -384,6 +392,8 @@ def run():
                     "frame_width": str(frame.shape[1]),
                     "frame_height": str(frame.shape[0]),
                 }
+                if detections:
+                    detection_data["frame_bytes"] = frame_bytes
 
                 r.xadd(
                     DETECTION_STREAM,

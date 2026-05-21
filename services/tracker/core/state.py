@@ -145,6 +145,14 @@ class TrackedPerson:
         # is in `identity_name` above.
         self._pending_identity = ""
         self._pending_identity_count = 0
+        # Frame bytes of the detection that produced `self.bbox`. Buffered
+        # here so the person_appeared snapshot can use the exact frame the
+        # bbox was computed from instead of grabbing the latest frame at
+        # emit time — which, with the 4s announce grace period, is several
+        # frames AHEAD of the bbox. For a moving person that gap is the
+        # difference between "bbox drawn on the person" and "bbox drawn
+        # on empty floor where the person used to be."
+        self.last_frame_bytes: bytes | None = None
 
     def update(self, bbox: list, timestamp: float, keypoints: list = None):
         """Update this person's state with a new detection. Returns previous action."""
