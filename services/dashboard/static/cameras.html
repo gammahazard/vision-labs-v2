@@ -151,7 +151,7 @@
                                 <input type="checkbox" id="camDetectVehicles" checked> Vehicles
                             </label>
                             <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
-                                <input type="checkbox" id="camDetectFaces" checked> Faces (identity)
+                                <input type="checkbox" id="camDetectFaces" data-requires="camDetectPersons" checked> Faces (requires person detection)
                             </label>
                         </div>
                     </div>
@@ -177,6 +177,7 @@
         </div>
     </div>
 
+    <script src="js/lib/checkbox-dependencies.js?v=1"></script>
     <script src="js/pages/cameras.js?v=7"></script>
     <script src="js/core/nav.js?v=4"></script>
 </body>

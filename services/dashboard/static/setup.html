@@ -174,7 +174,7 @@
                         <legend>What should this camera detect?</legend>
                         <label><input type="checkbox" id="detectPersons" checked> Persons</label>
                         <label><input type="checkbox" id="detectVehicles" checked> Vehicles</label>
-                        <label><input type="checkbox" id="detectFaces" checked> Faces (requires person detection)</label>
+                        <label><input type="checkbox" id="detectFaces" data-requires="detectPersons" checked> Faces (requires person detection)</label>
                     </fieldset>
 
                     <button type="button" id="btnTestRtsp" class="btn-secondary">Test connection</button>
@@ -322,6 +322,7 @@
     </main>
 </div>
 
+<script src="js/lib/checkbox-dependencies.js?v=1"></script>
 <script src="js/pages/setup.js?v=11"></script>
 </body>
 </html>
