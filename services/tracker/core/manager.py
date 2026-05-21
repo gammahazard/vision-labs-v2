@@ -133,7 +133,13 @@ class PersonTracker:
         # Also save the bbox that matches the snapshot frame so the dashboard
         # draws the box in the right place (not a stale detection bbox).
         if event_type in ("person_appeared", "person_identified"):
-            snap_key = self._save_person_snapshot(timestamp, person.bbox)
+            # Pass the buffered frame_bytes (paired with `person.bbox` at
+            # detection time) so the snapshot frame matches the bbox. Falls
+            # back to grabbing the latest frame if we don't have buffered
+            # bytes (e.g. pose-detector hasn't been upgraded yet).
+            snap_key = self._save_person_snapshot(
+                timestamp, person.bbox, frame_bytes=person.last_frame_bytes,
+            )
             if snap_key:
                 event["snapshot_key"] = snap_key
                 event["snapshot_bbox"] = json.dumps(person.bbox)
@@ -153,21 +159,33 @@ class PersonTracker:
             f"{zone_str}"
         )
 
-    def _save_person_snapshot(self, timestamp: float, bbox: list = None) -> str | None:
+    def _save_person_snapshot(self, timestamp: float, bbox: list = None,
+                                frame_bytes: bytes | None = None) -> str | None:
         """
-        Grab the sub-stream frame and save it to Redis for this person event.
-        Uses the sub-stream (not HD) because the bbox coords come from the
-        pose detector running on the sub-stream — using the same frame
-        ensures the bbox aligns exactly with the person's position.
+        Save the JPEG frame that the bbox was computed from, plus the bbox
+        itself, to Redis so the dashboard can render the notification with
+        the box drawn over the right pixels.
+
+        `frame_bytes` is the preferred input — passed in from
+        TrackedPerson.last_frame_bytes, which is the exact frame the
+        pose-detector ran on when it produced `bbox`. With the 4-second
+        announce grace period there's a wide gap between detection time
+        and emit time, so falling back to "latest frame in the stream"
+        (the old behavior, kept as a defensive fallback) draws the bbox
+        on a frame from several seconds AFTER the detection. For a moving
+        person that gap is the "bbox on empty floor" symptom.
+
         Returns the Redis key or None if no frame available.
         Uses 2h TTL (matches dashboard snapshot cleanup).
         """
         try:
-            # Use sub-stream frame — same source as the detection bbox coords
-            frame_bytes = None
-            entries = self.r.xrevrange(FRAME_STREAM.encode(), count=1)
-            if entries:
-                frame_bytes = entries[0][1].get(b"frame") or entries[0][1].get(b"frame_bytes")
+            # Prefer the frame bytes paired with this detection. Fall back
+            # to xrevrange only if the caller didn't pass any (older
+            # detector versions, or pre-detection event types).
+            if not frame_bytes:
+                entries = self.r.xrevrange(FRAME_STREAM.encode(), count=1)
+                if entries:
+                    frame_bytes = entries[0][1].get(b"frame") or entries[0][1].get(b"frame_bytes")
             if not frame_bytes:
                 return None
 
@@ -624,9 +642,16 @@ class PersonTracker:
         }
         self.r.hset(STATE_KEY, mapping=state)
 
-    def update(self, detections: list[dict], timestamp: float):
+    def update(self, detections: list[dict], timestamp: float, frame_bytes: bytes | None = None):
         """
         Process a new set of detections and update tracked people.
+
+        `frame_bytes` is the JPEG-encoded frame the detector ran on, shipped
+        on the detection-stream message (mirror of the vehicle path). It's
+        buffered onto every TrackedPerson that gets matched or created in
+        this update so the person_appeared snapshot can use the exact frame
+        the bbox came from — preventing the "bbox on empty floor where the
+        person walked away from" symptom.
 
         Algorithm:
         1. For each detection, find the best IoU match among tracked people
@@ -667,6 +692,12 @@ class PersonTracker:
                     bbox, current_time, keypoints=det.get("keypoints")
                 )
                 matched_track_ids.add(best_track_id)
+                # Pair the bbox with the frame it was computed from — used at
+                # event-emit time so the snapshot shows the person where the
+                # bbox says they are. Without this, _save_person_snapshot
+                # grabs the LATEST frame and the bbox is from N frames ago.
+                if frame_bytes:
+                    self.tracked[best_track_id].last_frame_bytes = frame_bytes
 
                 # Emit "person_appeared" on first stable detection.
                 #
@@ -711,6 +742,8 @@ class PersonTracker:
         for det in unmatched_detections:
             person_id = self._generate_id()
             person = TrackedPerson(person_id, det["bbox"], current_time)
+            if frame_bytes:
+                person.last_frame_bytes = frame_bytes
             self.tracked[person_id] = person
 
         # --- Step 3: Check for lost people ---

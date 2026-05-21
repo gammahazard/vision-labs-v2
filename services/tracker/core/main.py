@@ -160,8 +160,16 @@ def run():
                         tracker.frame_width = int(fw)
                         tracker.frame_height = int(fh)
 
+                    # Source frame bytes the detector ran on, paired with
+                    # the bboxes in `detections`. Buffered onto each
+                    # TrackedPerson so the person_appeared snapshot uses
+                    # this exact frame instead of the stream-latest one
+                    # (which is several frames ahead of the bbox by the
+                    # time the 4s announce grace period expires).
+                    person_frame_bytes = data.get(b"frame_bytes", None)
+
                     # Update tracker with new detections
-                    tracker.update(detections, timestamp)
+                    tracker.update(detections, timestamp, frame_bytes=person_frame_bytes)
 
                     # Acknowledge message
                     r.xack(DETECTION_STREAM, CONSUMER_GROUP, message_id)
