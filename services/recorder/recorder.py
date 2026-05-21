@@ -189,9 +189,19 @@ def cleanup_old_recordings():
 
         if day_folder < cutoff_str:
             try:
-                shutil.rmtree(day_path)
+                # Refuse to follow symlinks. If someone (or a future feature)
+                # ever points a day-folder at external storage via symlink,
+                # plain `shutil.rmtree(path)` follows the link and wipes the
+                # target tree, not just the link. Detect islink first and
+                # use os.unlink for symlinks; real directories still get
+                # rmtree.
+                if os.path.islink(day_path):
+                    os.unlink(day_path)
+                    logger.info(f"Removed symlink (not following): {day_path}")
+                else:
+                    shutil.rmtree(day_path)
+                    logger.info(f"Deleted old recordings: {day_path}")
                 removed_count += 1
-                logger.info(f"Deleted old recordings: {day_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete {day_path}: {e}")
 

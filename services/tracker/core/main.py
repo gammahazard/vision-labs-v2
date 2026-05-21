@@ -175,6 +175,16 @@ def run():
                     detections = json.loads(detections_json)
                     frame_bytes = data.get(b"frame_bytes", None)
 
+                    # Update frame dimensions from vehicle-detector emissions
+                    # too. Without this, vehicle-only cameras would never
+                    # update tracker.frame_width away from the 640×480 default
+                    # and zone normalization on vehicle bboxes would be wrong.
+                    fw = data.get(b"frame_width", b"").decode()
+                    fh = data.get(b"frame_height", b"").decode()
+                    if fw and fh:
+                        tracker.frame_width = int(fw)
+                        tracker.frame_height = int(fh)
+
                     if detections:
                         tracker._process_vehicle_detections(detections, timestamp, frame_bytes)
 

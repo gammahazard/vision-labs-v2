@@ -481,7 +481,13 @@ class TestTrackerVehicleEvent:
         assert len(detected_events) == 2  # Both arrivals emit
 
     def test_vehicle_snapshot_stored_in_redis(self, tracker_instance):
-        """Vehicle snapshot bytes are stored in Redis with snapshot key."""
+        """Vehicle snapshot bytes are stored in Redis with snapshot key.
+
+        Key shape is `vehicle_snapshot:{camera_id}:{timestamp_ms}` —
+        millisecond resolution to keep two cars arriving in the same
+        second from overwriting each other's snapshot (see
+        test_vehicle_snapshot_key_no_collision below).
+        """
         tracker, r = tracker_instance
 
         jpeg = b"\xff\xd8\xff\xe0real_snapshot_data"
@@ -493,9 +499,42 @@ class TestTrackerVehicleEvent:
 
         tracker._process_vehicle_detections(detections, 1708000000.0, jpeg)
 
-        # Snapshot should be stored
-        snap_key = "vehicle_snapshot:cam1:1708000000"
+        # Snapshot is stored under the ms-resolution key
+        snap_key = "vehicle_snapshot:cam1:1708000000000"
         assert r._keys.get(snap_key) == jpeg
+
+    def test_vehicle_snapshot_key_no_collision(self, tracker_instance):
+        """Two vehicles arriving in the same second on the same camera
+        must get distinct snapshot keys.
+
+        Before the millisecond-resolution fix, the key was
+        `vehicle_snapshot:{cam}:{int(timestamp_seconds)}` — two new
+        TrackedVehicles created in the same second would overwrite each
+        other's JPEG, and the second car's `vehicle_idle` Telegram would
+        end up showing the first car's photo.
+        """
+        tracker, r = tracker_instance
+
+        jpeg_a = b"\xff\xd8\xff\xe0car_a_snapshot"
+        jpeg_b = b"\xff\xd8\xff\xe0car_b_snapshot"
+
+        # Two distinct (non-IoU-matching) detections, 30 ms apart, same
+        # whole second. Tracker creates two new TrackedVehicles, each
+        # with frame_bytes → each writes its own snapshot key.
+        det_a = [{"bbox": [100, 200, 300, 400], "class_name": "car", "confidence": 0.9}]
+        det_b = [{"bbox": [800, 200, 1000, 400], "class_name": "truck", "confidence": 0.9}]
+
+        tracker._process_vehicle_detections(det_a, 1708000000.000, jpeg_a)
+        tracker._process_vehicle_detections(det_b, 1708000000.030, jpeg_b)
+
+        # Two distinct snapshot keys must exist in Redis, each with the
+        # right payload
+        key_a = "vehicle_snapshot:cam1:1708000000000"
+        key_b = "vehicle_snapshot:cam1:1708000000030"
+        assert r._keys.get(key_a) == jpeg_a
+        assert r._keys.get(key_b) == jpeg_b
+        # Sanity: snapshots are not the same key
+        assert key_a != key_b
 
     def test_vehicle_event_no_snapshot_without_frame_bytes(self, tracker_instance):
         """Without frame_bytes, snapshot_key should be empty."""
