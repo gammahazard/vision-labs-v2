@@ -255,7 +255,7 @@
     <div class="home-panels">
 
         <!-- Conditions: time of day, sunrise/sunset, weather -->
-        <section class="panel conditions-panel" id="conditionsPanel">
+        <section class="panel conditions-panel collapsed" id="conditionsPanel">
             <div class="panel-header" onclick="togglePanel(this)">
                 <h2>🌤️ Conditions</h2>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -323,7 +323,7 @@
         <!-- Recent Activity: combined event feed across every enabled camera.
              events.js polls /api/events with no camera filter (aggregate) and
              renders a small per-camera badge on each row. -->
-        <section class="panel activity-panel" id="activityPanel">
+        <section class="panel activity-panel collapsed" id="activityPanel">
             <div class="panel-header" onclick="togglePanel(this)">
                 <h2>📋 Recent Activity</h2>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -351,7 +351,7 @@
         </section>
 
         <!-- Faces: shared across all cameras (one face DB, recognized by any camera) -->
-        <section class="panel faces-panel" id="facesPanel">
+        <section class="panel faces-panel collapsed" id="facesPanel">
             <div class="panel-header" onclick="togglePanel(this)">
                 <h2>👤 Known Faces</h2>
                 <div style="display:flex;align-items:center;gap:6px;">
