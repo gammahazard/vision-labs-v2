@@ -345,6 +345,29 @@ async def startup():
     else:
         logger.info(f"Config already exists in {CONFIG_KEY}: {existing}")
 
+    # Backfill DEFAULT_CONFIG keys onto every existing per-camera config hash
+    # using hsetnx — sets the key only if absent, so user-customized values
+    # are never clobbered. This handles schema additions to DEFAULT_CONFIG
+    # propagating to already-registered cameras (the bug: 2026-05-20 added
+    # min_keypoints + kp_confidence_thresh to DEFAULT_CONFIG after /audit-repo
+    # caught pose-detector reading them with no seed; existing cameras would
+    # have continued falling back to pose-detector env defaults without this).
+    try:
+        camera_ids = list(r.hkeys("cameras:registry"))
+        backfilled_count = 0
+        for cam_id in camera_ids:
+            cam_config_key = f"config:{cam_id}"
+            for k, v in DEFAULT_CONFIG.items():
+                if r.hsetnx(cam_config_key, k, v):
+                    backfilled_count += 1
+        if backfilled_count:
+            logger.info(
+                f"Backfilled {backfilled_count} missing DEFAULT_CONFIG key(s) "
+                f"across {len(camera_ids)} camera config hash(es)"
+            )
+    except Exception as e:
+        logger.warning(f"Per-camera DEFAULT_CONFIG backfill skipped: {e}")
+
     # Phase G: No more env-based camera seeding. Fresh installs start with
     # an EMPTY cameras:registry — the user adds their first camera via the
     # setup wizard (which auto-suggests cam1 as the slot ID). This is what
