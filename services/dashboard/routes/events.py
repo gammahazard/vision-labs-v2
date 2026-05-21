@@ -245,6 +245,15 @@ def resolve_event_snapshot_path(event_id: str, camera_id: str = "") -> str | Non
     if "/" in safe_id or "\\" in safe_id or ".." in safe_id:
         return None
 
+    # camera_id arrives from a query param (?camera=) and is interpolated
+    # into the snapshot path below. Same defence-in-depth as for event_id:
+    # only allow the alphanumeric/underscore/dash shape camera ids use in
+    # the registry. A crafted ?camera=../../etc would otherwise let the
+    # caller read /etc/<safe_id>.jpg style paths (narrow because safe_id
+    # is digit-only, but still a real traversal).
+    if camera_id and not re.fullmatch(r"[A-Za-z0-9_\-]+", camera_id):
+        return None
+
     if camera_id:
         p = os.path.join(SNAPSHOT_DIR, camera_id, f"{safe_id}.jpg")
         if os.path.exists(p):
