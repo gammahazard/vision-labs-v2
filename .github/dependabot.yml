@@ -1,0 +1,142 @@
+# .github/dependabot.yml
+#
+# Dependabot version-update configuration.
+#
+# This file enables Dependabot version updates. (Alerts + security updates are
+# separately toggled in repo Settings → Code security.) Once committed,
+# Dependabot will walk every (ecosystem, directory) tuple below on the
+# scheduled interval and open a PR if any pinned dep can be bumped.
+#
+# Config choices:
+# - WEEKLY on Mondays — predictable cadence, batches a week's worth of
+#   upstream releases into one review pass per ecosystem.
+# - GROUPED — every Python file produces ONE PR per week containing every
+#   bumpable dep in that file (instead of N separate PRs). Same for Actions.
+# - IGNORE major version bumps — semver-major changes (e.g. fastapi 0.x → 1.x)
+#   need real migration planning, not an auto-PR. Patch + minor only. You'll
+#   still see major releases in the alerts feed; you just won't get an auto-PR.
+# - OPEN PR LIMIT — caps how many of this ecosystem's PRs can be open at
+#   once. Prevents backlog buildup if you don't triage for a few weeks.
+#
+# What's NOT covered here (intentional):
+# - Docker base images (services/*/Dockerfile). nvidia/cuda image bumps
+#   can break GPU driver compat — manual review only, never auto-PR.
+# - npm / static JS — no package.json in services/dashboard/static; deps are
+#   vendored manually (e.g. DOMPurify in js/lib/).
+
+version: 2
+updates:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Python — one entry per service that ships its own requirements.txt
+  # ──────────────────────────────────────────────────────────────────────
+
+  - package-ecosystem: "pip"
+    directory: "/services/dashboard"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(dashboard)"
+      include: "scope"
+    groups:
+      dashboard-python:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "pip"
+    directory: "/services/tracker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(tracker)"
+      include: "scope"
+    groups:
+      tracker-python:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "pip"
+    directory: "/services/recorder"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(recorder)"
+      include: "scope"
+    groups:
+      recorder-python:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "pip"
+    directory: "/services/camera-ingester"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(camera-ingester)"
+      include: "scope"
+    groups:
+      camera-ingester-python:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  # ──────────────────────────────────────────────────────────────────────
+  # GitHub Actions — catches things like the actions/checkout@v4 → v5
+  # Node 24 transition we bumped manually. Single grouped PR per week.
+  # ──────────────────────────────────────────────────────────────────────
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci(deps)"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
