@@ -5,7 +5,7 @@
 
 # OpenCV headless — no GUI needed in a Docker container.
 # We only use it for RTSP capture and JPEG encoding.
-opencv-python-headless==4.10.0.84
+opencv-python-headless==4.13.0.92
 
 # Redis client for publishing frames to Redis Streams.
-redis==5.2.1
+redis==5.3.1
