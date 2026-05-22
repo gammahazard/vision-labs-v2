@@ -83,3 +83,22 @@ def _vote(per_crop_probs, yolo_confs: list[float],
     if winner_conf < threshold:
         return (None, winner_conf)
     return (classes[winner_idx], winner_conf)
+
+
+def _enforce_make_model_consistency(
+    make_out: tuple,
+    model_out: tuple,
+    make_to_models: dict,
+) -> tuple:
+    """Drop the less-confident of (make, model) when the predicted model
+    isn't in the predicted make's roster. No-op if either is None.
+    """
+    make_label, make_conf = make_out
+    model_label, model_conf = model_out
+    if make_label is None or model_label is None:
+        return (make_out, model_out)
+    if model_label in make_to_models.get(make_label, ()):
+        return (make_out, model_out)
+    if make_conf >= model_conf:
+        return (make_out, (None, model_conf))
+    return ((None, make_conf), model_out)

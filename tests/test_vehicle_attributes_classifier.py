@@ -83,3 +83,51 @@ def test_vote_empty_input_returns_none():
     winner, conf = _vote(probs, yolo_confs, classes, threshold=0.55)
     assert winner is None
     assert conf == 0.0
+
+
+def test_consistency_keeps_matching_pair():
+    from services.vehicle_attributes.classifier import _enforce_make_model_consistency
+    make_to_models = {
+        'Honda': ['Civic', 'Accord'],
+        'Toyota': ['Camry', 'Corolla'],
+    }
+    new_make, new_model = _enforce_make_model_consistency(
+        ('Honda', 0.8), ('Civic', 0.7), make_to_models,
+    )
+    assert new_make == ('Honda', 0.8)
+    assert new_model == ('Civic', 0.7)
+
+
+def test_consistency_drops_model_when_less_confident():
+    from services.vehicle_attributes.classifier import _enforce_make_model_consistency
+    make_to_models = {'Honda': ['Civic'], 'Toyota': ['Camry']}
+    new_make, new_model = _enforce_make_model_consistency(
+        ('Toyota', 0.8), ('Civic', 0.6), make_to_models,
+    )
+    assert new_make == ('Toyota', 0.8)
+    assert new_model == (None, 0.6)
+
+
+def test_consistency_drops_make_when_less_confident():
+    from services.vehicle_attributes.classifier import _enforce_make_model_consistency
+    make_to_models = {'Honda': ['Civic']}
+    new_make, new_model = _enforce_make_model_consistency(
+        ('Toyota', 0.4), ('Civic', 0.7), make_to_models,
+    )
+    assert new_make == (None, 0.4)
+    assert new_model == ('Civic', 0.7)
+
+
+def test_consistency_skips_when_either_is_none():
+    from services.vehicle_attributes.classifier import _enforce_make_model_consistency
+    make_to_models = {'Honda': ['Civic']}
+    new_make, new_model = _enforce_make_model_consistency(
+        ('Toyota', 0.8), (None, 0.4), make_to_models,
+    )
+    assert new_make == ('Toyota', 0.8)
+    assert new_model == (None, 0.4)
+    new_make, new_model = _enforce_make_model_consistency(
+        (None, 0.4), ('Civic', 0.8), make_to_models,
+    )
+    assert new_make == (None, 0.4)
+    assert new_model == ('Civic', 0.8)
