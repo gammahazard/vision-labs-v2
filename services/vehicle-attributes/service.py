@@ -140,7 +140,19 @@ def _accumulate_crop(event: dict, buffers: dict,
         return
 
     cam = event.get("camera_id", "")
-    hd_bytes = r_bin.get(HD_FRAME_KEY.format(camera_id=cam))
+    # Prefer the per-sample HD snapshot key paired by the tracker at the
+    # exact moment the bbox was computed. Fixes the drift bug where the
+    # generic `frame_hd:{cam}` key may contain a frame from a different
+    # moment than the bbox — for fast-moving cars that drift = car has
+    # moved out of the bbox region, crop catches empty road. Falls back
+    # to the legacy generic key if the per-sample key is missing or has
+    # already expired (60 s TTL on those).
+    hd_snapshot_key = event.get("hd_snapshot_key", "")
+    hd_bytes = None
+    if hd_snapshot_key:
+        hd_bytes = r_bin.get(hd_snapshot_key)
+    if hd_bytes is None:
+        hd_bytes = r_bin.get(HD_FRAME_KEY.format(camera_id=cam))
     if hd_bytes is None:
         logger.debug(f"HD frame missing for {cam} — skip sample {track_id}")
         return

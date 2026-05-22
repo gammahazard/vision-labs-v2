@@ -20,6 +20,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **`vehicle_sample` + `vehicle_gone` leaked into events panel** — filtered server-side in `routes/events.py`; stream still carries them for the attribute service. *Dashboard restart only.*
 - **IoU center-distance ratio too tight for wide-angle cams** — bumped `VEHICLE_GHOST_MAX_DIST_RATIO` 2.0 → 3.5 (catches 225-px shifts seen on cam1 fish-eye). *Requires tracker rebuild.*
 - **Vehicle-attributes per-track dirs invisible to Browse** — Phase 1 compose mounted `snapshot-data` but dashboard reads `qnap-snapshots`; the data was being written and read on two different volumes. All 20 vehicle-attributes-camN blocks now mount `qnap-snapshots`; orphan `snapshot-data:` volume removed. *Requires per-cam vehicle-attributes recreate.*
+- **Vehicle-attribute crops misaligned with bbox** — generic `frame_hd:{cam}` fetch by vehicle-attributes drifted relative to the bbox's detection moment, so crops landed on background. Now vehicle-detector ships `hd_frame_bytes` paired with each detection; tracker writes a per-sample `vehicle_hd_sample:{cam}:{vid}:{ms}` key (60 s TTL); vehicle-attributes reads from that key (falls back to generic `frame_hd` if missing). Mirror of v0.2.0 person-snapshot drift fix. *Requires vehicle-detector + tracker + vehicle-attributes rebuild.*
 
 ---
 
