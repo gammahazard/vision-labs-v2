@@ -950,12 +950,16 @@ class TestVehicleGhostBuffer:
 # ===========================================================================
 # Tracker — vehicle_sample event emission (Phase 1 vehicle-attributes)
 # ===========================================================================
-def test_tracker_emits_vehicle_sample_every_n_updates(monkeypatch):
-    """With EMIT_VEHICLE_SAMPLES=1 and SAMPLE_INTERVAL_FRAMES=3, the third
-    matched update on an existing vehicle emits `vehicle_sample`. The 1st
-    and 2nd matched updates do not."""
+def test_tracker_emits_vehicle_sample_every_n_updates_after_eager_window(monkeypatch):
+    """With EAGER_SAMPLE_FRAMES=0 (eager window disabled) and
+    SAMPLE_INTERVAL_FRAMES=3: the spawn frame still emits a sample (the
+    new-vehicle branch is unconditional), then the every-Nth gate fires at
+    fc=3, 6, ... Earlier behavior — with no spawn sample — meant a 4-frame
+    visit produced 1 sample; under the spawn-sample fix the same visit
+    produces 2 (spawn + fc=3)."""
     monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
     monkeypatch.setenv("SAMPLE_INTERVAL_FRAMES", "3")
+    monkeypatch.setenv("EAGER_SAMPLE_FRAMES", "0")
     monkeypatch.setenv("CAMERA_ID", "cam1")
     import importlib
     from services.tracker.core import manager as mgr
@@ -965,24 +969,95 @@ def test_tracker_emits_vehicle_sample_every_n_updates(monkeypatch):
     m = mgr.Manager(fake)
 
     bbox = [100, 100, 200, 200]
-    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
-                                    "confidence": 0.8}], timestamp=0.0)
-    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
-                                    "confidence": 0.8}], timestamp=1.0)
-    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
-                                    "confidence": 0.8}], timestamp=2.0)
-    m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
-                                    "confidence": 0.8}], timestamp=3.0)
+    for t in range(4):
+        m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                        "confidence": 0.8}], timestamp=float(t))
 
     events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
     sample_events = [e for e in events if e.get("event_type") == "vehicle_sample"]
     detected_events = [e for e in events if e.get("event_type") == "vehicle_detected"]
 
     assert len(detected_events) == 1
+    # spawn (fc=1) + fc=3 matches → 2 samples
+    assert len(sample_events) == 2
+    assert all(json.loads(s["bbox"]) == bbox for s in sample_events)
+
+
+def test_tracker_short_drive_by_three_detections_produces_three_samples(monkeypatch):
+    """User-facing guarantee: with the default eager window (8 frames) any
+    short drive-by where the detector hits the same vehicle N≤8 times
+    produces N samples, not 1 or 2. Before the spawn-sample + eager-window
+    fix, 3 detector hits produced 1 sample (the new-vehicle branch never
+    emitted, and the every-3rd gate only fired once at fc=3). Now: 3."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("SAMPLE_INTERVAL_FRAMES", "3")
+    monkeypatch.delenv("EAGER_SAMPLE_FRAMES", raising=False)  # default = 8
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    bbox = [100, 100, 200, 200]
+    for t in range(3):
+        m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                        "confidence": 0.8}], timestamp=float(t))
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    sample_events = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    assert len(sample_events) == 3
+
+
+def test_tracker_single_frame_visit_produces_one_sample(monkeypatch):
+    """A vehicle the detector sees only once — single-frame appearance —
+    must still produce one buffered crop. Before the spawn-sample fix this
+    produced zero samples and the per-track dir was never written
+    (empty-buffer skip in storage.py:43)."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    m._process_vehicle_detections([{"bbox": [100, 100, 200, 200], "class_name": "car",
+                                    "confidence": 0.8}], timestamp=0.0)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    sample_events = [e for e in events if e.get("event_type") == "vehicle_sample"]
     assert len(sample_events) == 1
-    s = sample_events[0]
-    assert s["vehicle_id"].startswith("vehicle_")
-    assert json.loads(s["bbox"]) == bbox
+
+
+def test_tracker_long_track_falls_back_to_throttle_after_eager_window(monkeypatch):
+    """For a long parked-car track, sample emission must throttle to
+    SAMPLE_INTERVAL_FRAMES after the EAGER_SAMPLE_FRAMES window — otherwise
+    we 3x the Redis HD-sample write cost on every persistent track."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("SAMPLE_INTERVAL_FRAMES", "3")
+    monkeypatch.setenv("EAGER_SAMPLE_FRAMES", "8")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    bbox = [100, 100, 200, 200]
+    # 20 detections: fc=1 spawn + fc=2..20 matches
+    for t in range(20):
+        m._process_vehicle_detections([{"bbox": bbox, "class_name": "car",
+                                        "confidence": 0.8}], timestamp=float(t))
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    sample_events = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    # Eager: fc=1..8 (8 samples). Throttled: fc=9, 12, 15, 18 (4 samples).
+    # fc=21 would be next but we stop at fc=20. Total = 12.
+    assert len(sample_events) == 12
 
 
 def test_tracker_does_not_emit_sample_when_feature_disabled(monkeypatch):

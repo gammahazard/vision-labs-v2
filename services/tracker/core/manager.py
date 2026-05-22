@@ -50,6 +50,16 @@ from .state import TrackedPerson, TrackedVehicle
 # tests monkeypatch os.environ before reloading.
 EMIT_VEHICLE_SAMPLES = os.getenv("EMIT_VEHICLE_SAMPLES", "0") == "1"
 SAMPLE_INTERVAL_FRAMES = max(1, int(os.getenv("SAMPLE_INTERVAL_FRAMES", "3")))
+# Emit a sample on EVERY matched update for the first N frames of a new
+# track. After this window we fall back to the SAMPLE_INTERVAL_FRAMES
+# throttle. Reason: brief drive-bys produce only a handful of detector
+# hits (observed: 6 hits across two tracks for a single 2.5s truck pass).
+# With SAMPLE_INTERVAL_FRAMES=3 + spawn-not-sampled, those 6 hits became
+# 1 stored crop. EAGER_SAMPLE_FRAMES default matches buffer.max_crops in
+# vehicle-attributes (8) — if the detector sees the vehicle 8 times we
+# fill the reservoir exactly; longer tracks fall back to the throttle so
+# parked-car traffic doesn't 3x the Redis HD-sample writes.
+EAGER_SAMPLE_FRAMES = max(0, int(os.getenv("EAGER_SAMPLE_FRAMES", "8")))
 
 # YOLOv8 frequently flips a single vehicle between "car", "truck", and
 # "bus" across consecutive frames (especially trucks/SUVs at partial
@@ -385,10 +395,16 @@ class PersonTracker:
                     veh.idle_alerted = True
                     self._emit_vehicle_idle_event(veh, timestamp)
 
-                # Phase 1: emit a sampling event every Nth matched update
-                # so vehicle-attributes-cam{N} can pull the HD frame at a
-                # known cadence. Cheap pubsub-equivalent — costs one XADD.
-                if EMIT_VEHICLE_SAMPLES and veh.frame_count % SAMPLE_INTERVAL_FRAMES == 0:
+                # Emit a sampling event so vehicle-attributes-cam{N} can pull
+                # the HD frame for this track. For the first EAGER_SAMPLE_FRAMES
+                # matched updates, emit every frame (short drive-bys would
+                # otherwise lose 2/3 of their detector hits to the throttle).
+                # After that, fall back to the every-Nth throttle to bound
+                # Redis HD-sample write cost on long parked-car tracks.
+                if EMIT_VEHICLE_SAMPLES and (
+                    veh.frame_count <= EAGER_SAMPLE_FRAMES
+                    or veh.frame_count % SAMPLE_INTERVAL_FRAMES == 0
+                ):
                     self._emit_vehicle_sample_event(veh, timestamp)
 
             else:
@@ -420,6 +436,15 @@ class PersonTracker:
                 # and the global timer was dropping legitimate events when
                 # two vehicles arrived within 3 seconds of each other.
                 self._emit_vehicle_detected_event(veh, timestamp)
+
+                # Also emit a sample for the spawn frame so vehicle-attributes
+                # captures the very first crop. Without this, a 1-detection
+                # track produces 0 buffer entries (empty buffer skips flush
+                # in storage.py) and a 2-detection track produces 1. The
+                # spawn sample is independent of EAGER_SAMPLE_FRAMES — that
+                # constant only governs the existing-vehicle branch throttle.
+                if EMIT_VEHICLE_SAMPLES:
+                    self._emit_vehicle_sample_event(veh, timestamp)
 
         # --- Step 2: Move stale vehicles to ghost buffer (deferred vehicle_left) ---
         # Instead of firing vehicle_left immediately when a vehicle goes stale,
