@@ -267,8 +267,18 @@ class PersonTracker:
                 # an SUV that drove through that spot, then the classifier
                 # vote split between them and body_type came out at conf
                 # 0.54 (just under the 0.55 threshold).
+                #
+                # Gate on `is_stationary or idle_alerted`, not idle_alerted
+                # alone — is_stationary flips True after ~5 center-history
+                # samples (~1 s) once the track stops moving, while
+                # idle_alerted only fires after vehicle_idle_timeout (150s).
+                # Without is_stationary in the gate, a freshly-parked car
+                # is protected only after 150 s of accumulating pollution:
+                # vehicle_0011 had two passing-car bboxes merged into its
+                # crops at +1 s and +40 s, both well before idle_alerted.
+                tight_iou = veh.idle_alerted or veh.is_stationary
                 threshold = (VEHICLE_IDLE_IOU_THRESHOLD
-                             if veh.idle_alerted
+                             if tight_iou
                              else VEHICLE_IOU_THRESHOLD)
                 if iou > best_iou and iou >= threshold:
                     best_iou = iou
@@ -438,11 +448,14 @@ class PersonTracker:
             # Idle-confirmed tracks must not be matched via the loose
             # center-distance fallback. This fallback exists for FAST cars
             # whose IoU drops between consecutive frames — parked cars
-            # don't move. Letting an idle track match this way would let
+            # don't move. Letting a parked track match this way would let
             # a drive-by car that already failed the tight idle-IoU check
             # sneak back in via the looser center-distance path. Skipping
-            # them here keeps the idle-IoU tightening effective.
-            if veh.idle_alerted:
+            # them here keeps the idle-IoU tightening effective. Use
+            # is_stationary (not just idle_alerted) so freshly-parked
+            # cars are protected from the moment they stop moving, not
+            # 150 s later when idle_alerted finally fires.
+            if veh.idle_alerted or veh.is_stationary:
                 continue
             vx = (veh.bbox[0] + veh.bbox[2]) / 2
             vy = (veh.bbox[1] + veh.bbox[3]) / 2
@@ -477,7 +490,12 @@ class PersonTracker:
             # ghost it would let an unrelated nearby vehicle inherit
             # the parked car's track id.
             idle_max = bbox_w * 0.3
-            effective_max = idle_max if veh.idle_alerted else max_dist
+            # Use is_stationary (not just idle_alerted) so a freshly-
+            # parked car ghosted by a brief detector miss gets the
+            # stricter re-association bound from the moment it stops
+            # moving — same rationale as the IoU gate above.
+            parked = veh.idle_alerted or veh.is_stationary
+            effective_max = idle_max if parked else max_dist
             if dist < effective_max and dist < best_dist:
                 best_dist = dist
                 best_id = vid

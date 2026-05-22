@@ -1180,6 +1180,53 @@ def test_drive_by_emits_vehicle_gone_but_not_vehicle_left(monkeypatch):
     assert left == [], f"expected NO vehicle_left for drive-by, got {left}"
 
 
+def test_stationary_but_not_yet_idle_alerted_track_rejects_drive_by_merge(monkeypatch):
+    """Contract: a car that's stopped moving but hasn't been idle for the
+    full vehicle_idle_timeout (150 s default) must STILL be protected
+    from drive-by merges. Observed live on cam1 — vehicle_0011 (parked
+    Honda) absorbed two passing-car bboxes at +1 s and +40 s after
+    detection, well before idle_alerted would have fired at +150 s. The
+    tight-IoU gate must trigger on `is_stationary or idle_alerted`, not
+    idle_alerted alone."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Park a car and feed 6 frames at the same bbox so is_stationary
+    # flips True (needs ≥5 center-history samples). We do NOT mark
+    # idle_alerted=True — vehicle_idle_timeout hasn't elapsed yet.
+    for i in range(6):
+        m._process_vehicle_detections(
+            [{"bbox": [100, 100, 200, 200], "class_name": "car",
+              "confidence": 0.85}],
+            timestamp=float(i) * 0.2,
+        )
+    parked = next(iter(m.tracked_vehicles.values()))
+    assert parked.is_stationary, "test setup: track should be stationary"
+    assert not parked.idle_alerted, \
+        "test setup: idle_alerted shouldn't fire this early"
+
+    # A drive-by car passes with bbox [120, 120, 220, 220] — overlaps the
+    # parked car's bbox at IoU ~0.47, well above the regular 0.2 threshold
+    # but well below the 0.65 idle-IoU threshold. Must NOT merge: this is
+    # the bug class that polluted vehicle_0011's track buffer in prod.
+    m._process_vehicle_detections(
+        [{"bbox": [120, 120, 220, 220], "class_name": "car",
+          "confidence": 0.78}],
+        timestamp=2.0,
+    )
+
+    assert len(m.tracked_vehicles) == 2, (
+        f"drive-by must NOT merge into stationary (but not-yet-idle) "
+        f"track; tracks="
+        f"{[(v.vehicle_id, v.bbox, v.idle_alerted, v.is_stationary) for v in m.tracked_vehicles.values()]}"
+    )
+
+
 def test_idle_track_rejects_low_iou_drive_by_match(monkeypatch):
     """Contract: a parked (idle-confirmed) car must NOT absorb a drive-by
     car that briefly overlaps its bbox at modest IoU. Observed live on

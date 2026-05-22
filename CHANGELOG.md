@@ -14,11 +14,12 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
 
 ### Fixed
-- **Drive-by car polluted an idle parked car's track buffer** — IoU match used the same loose 0.2 threshold for parked + moving tracks; a passing vehicle that overlapped the parked bbox at IoU ~0.3 was merged in, and its crop ended up in the parked car's classifier vote (observed on vehicle_0001 angle_05). New `VEHICLE_IDLE_IOU_THRESHOLD` (default 0.65) only accepts near-perfect overlap on idle tracks; loose center-distance fallbacks also skip idle tracks now. *Requires tracker rebuild.*
-- **Events panel returned 0 for cam1** — internal `vehicle_sample` writes (5fps × samples per parked car) saturated the newest tail of `events:cam1`; the API read `count=N` then post-filtered, so every read returned 0 user events. Reader now batches + filters until it has N user events or scans MAX_REDIS_SCAN messages (default 2000). *Dashboard restart only.*
-- **Vehicle-attributes classifier fell back to null with `ModuleNotFoundError: torch`** — Dockerfile used bare `pip install` which lands in python3.10; CMD runs `python` = python3.11. Switched to `python -m pip install` (mirror of pose-detector pattern). *Requires vehicle-attributes rebuild.*
-- **Same parked car spawning a fresh track every detector hiccup** — added `VEHICLE_IDLE_GHOST_TTL` (default 600s); idle-confirmed tracks keep their ghost slot through long detector gaps instead of expiring at 30s. *Requires tracker rebuild.*
-- **Classifier produced null attributes despite torch loading** — `services/vehicle-attributes/classes/*.json` were the PR #22 stubs (body=8, make=50); trained weights expect body=9, make=49. `load_state_dict` rejected the checkpoint, classifier fell back to null on every flush. Copied the real JSONs from `training-output/` over the stubs. *Requires vehicle-attributes rebuild.*
+- **Parked-car tracks absorbed drive-by crops in their first 150 s** — tight-IoU gate now triggers on `is_stationary or idle_alerted` (was idle_alerted-only, fires at +150 s). *Requires tracker rebuild.*
+- **Drive-by polluted an idle parked car's crops at IoU ~0.3** — `VEHICLE_IDLE_IOU_THRESHOLD` (default 0.65) for idle tracks; loose center-distance fallbacks skip idle tracks. *Requires tracker rebuild.*
+- **Events panel returned 0 for cam1** — internal `vehicle_sample` writes saturated the tail; reader now overscans (`MAX_REDIS_SCAN`, default 2000) until N user events surface. *Dashboard restart only.*
+- **`ModuleNotFoundError: torch` in vehicle-attributes** — Dockerfile `pip install` landed in python3.10; service runs python3.11. Switched to `python -m pip install`. *Requires vehicle-attributes rebuild.*
+- **Same parked car spawning a fresh track every detector hiccup** — added `VEHICLE_IDLE_GHOST_TTL` (default 600 s); idle-confirmed tracks keep their ghost slot through long gaps. *Requires tracker rebuild.*
+- **Classifier null on every flush despite torch loading** — class JSONs in container were PR #22 stubs (body=8, make=50); trained weights expect body=9, make=49. Copied real JSONs from `training-output/`. *Requires vehicle-attributes rebuild.*
 - **Detector-flag dependencies enforced** — `detect_faces` now hard-gated on `detect_persons` (UI + server).
 - **Mid-run `detect_*` toggles take effect** — `upsert_camera` ships pre-expanded `{prefix}-{profile}` on `config:apply`. *Requires orchestrator rebuild.*
 - **`vehicle_left` spammed events panel for drive-bys** — new internal `vehicle_gone`; `vehicle_left` now idle-leave only. *Requires tracker + vehicle-attributes rebuild.*
@@ -28,7 +29,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle-attributes per-track dirs invisible to Browse** — 20 compose blocks switched from `snapshot-data` → `qnap-snapshots` to match the dashboard. *Requires per-cam vehicle-attributes recreate.*
 - **Vehicle-attribute crops misaligned with bbox** — vehicle-detector ships HD bytes inline with detection; tracker writes per-sample `vehicle_hd_sample:*`. *Requires 3 service rebuilds.*
 - **`person_identified` events never fired despite cyan bbox** — replaced delete-on-empty with TTL refresh (`IDENTITY_KEY_TTL_SEC=5`). *Requires face-recognizer rebuild.*
-- **Brief drive-bys never produced a per-track dir** — tracker's `main.py` gated the ghost sweep on non-empty detections, so a single-frame car with no follow-up traffic never aged out; vehicle_gone never fired and vehicle-attributes never flushed. Now sweeps every poll. *Requires tracker rebuild.*
+- **Brief drive-bys never produced a per-track dir** — `main.py` gated the ghost sweep on non-empty detections; single-frame cars sat in `tracked_vehicles` forever. Now sweeps every poll. *Requires tracker rebuild.*
 
 ### Changed
 - **Browse day view simplified** — flat snapshot grid + single `📸 Vehicle crops taken (N)` button opening a per-track modal.
