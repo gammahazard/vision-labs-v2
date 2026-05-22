@@ -2632,3 +2632,16 @@ input[type="range"]::-moz-range-thumb {
     height: 60px; width: 80px; object-fit: cover; border-radius: 4px;
     flex-shrink: 0;
 }
+
+/* Phase 3 vehicle-attributes — attribute row on per-track cards */
+.track-attrs {
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    padding: 0 0.75rem 0.75rem;
+}
+.track-attrs-beta {
+    color: #64748b;
+    font-size: 0.7rem;
+    font-style: italic;
+    margin-left: 0.4rem;
+}

@@ -39,6 +39,22 @@ function initBrowse() {
     _loadBrowseHome();
 }
 
+// Returns an HTML snippet showing non-null color/body/make/model with a
+// (beta) tag. Returns '' when attrs is null/undefined or all fields blank.
+function _formatAttrs(attrs) {
+    if (!attrs) return '';
+    const color = attrs.color || '';
+    const body = attrs.body_type || '';
+    const make = attrs.make || '';
+    const model = attrs.model || '';
+    if (!color && !body && !make && !model) return '';
+    const left = [color, body].filter(Boolean).join(' ');
+    const right = [make, model].filter(Boolean).join(' ');
+    let combined = left;
+    if (right) combined += (left ? ' · ' : '') + right;
+    return `${combined} <span class="track-attrs-beta">(beta)</span>`;
+}
+
 // Delegated click handler on #browseContent. Bound once. Looks at the
 // closest [data-action] ancestor of the click target and dispatches.
 function _bindBrowseClickListener() {
@@ -155,6 +171,7 @@ async function _renderDayTracks(date, camera) {
                         <img src="${u}" class="track-angle" loading="lazy" alt="angle">
                     `).join('')}
                 </div>
+                <div class="track-attrs">${_formatAttrs(t.attributes)}</div>
             </div>
         `).join('');
 
