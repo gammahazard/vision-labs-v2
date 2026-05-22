@@ -214,7 +214,10 @@ class PersonTracker:
             logger.debug(f"Person snapshot save failed: {e}")
             return None
 
-    def _process_vehicle_detections(self, detections: list, timestamp: float, frame_bytes: bytes = None):
+    def _process_vehicle_detections(
+        self, detections: list, timestamp: float,
+        frame_bytes: bytes = None, hd_frame_bytes: bytes = None,
+    ):
         """
         Track vehicles across frames using IoU matching and emit events.
 
@@ -228,6 +231,13 @@ class PersonTracker:
         - vehicle_detected: when a new vehicle first appears
         - vehicle_idle: when a vehicle stays in roughly the same spot
                         for > VEHICLE_IDLE_TIMEOUT seconds
+
+        `hd_frame_bytes` is the HD-stream frame paired with this batch of
+        detections by vehicle-detector at emit time. Cached on the matched
+        TrackedVehicle so the next vehicle_sample event can write it to a
+        per-sample snapshot key for vehicle-attributes to consume — pairs
+        bbox + HD frame from the same moment instead of the attribute
+        service doing its own (drift-prone) frame_hd lookup later.
         """
         # --- Step 1: Match incoming detections to tracked vehicles via IoU ---
         for det in detections:
@@ -283,6 +293,11 @@ class PersonTracker:
                 # --- Existing vehicle: update state ---
                 veh = self.tracked_vehicles[best_match_id]
                 veh.update(bbox, class_name, confidence, timestamp)
+                # Stash the HD frame paired with THIS bbox so the next
+                # vehicle_sample emit can write a per-sample HD snapshot
+                # key. Pairs bbox+HD-frame from the same moment.
+                if hd_frame_bytes:
+                    veh.last_hd_frame_bytes = hd_frame_bytes
 
                 # Store/update snapshot if frame bytes provided
                 if frame_bytes and not veh.snapshot_key:
@@ -318,6 +333,8 @@ class PersonTracker:
                 self._next_vehicle_id += 1
 
                 veh = TrackedVehicle(vid, bbox, class_name, confidence, timestamp)
+                if hd_frame_bytes:
+                    veh.last_hd_frame_bytes = hd_frame_bytes
 
                 # Store snapshot in Redis with 24h TTL
                 if frame_bytes:
@@ -470,6 +487,20 @@ class PersonTracker:
         Mirrors vehicle_detected payload so a consumer can treat both as
         `(track_id, bbox, timestamp)` carriers without branching on event_type.
         """
+        # Write the per-sample HD snapshot to Redis with a short TTL so
+        # vehicle-attributes-cam{N} crops a frame that's temporally paired
+        # with the bbox (avoids the drift bug where `frame_hd:{cam}` may
+        # carry a frame from a different moment than when the bbox was
+        # computed). Mirror of the v0.2.0 person_appeared snapshot fix.
+        hd_snapshot_key = ""
+        if veh.last_hd_frame_bytes:
+            ts_ms = int(timestamp * 1000)
+            hd_snapshot_key = f"vehicle_hd_sample:{CAMERA_ID}:{veh.vehicle_id}:{ts_ms}"
+            try:
+                self.r.setex(hd_snapshot_key, 60, veh.last_hd_frame_bytes)
+            except Exception:
+                hd_snapshot_key = ""  # SETEX failed; consumer falls back
+
         event = {
             "camera_id": CAMERA_ID,
             "event_type": VEHICLE_SAMPLE_EVENT,
@@ -480,6 +511,7 @@ class PersonTracker:
             "vehicle_id": veh.vehicle_id,
             "vehicle_first_seen": str(int(veh.first_seen)),
             "frame_count": str(veh.frame_count),
+            "hd_snapshot_key": hd_snapshot_key,
         }
         self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
 

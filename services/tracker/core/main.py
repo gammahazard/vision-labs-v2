@@ -182,6 +182,11 @@ def run():
                     detections_json = data.get(b"detections", b"[]").decode()
                     detections = json.loads(detections_json)
                     frame_bytes = data.get(b"frame_bytes", None)
+                    # HD frame bytes paired by vehicle-detector at detection
+                    # emit time. May be None when the camera-ingester's
+                    # frame_hd TTL just expired. Carried through to the
+                    # attribute service via a per-sample snapshot key.
+                    hd_frame_bytes = data.get(b"hd_frame_bytes", None)
 
                     # Update frame dimensions from vehicle-detector emissions
                     # too. Without this, vehicle-only cameras would never
@@ -194,7 +199,10 @@ def run():
                         tracker.frame_height = int(fh)
 
                     if detections:
-                        tracker._process_vehicle_detections(detections, timestamp, frame_bytes)
+                        tracker._process_vehicle_detections(
+                            detections, timestamp, frame_bytes,
+                            hd_frame_bytes=hd_frame_bytes,
+                        )
 
                     r.xack(VEHICLE_STREAM, VEHICLE_CONSUMER_GROUP, message_id)
 
