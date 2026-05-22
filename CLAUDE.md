@@ -170,6 +170,8 @@ Verified: <tests pass / dashboard restarts clean / endpoint responds 200>
 - A WebSocket connection 4401 closes → expected, missing/invalid session cookie. The client should redirect to /login.
 - `routes.cameras` (file) and `cameras` (top-level module in dashboard/) — these are different things. The route is the FastAPI router; the top-level is the registry helpers. Don't rename without untangling all the imports.
 - `image_gen.py`, ComfyUI references in old planning docs (`docs/history/`) — image-gen feature was removed in Phase 8.A. Doc files are historical.
+- **`existing.get(flag, True)` shared-default trap.** When detecting changes between an existing dict and a new one (e.g., `upsert_camera`'s change-detection map), a single shared default of `True` silently misses absent→true transitions for fields that default to something other than `True`. Use a per-flag `defaults` dict so each field's "implicit prior value" is correct. Canonical example: `services/dashboard/cameras.py:detector_defaults` — `detect_persons/vehicles/faces` default-on but `detect_vehicle_attributes` defaults-off, so a single shared default would have silently broken the absent→true transition for vehicle attributes (caught live during Phase 1 verification).
+- **`restart: unless-stopped` causes a tight restart loop for services with a registry-gate clean-exit.** Per-cam services that read `cameras:registry` at startup and exit cleanly (code 0) when their flag is false will be infinitely restarted by `unless-stopped`. cam1's existing pose/vehicle/face detectors use `unless-stopped` only because their flags are always-on — they never reach the clean-exit path. cam2–cam20's detector variants AND the new `vehicle-attributes-cam{N}` all use `restart: on-failure` for this exact reason. Match the latter for any new per-cam service with a registry gate.
 
 ---
 
@@ -262,10 +264,30 @@ Edit `.github/dependabot.yml`, add a `- package-ecosystem:` block. Example: if y
 
 ## 14. When in doubt
 
-1. Run the test suite. 377 should pass.
+1. Run the test suite. As of 2026-05-21 the count is around 419 (it grows over time; check `pytest -q` for the actual number).
 2. Restart the dashboard. Log should print "Dashboard ready at http://localhost:8080" and "Telegram poller started".
 3. Hit `/login.html` in a browser. It should return 200 (auth-exempt).
 4. Check `docker compose logs --since=30s | grep -iE "error|auth.*required"` is empty.
 5. If the change is user-visible, confirm `CHANGELOG.md` has the line under `[Unreleased]`.
 
 If all four pass, the stack is healthy.
+
+---
+
+## 15. Subagent implementer reports are hypotheses, not facts
+
+When delegating a task to an implementer subagent (via `Agent` or the subagent-driven-development skill), treat `Status: DONE` as a claim to verify, not a fact. Subagents report optimistically — they can pass pytest + ruff and still miss real bugs that only surface at deploy time.
+
+**Bug classes this codebase has seen reported as `DONE`:**
+- **Invalid PyPI version pin** (e.g., `opencv-python-headless==4.13.0.88` — doesn't exist on PyPI). pytest passes because tests never build the image; ruff passes because the version string is syntactically valid.
+- **Per-flag default mismatch in a change-detection map** (the `existing.get(flag, True)` shared-default trap in §10 above). pytest passes because no test exercised the absent→true transition for the affected field.
+- **`restart: unless-stopped` on a service with a registry-gate clean-exit** producing a tight restart loop (§10). pytest passes because the registry-gate exit path isn't unit-tested at the compose-policy level.
+
+**Verification checklist before marking a subagent task complete:**
+1. Read the actual diff (`git diff HEAD~1 HEAD`), not just the subagent's prose claim of what changed.
+2. For service code that ships in an image: `docker compose build <svc>`, `docker compose up -d --force-recreate --no-deps <svc>`, confirm `docker compose ps` shows it staying up (not bouncing).
+3. For UI: hard-refresh the page, click through the feature manually. JS-in-string interpolation bugs don't appear in pytest.
+4. For deploy-time config (env vars, compose `restart:` policies, image pins, volume mounts): live-test, not just read. Static review misses runtime interactions.
+5. For TDD work: confirm the new tests genuinely *fail* before the implementation, then *pass* after — if the subagent skipped the red→green proof, the test may be checking something other than the bug.
+
+Subagents are net-positive for parallelism + context isolation but shift the verification burden onto the coordinator. Don't skip it. The cost of one extra `docker compose build + ps` per task is trivial compared to debugging the same bug class twice.
