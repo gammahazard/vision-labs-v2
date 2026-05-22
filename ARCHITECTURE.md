@@ -151,8 +151,7 @@ Vision Labs is an **event-driven microservice system** running on a single host 
    - XREVRANGE frames stream to grab the matching frame
    - InsightFace detection + embedding extraction (CUDA via onnxruntime-gpu)
    - Compare against SQLite DB of enrolled faces (cosine similarity)
-   - HSET identity_state:cam1 with matches
-   - If detection list is empty: DEL identity_state:cam1 (avoids stale labels on empty scenes)
+   - HSET identity_state:cam1 with matches + EXPIRE 5 s (refreshed on every successful write; empty-detection frames are skipped so the key expires naturally, avoiding a race with tracker's 2 s identity poll)
    - XADD identities:cam1
 
 6. dashboard WebSocket (/ws/live — authenticated, validates vl_session cookie):
