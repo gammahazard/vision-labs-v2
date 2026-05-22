@@ -58,6 +58,23 @@ HD_FRAME_KEY = stream_key(_HD_FRAME_TMPL, camera_id=CAMERA_ID)
 MAX_EVENT_STREAM_LEN = int(os.getenv("MAX_EVENT_STREAM_LEN", "5000"))
 VEHICLE_IDLE_TIMEOUT = float(os.getenv("VEHICLE_IDLE_TIMEOUT", "90.0"))
 VEHICLE_LOST_TIMEOUT = float(os.getenv("VEHICLE_LOST_TIMEOUT", "10.0"))
+# Non-idle tracks (moving vehicles) should age out of tracked_vehicles
+# much faster than idle/parked ones. A fast-moving car takes 1-2 s to
+# traverse this camera's FOV; after 3 s of no detection it's gone, full
+# stop. Keeping it in tracked_vehicles for the historical 10 s is what
+# let a school bus inherit a small car's track 18 s later (live, 15:09)
+# and a pickup track absorb a red SUV's spawn frame (live, 15:36).
+# Idle/stationary tracks still use the longer VEHICLE_LOST_TIMEOUT
+# (handles detector stutter on permanently-parked vehicles).
+VEHICLE_LOST_TIMEOUT_DRIVING = float(os.getenv("VEHICLE_LOST_TIMEOUT_DRIVING", "3.0"))
+# `_try_live_center_match` (the loose center-distance fallback for IoU
+# misses) uses bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO as its radius —
+# fine for consecutive-frame jitter (200 ms drift), wrong for stale
+# tracks. After VEHICLE_CENTER_MATCH_STALE_SECS of no match, skip the
+# live-center fallback entirely. Forces stale tracks to lose detections
+# they can't legitimately claim, while preserving the fast-mover rescue
+# for which the fallback was designed.
+VEHICLE_CENTER_MATCH_STALE_SECS = float(os.getenv("VEHICLE_CENTER_MATCH_STALE_SECS", "2.0"))
 VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))
 # Idle-confirmed tracks demand a much tighter IoU before accepting a new
 # detection. A parked car's bbox is fixed, so a real re-detection of the

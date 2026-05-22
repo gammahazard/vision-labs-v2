@@ -1547,6 +1547,141 @@ def test_idle_iom_rescue_priority_over_competing_non_idle_track(monkeypatch):
         f"vehicle_0002 should NOT have stolen the Honda's detection, got {v2.bbox}"
 
 
+def test_non_idle_track_ghosts_at_shorter_driving_timeout(monkeypatch):
+    """Non-idle (moving) tracks must move to ghost at the tighter
+    VEHICLE_LOST_TIMEOUT_DRIVING (3 s), not the idle-track 10 s.
+
+    Live regression at 15:36 on cam1: a pickup truck briefly visible at
+    19:35:57 left a track sitting in tracked_vehicles for 18+ seconds
+    of detector silence. When the red SUV arrived at 19:36:18 with bbox
+    269 px away, _try_live_center_match (loose 3.5×bbox_w radius)
+    grabbed it into the pickup's track. Shorter driving timeout +
+    stale-skip in live_center_match together close this hole."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Spawn a moving car at t=0
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 160], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    assert "vehicle_0001" in m.tracked_vehicles
+
+    # Sweep at t=5 — well past the 3 s driving timeout, well under the
+    # 10 s idle timeout. Empty detection list to force the sweep.
+    m._process_vehicle_detections([], timestamp=5.0)
+
+    assert "vehicle_0001" not in m.tracked_vehicles, \
+        "non-idle track must have ghosted at the 3 s driving timeout"
+    assert "vehicle_0001" in m._ghost_vehicles, \
+        "ghost buffer should hold the recently-pruned track"
+
+
+def test_idle_track_keeps_longer_lost_timeout(monkeypatch):
+    """Idle/stationary tracks must keep using the longer
+    VEHICLE_LOST_TIMEOUT (10 s) so detector stutter on a parked car
+    doesn't immediately push it to ghost — that was the whole reason
+    for the long ghost TTL on idle tracks (VEHICLE_IDLE_GHOST_TTL=600 s).
+    Driving-timeout cut applies only to non-idle tracks."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 160], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    veh = next(iter(m.tracked_vehicles.values()))
+    veh.idle_alerted = True
+
+    # Sweep at t=5 — past driving timeout (3 s), under idle timeout
+    # (10 s). Idle track must NOT be pruned.
+    m._process_vehicle_detections([], timestamp=5.0)
+    assert "vehicle_0001" in m.tracked_vehicles, \
+        "idle track must survive past driving timeout"
+
+    # Now at t=11 — past idle timeout too, ghost.
+    m._process_vehicle_detections([], timestamp=11.0)
+    assert "vehicle_0001" not in m.tracked_vehicles, \
+        "idle track must ghost after the 10 s idle timeout"
+
+
+def test_live_center_match_skips_stale_tracks(monkeypatch):
+    """The 269-px center distance between the pickup's last bbox and
+    the red SUV's first bbox (18 s gap) was under the 3.5×bbox_w radius,
+    so live_center_match accepted the merge. After this fix, tracks
+    that have been silent for >VEHICLE_CENTER_MATCH_STALE_SECS (2 s)
+    are skipped entirely by live_center_match — they need to either
+    re-IoU directly or ghost out."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Spawn a "pickup" track at t=0 in one position.
+    m._process_vehicle_detections(
+        [{"bbox": [450, 376, 532, 408], "class_name": "truck",
+          "confidence": 0.5}],
+        timestamp=0.0,
+    )
+    # Override last_seen to simulate the track having been matched
+    # ~3 s ago (stale per the 2 s threshold) — beyond live_center_match's
+    # stale window. Without overriding, the new detection at t=2.5 would
+    # also trigger the lost-timeout sweep.
+    veh = m.tracked_vehicles["vehicle_0001"]
+
+    # New detection 3 s later, 269 px center-distance away — same
+    # numbers as the live pickup/SUV merge.
+    result = m._try_live_center_match(
+        bbox=[706, 324, 807, 368], class_name="car",
+        current_ts=veh.last_seen + 3.0,
+    )
+    assert result is None, \
+        f"live_center_match must skip the 3-s-stale track, got {result}"
+
+
+def test_live_center_match_still_catches_consecutive_frame_jitter(monkeypatch):
+    """Negative case — within the stale window (≤2 s since last_seen),
+    live_center_match still catches the fast-mover IoU-jitter case it
+    was designed for. Don't over-tighten."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 160], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    # 0.2 s later — same vehicle, bbox shifted 60 px right (a fast car).
+    # IoU is very low; live_center_match should catch it within stale
+    # window. Center distance ~60 px; bbox_w = 100 → max_dist = 350.
+    result = m._try_live_center_match(
+        bbox=[160, 100, 260, 160], class_name="car",
+        current_ts=0.2,
+    )
+    assert result == "vehicle_0001", \
+        f"live_center_match must still rescue fast-mover jitter, got {result}"
+
+
 def test_stale_track_rejects_size_mismatched_iou_match(monkeypatch):
     """Live regression at 15:09:45 on cam1 — vehicle_0023.
 
