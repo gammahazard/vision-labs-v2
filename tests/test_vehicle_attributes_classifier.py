@@ -5,6 +5,10 @@ import pytest
 import numpy as np
 from PIL import Image
 
+# torch ships inside the vehicle-attributes Docker image but not in the host
+# test venv that CI runs against. Skip cleanly when absent.
+pytest.importorskip("torch")
+
 
 def _make_jpeg(rgb_arr: np.ndarray) -> bytes:
     img = Image.fromarray(rgb_arr)
