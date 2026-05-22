@@ -22,6 +22,9 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle-attributes per-track dirs invisible to Browse** — Phase 1 compose mounted `snapshot-data` but dashboard reads `qnap-snapshots`; the data was being written and read on two different volumes. All 20 vehicle-attributes-camN blocks now mount `qnap-snapshots`; orphan `snapshot-data:` volume removed. *Requires per-cam vehicle-attributes recreate.*
 - **Vehicle-attribute crops misaligned with bbox** — generic `frame_hd:{cam}` fetch by vehicle-attributes drifted relative to the bbox's detection moment, so crops landed on background. Now vehicle-detector ships `hd_frame_bytes` paired with each detection; tracker writes a per-sample `vehicle_hd_sample:{cam}:{vid}:{ms}` key (60 s TTL); vehicle-attributes reads from that key (falls back to generic `frame_hd` if missing). Mirror of v0.2.0 person-snapshot drift fix. *Requires vehicle-detector + tracker + vehicle-attributes rebuild.*
 
+### Changed
+- **Browse day view simplified** — dropped the confusing "Per-track view (N tracks)" section. Day view is now the legacy flat snapshot grid + a single `📸 Vehicle crops taken (N)` button at the top. Click → modal with grouped-by-track thumbnails. Click a thumbnail → existing fullscreen photo viewer. `/api/browse/days` now also returns `track_count` per day.
+
 ---
 
 ## [0.2.0] — 2026-05-21
