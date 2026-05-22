@@ -64,12 +64,58 @@ class FakeRedis:
         return 0
 
     # --- Stream ops ---
-    def xrevrange(self, name, count=None, *args, **kwargs):
+    def xrevrange(self, name, max=None, min=None, count=None, **kwargs):
+        """Mimic real Redis: `max=` and `min=` are stream ID cursors.
+
+        `(ID` (parenthesis prefix) = exclusive bound. `+` / `-` = +∞ / -∞.
+        Order: newest first. `count` caps the result length.
+        Required for the events route's batched-overscan loop — without
+        cursor honoring, the loop would repeatedly read the same batch.
+        """
         stream = self._streams.get(name, [])
-        result = list(reversed(stream))
+        reversed_stream = list(reversed(stream))
+
+        def _id_key(sid: str) -> tuple[int, int]:
+            try:
+                ms, seq = sid.split("-", 1)
+                return (int(ms), int(seq))
+            except (ValueError, AttributeError):
+                return (0, 0)
+
+        # `max=` filter (exclusive if "(ID", else inclusive)
+        if max is not None and max != "+":
+            mx = max
+            mx_exclusive = mx.startswith("(") if isinstance(mx, str) else False
+            if mx_exclusive:
+                mx = mx[1:]
+            mx_key = _id_key(mx)
+            if mx_exclusive:
+                reversed_stream = [
+                    s for s in reversed_stream if _id_key(s[0]) < mx_key
+                ]
+            else:
+                reversed_stream = [
+                    s for s in reversed_stream if _id_key(s[0]) <= mx_key
+                ]
+        # `min=` filter (rarely used; included for completeness)
+        if min is not None and min != "-":
+            mn = min
+            mn_exclusive = mn.startswith("(") if isinstance(mn, str) else False
+            if mn_exclusive:
+                mn = mn[1:]
+            mn_key = _id_key(mn)
+            if mn_exclusive:
+                reversed_stream = [
+                    s for s in reversed_stream if _id_key(s[0]) > mn_key
+                ]
+            else:
+                reversed_stream = [
+                    s for s in reversed_stream if _id_key(s[0]) >= mn_key
+                ]
+
         if count:
-            result = result[:count]
-        return result
+            reversed_stream = reversed_stream[:count]
+        return reversed_stream
 
     def xlen(self, name):
         return len(self._streams.get(name, []))

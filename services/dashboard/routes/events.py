@@ -138,17 +138,60 @@ async def get_events(count: int = 50, camera: str = "", before: str = ""):
 
         # ---- Phase 1: pull from Redis stream(s) ----
         # `(ID` is the Redis exclusive-bound syntax — gives items with id < ID.
+        # Internal-only event types (vehicle_sample, vehicle_gone — see Phase 3
+        # filter below) are kept in the same stream as user events. On a camera
+        # with an active vehicle, vehicle_sample fires every ~3 frames at 5
+        # FPS — quickly flooding the stream and pushing user-visible events
+        # off the end of a `count=20` read. Symptom: cam1 home-panel shows
+        # zero events while events:cam1 has 2500+ samples in its tail.
+        # Fix: read in batches, filter inside the loop, keep going until we
+        # have enough user events or hit a hard scan cap.
+        _INTERNAL_EVENT_TYPES = ("vehicle_sample", "vehicle_gone")
+        # Scan up to MAX_REDIS_SCAN messages per camera before giving up on
+        # the Redis side. Cam1 was observed at ≈2.5k events with the last
+        # 2.5k being internal `vehicle_sample` writes from a single parked
+        # car — so 100× the requested count handles dense internal flooding
+        # without an unbounded sweep. ~50 ms worst-case latency per camera
+        # on a 5-fps stream at maxlen=5000.
+        MAX_REDIS_SCAN = max(count * 100, 2000)
+        BATCH_SIZE = max(count * 2, 50)
+
         max_id = f"({before}" if before else "+"
         merged: list[tuple] = []
         for cid in cam_ids:
             evt_stream = _stream_key(_EVT_TMPL, camera_id=cid)
-            try:
-                events_raw = ctx.r.xrevrange(evt_stream, max=max_id, count=count)
-            except redis.ResponseError:
-                # Bad cursor (or empty stream) — skip this camera silently
-                events_raw = []
-            for event_id, data in events_raw:
-                merged.append((event_id, dict(data), cid))
+            collected_for_cam: list[tuple] = []
+            scanned_for_cam = 0
+            batch_max = max_id
+            seen_oldest_id: str | None = None
+            while (len(collected_for_cam) < count
+                   and scanned_for_cam < MAX_REDIS_SCAN):
+                try:
+                    batch = ctx.r.xrevrange(
+                        evt_stream, max=batch_max, count=BATCH_SIZE,
+                    )
+                except redis.ResponseError:
+                    # Bad cursor or empty stream — skip this camera silently
+                    break
+                if not batch:
+                    break
+                # Defensive: if the cursor didn't actually advance (real Redis
+                # always advances, but a buggy proxy or non-compliant fake
+                # could repeat the same batch and pin us in an infinite loop
+                # until MAX_REDIS_SCAN).
+                if batch[-1][0] == seen_oldest_id:
+                    break
+                seen_oldest_id = batch[-1][0]
+                scanned_for_cam += len(batch)
+                for event_id, data in batch:
+                    if data.get("event_type") in _INTERNAL_EVENT_TYPES:
+                        continue
+                    collected_for_cam.append((event_id, dict(data), cid))
+                    if len(collected_for_cam) >= count:
+                        break
+                # Next batch starts strictly before the oldest we just saw.
+                batch_max = f"({batch[-1][0]}"
+            merged.extend(collected_for_cam)
 
         merged.sort(key=lambda x: _ms_from_stream_id(x[0]), reverse=True)
         merged = merged[:count]
