@@ -14,6 +14,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
 
 ### Fixed
+- **Stale track absorbed an unrelated vehicle of very different size** — primary IoU + `_try_live_center_match` now reject matches against tracks idle > `VEHICLE_MATCH_STALE_SECS` (1 s) when bbox-area ratio > `VEHICLE_MATCH_AREA_RATIO_MAX` (2.5×). *Requires tracker rebuild.*
 - **Browse vehicle-crops modal showed times in UTC instead of `LOCATION_TIMEZONE`** — `routes/browse.py` missed the `tz=TZ_LOCAL` kwarg. *Dashboard restart only.*
 - **Vehicle-crops modal closed itself every 30 s while open** — Browse panel auto-refresh skipped when `#cropsModal` is mounted. *Dashboard hard-refresh.*
 - **va service merged crops across tracker restarts when track IDs got re-used** — `vehicle_detected` now drops any buffer whose `first_seen` doesn't match. *Requires vehicle-attributes rebuild.*
