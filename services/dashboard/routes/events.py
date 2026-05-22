@@ -170,8 +170,20 @@ async def get_events(count: int = 50, camera: str = "", before: str = ""):
             merged.extend(journal_results)
 
         # ---- Phase 3: render & return ----
+        # Filter out internal-only event types that consumers downstream of
+        # the events stream use (vehicle-attributes service), not the
+        # user-facing events panel:
+        #   - vehicle_sample: tracker emits at SAMPLE_INTERVAL_FRAMES cadence
+        #     so the attribute service can crop HD frames. No user signal.
+        #   - vehicle_gone: ghost-buffer expiry, always paired with either a
+        #     prior vehicle_idle (user already notified) or a drive-by track
+        #     end (nothing actionable). vehicle_left still surfaces for the
+        #     idle-leave case via the idle_alerted gate in the tracker.
+        _INTERNAL_EVENT_TYPES = ("vehicle_sample", "vehicle_gone")
         events = []
         for event_id, data, src_cam in merged:
+            if data.get("event_type") in _INTERNAL_EVENT_TYPES:
+                continue
             evt = {
                 "id": event_id,
                 "event_type": data.get("event_type", ""),

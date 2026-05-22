@@ -179,6 +179,8 @@ Verified: <tests pass / dashboard restarts clean / endpoint responds 200>
 
 `CHANGELOG.md` is the public record of every shipped change. Keep it current; it's the first thing a careful reader checks after the README.
 
+**STYLE — non-negotiable, one line per entry.** Every bullet under `## [Unreleased]` and every versioned section is ONE LINE: a bold summary phrase, an em-dash, then ≤120 chars of the what/where. NO multi-sentence explanations, NO live-incident narratives, NO file-line citations chained with semicolons. Depth lives in the commit message + PR description — the CHANGELOG is a scannable index. If you cannot say it in one line, the CHANGELOG entry needs to point at the commit, not duplicate it. If the change has a runtime impact, append an italicized `*Requires X rebuild.*` (or similar) at the end of the same line. This rule has been re-stated multiple times; do not revert to paragraph style.
+
 **On every PR / commit that ships user-visible behavior**, add a line under the `## [Unreleased]` section. Categories:
 - **Added** — new features, new commands, new tools, new env vars, new endpoints
 - **Fixed** — bugs squashed, including the NameError-class regressions from §0
