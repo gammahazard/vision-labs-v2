@@ -10,23 +10,23 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ### Added
 - **Edit pencil ✏ on camera rows** — modal to rename, edit lat/lon, toggle detectors without delete + re-add.
-- **Vehicle attributes Phase 1** — per-cam `vehicle-attributes-cam{N}` service buffers HD crops, writes per-track dirs (`hero.jpg` + `angle_NN.jpg` + `metadata.json`) on track end. New `detect_vehicle_attributes` flag, `vehicle_sample` tracker event, Browse grouped cards. No classifier yet. *Requires new service build + tracker rebuild.*
-- **Vehicle attributes Phase 3 (v0 classifier)** — ConvNeXt-Tiny multi-head fills `metadata.json.attributes` with color + body + make (always) + model (drive-by tracks only). Gated by `ENABLE_CLASSIFIER` env (default 0); deploys before trained weights exist. *Requires vehicle-attributes rebuild + HF Hub-hosted weights when enabled.*
+- **Vehicle attributes Phase 1** — per-cam `vehicle-attributes-cam{N}` flushes per-track HD crops + `metadata.json` on track end. *Requires new service build + tracker rebuild.*
+- **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
 
 ### Fixed
-- **Detector-flag dependencies enforced** — `detect_faces` requires `detect_persons` now hard-gated UI (`data-requires=`) + server (`_validate_camera`).
-- **Mid-run `detect_*` toggles take effect** — `upsert_camera` publishes pre-expanded `{prefix}-{profile}` on `config:apply`; orchestrator routes to the single affected camera. *Requires orchestrator rebuild.*
-- **`vehicle_left` spammed events panel for drive-bys** — split producer: new internal `vehicle_gone` for all track ends; `vehicle_left` now idle-leave only (gated on `idle_alerted`). *Requires tracker + vehicle-attributes rebuild.*
+- **Detector-flag dependencies enforced** — `detect_faces` now hard-gated on `detect_persons` (UI + server).
+- **Mid-run `detect_*` toggles take effect** — `upsert_camera` ships pre-expanded `{prefix}-{profile}` on `config:apply`. *Requires orchestrator rebuild.*
+- **`vehicle_left` spammed events panel for drive-bys** — new internal `vehicle_gone`; `vehicle_left` now idle-leave only. *Requires tracker + vehicle-attributes rebuild.*
 - **IoU identity-swap on fast-moving vehicles** — added `_try_live_center_match` fallback after the IoU step. *Requires tracker rebuild.*
-- **`vehicle_sample` + `vehicle_gone` leaked into events panel** — filtered server-side in `routes/events.py`; stream still carries them for the attribute service. *Dashboard restart only.*
-- **IoU center-distance ratio too tight for wide-angle cams** — bumped `VEHICLE_GHOST_MAX_DIST_RATIO` 2.0 → 3.5 (catches 225-px shifts seen on cam1 fish-eye). *Requires tracker rebuild.*
-- **Vehicle-attributes per-track dirs invisible to Browse** — Phase 1 compose mounted `snapshot-data` but dashboard reads `qnap-snapshots`; the data was being written and read on two different volumes. All 20 vehicle-attributes-camN blocks now mount `qnap-snapshots`; orphan `snapshot-data:` volume removed. *Requires per-cam vehicle-attributes recreate.*
-- **Vehicle-attribute crops misaligned with bbox** — generic `frame_hd:{cam}` fetch by vehicle-attributes drifted relative to the bbox's detection moment, so crops landed on background. Now vehicle-detector ships `hd_frame_bytes` paired with each detection; tracker writes a per-sample `vehicle_hd_sample:{cam}:{vid}:{ms}` key (60 s TTL); vehicle-attributes reads from that key (falls back to generic `frame_hd` if missing). Mirror of v0.2.0 person-snapshot drift fix. *Requires vehicle-detector + tracker + vehicle-attributes rebuild.*
-- **`person_identified` events never fired despite cyan bbox in live view** — face-recognizer `delete(IDENTITY_KEY)` on every empty-detection frame raced tracker's 2 s identity poll; websocket overlay (10 fps) caught the writes but tracker rarely did, so the event + Telegram notification never fired. Removed the explicit delete; identity_state now lives under a short TTL (`IDENTITY_KEY_TTL_SEC`, default 5 s) refreshed on every successful write and expiring naturally on empty scenes. *Requires face-recognizer rebuild.*
+- **`vehicle_sample` + `vehicle_gone` leaked into events panel** — filtered server-side in `routes/events.py`. *Dashboard restart only.*
+- **IoU center-distance ratio too tight for wide-angle cams** — bumped `VEHICLE_GHOST_MAX_DIST_RATIO` 2.0 → 3.5. *Requires tracker rebuild.*
+- **Vehicle-attributes per-track dirs invisible to Browse** — 20 compose blocks switched from `snapshot-data` → `qnap-snapshots` to match the dashboard. *Requires per-cam vehicle-attributes recreate.*
+- **Vehicle-attribute crops misaligned with bbox** — vehicle-detector ships HD bytes inline with detection; tracker writes per-sample `vehicle_hd_sample:*`. *Requires 3 service rebuilds.*
+- **`person_identified` events never fired despite cyan bbox** — replaced delete-on-empty with TTL refresh (`IDENTITY_KEY_TTL_SEC=5`). *Requires face-recognizer rebuild.*
 
 ### Changed
-- **Browse day view simplified** — dropped the confusing "Per-track view (N tracks)" section. Day view is now the legacy flat snapshot grid + a single `📸 Vehicle crops taken (N)` button at the top. Click → modal with grouped-by-track thumbnails. Click a thumbnail → existing fullscreen photo viewer. `/api/browse/days` now also returns `track_count` per day.
-- **Classifier split into two ConvNeXt-Tiny models** — frozen ImageNet backbone + linear color head (VeRi-776 trained) and fine-tuned Stanford-Cars backbone + body/make/model heads; one shared backbone couldn't serve both training regimes. Adds IR/night-vision skip-color path (`IR_SATURATION_THRESHOLD`, default 8.0) so the color head doesn't emit noise on monochrome night frames. *Requires vehicle-attributes rebuild + new `color_head_v0` / `multihead_v0` weights on HF Hub.*
+- **Browse day view simplified** — flat snapshot grid + single `📸 Vehicle crops taken (N)` button opening a per-track modal.
+- **Classifier split into two ConvNeXt-Tiny models** — frozen-backbone color + Cars-fine-tuned body/make/model; adds IR-frame skip-color path. *Requires vehicle-attributes rebuild.*
 
 ---
 
