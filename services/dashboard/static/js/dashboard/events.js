@@ -772,15 +772,27 @@ async function eventDetailSubmitName() {
 let _photoModal = null;
 
 function _openEventPhoto(url, name) {
-    // Refuse non-http(s) schemes — `url` flows in from `data-url` attributes
-    // populated in various places. Defense against an attacker-controlled
-    // `data:image/svg+xml,<svg onload=...>` (which can execute when set on
-    // <img>.src in some browsers) or `javascript:` URL. Closes the CodeQL
-    // js/xss-through-dom alert on the .src assignment below.
-    if (typeof url !== "string"
-        || /^\s*(javascript|data|vbscript|file):/i.test(url)) {
+    // Validate `url` through the URL constructor + an http(s) protocol
+    // allowlist before assigning to <img>.src. `url` flows in from
+    // `data-url` attributes set in various places — defense against an
+    // attacker-controlled `data:image/svg+xml,<svg onload=...>` payload
+    // (which executes when set on .src in some browsers) and the usual
+    // `javascript:` / `vbscript:` URLs. Using `new URL` instead of a regex
+    // denylist is the canonical sanitizer CodeQL recognizes for the
+    // js/xss-through-dom rule on this sink.
+    if (typeof url !== "string") {
         return;
     }
+    let parsed;
+    try {
+        parsed = new URL(url, document.baseURI);
+    } catch (_) {
+        return; // malformed URL
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return; // reject data:, javascript:, file:, vbscript:, etc.
+    }
+    const safeUrl = parsed.href;
     if (!_photoModal) {
         _photoModal = document.createElement("div");
         _photoModal.className = "event-photo-modal";
@@ -793,7 +805,7 @@ function _openEventPhoto(url, name) {
         `;
         document.body.appendChild(_photoModal);
     }
-    document.getElementById("eventPhotoModalImg").src = url;
+    document.getElementById("eventPhotoModalImg").src = safeUrl;
     document.getElementById("eventPhotoModalCaption").textContent = name;
     _photoModal.style.display = "flex";
 }
