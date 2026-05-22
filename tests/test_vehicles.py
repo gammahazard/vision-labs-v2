@@ -1547,6 +1547,144 @@ def test_idle_iom_rescue_priority_over_competing_non_idle_track(monkeypatch):
         f"vehicle_0002 should NOT have stolen the Honda's detection, got {v2.bbox}"
 
 
+def test_sample_skipped_when_moving_vehicle_overlaps_idle_track(monkeypatch):
+    """When a passing (non-idle) vehicle physically overlaps a parked
+    idle track's bbox region, the HD-frame crop for the parked track
+    would contain two vehicles. Skip the vehicle_sample emit so the
+    classifier buffer doesn't accumulate polluted crops."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # parked Honda (idle) — small distant bbox
+    m._process_vehicle_detections(
+        [{"bbox": [735, 323, 809, 358], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    parked = next(iter(m.tracked_vehicles.values()))
+    parked.idle_alerted = True
+
+    # passing truck enters the frame nearby — bbox overlaps Honda's bbox
+    # (truck driving past, partially occluding the parked car)
+    m._process_vehicle_detections(
+        [{"bbox": [720, 320, 850, 380], "class_name": "truck",
+          "confidence": 0.5}],
+        timestamp=1.0,
+    )
+    truck = m.tracked_vehicles["vehicle_0002"]
+    assert not truck.idle_alerted and not truck.is_stationary
+
+    # clear emitted events from the spawn phase
+    fake._streams.get("events:cam1", []).clear()
+
+    # Now feed a fresh detection of the parked Honda. With the truck
+    # still in the frame overlapping, the sample emit must be skipped.
+    m._process_vehicle_detections(
+        [{"bbox": [735, 323, 809, 358], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=2.0,
+    )
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    samples = [e for e in events if e.get("event_type") == "vehicle_sample"
+               and e.get("vehicle_id") == parked.vehicle_id]
+    assert samples == [], \
+        f"sample for parked car must be skipped during truck occlusion, got {samples}"
+
+
+def test_sample_not_skipped_when_overlapping_track_is_also_idle(monkeypatch):
+    """Two cars permanently parked next to each other with overlapping
+    bboxes must NOT block each other's sampling. The idle-vs-idle
+    carve-out keeps reservoir filling for both."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # First parked car
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 180], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    v1 = m.tracked_vehicles["vehicle_0001"]
+    v1.idle_alerted = True
+
+    # Second parked car, adjacent with overlapping bbox
+    m._process_vehicle_detections(
+        [{"bbox": [180, 105, 280, 185], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=1.0,
+    )
+    v2 = m.tracked_vehicles["vehicle_0002"]
+    v2.idle_alerted = True
+
+    fake._streams.get("events:cam1", []).clear()
+
+    # Re-detect the first parked car. Second is idle and overlapping
+    # — must not block.
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 180], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=2.0,
+    )
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    samples = [e for e in events if e.get("event_type") == "vehicle_sample"
+               and e.get("vehicle_id") == v1.vehicle_id]
+    assert len(samples) == 1, \
+        f"adjacent idle tracks must not block sampling, got {samples}"
+
+
+def test_sample_not_skipped_when_no_overlap_with_moving_vehicle(monkeypatch):
+    """A moving vehicle elsewhere in the frame (no bbox overlap) must
+    not block the parked car's sampling."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 180], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    parked = m.tracked_vehicles["vehicle_0001"]
+    parked.idle_alerted = True
+
+    # Moving vehicle far away, no overlap
+    m._process_vehicle_detections(
+        [{"bbox": [600, 400, 700, 480], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=1.0,
+    )
+
+    fake._streams.get("events:cam1", []).clear()
+
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 180], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=2.0,
+    )
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    samples = [e for e in events if e.get("event_type") == "vehicle_sample"
+               and e.get("vehicle_id") == parked.vehicle_id]
+    assert len(samples) == 1, "non-overlapping moving vehicle must not block sampling"
+
+
 def test_idle_iom_rescue_respects_class_compatibility_for_4wheel(monkeypatch):
     """Positive case for #41 interaction — YOLO flips class car↔truck on
     the same physical parked vehicle AND outputs a jittered bbox.

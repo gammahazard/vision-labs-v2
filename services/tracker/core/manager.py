@@ -29,6 +29,7 @@ from .config import (
     VEHICLE_IDLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOM_THRESHOLD,
     VEHICLE_IDLE_IOM_AREA_RATIO_MAX,
+    SAMPLE_OCCLUSION_IOU_THRESHOLD,
     VEHICLE_GHOST_TTL,
     VEHICLE_IDLE_GHOST_TTL,
     VEHICLE_GHOST_MAX_DIST_RATIO,
@@ -395,9 +396,16 @@ class PersonTracker:
                 # otherwise lose 2/3 of their detector hits to the throttle).
                 # After that, fall back to the every-Nth throttle to bound
                 # Redis HD-sample write cost on long parked-car tracks.
-                if EMIT_VEHICLE_SAMPLES and (
-                    veh.frame_count <= EAGER_SAMPLE_FRAMES
-                    or veh.frame_count % SAMPLE_INTERVAL_FRAMES == 0
+                #
+                # Occlusion gate: if another currently-tracked MOVING vehicle's
+                # bbox overlaps this track's bbox, skip the sample. Otherwise
+                # the parked car's classifier buffer gets crops with two
+                # vehicles visible (parked one + foreground intruder).
+                if (
+                    EMIT_VEHICLE_SAMPLES
+                    and (veh.frame_count <= EAGER_SAMPLE_FRAMES
+                         or veh.frame_count % SAMPLE_INTERVAL_FRAMES == 0)
+                    and not self._sample_occluded_by_moving_vehicle(veh)
                 ):
                     self._emit_vehicle_sample_event(veh, timestamp)
 
@@ -437,7 +445,13 @@ class PersonTracker:
                 # in storage.py) and a 2-detection track produces 1. The
                 # spawn sample is independent of EAGER_SAMPLE_FRAMES — that
                 # constant only governs the existing-vehicle branch throttle.
-                if EMIT_VEHICLE_SAMPLES:
+                # Occlusion gate applies here too — if a fast-moving vehicle
+                # spawns inside another moving vehicle's bbox (e.g., two
+                # cars overlapping at frame edge), skip the spawn sample.
+                if (
+                    EMIT_VEHICLE_SAMPLES
+                    and not self._sample_occluded_by_moving_vehicle(veh)
+                ):
                     self._emit_vehicle_sample_event(veh, timestamp)
 
         # --- Step 2: Move stale vehicles to ghost buffer (deferred vehicle_left) ---
@@ -533,6 +547,30 @@ class PersonTracker:
                 best_vid = vid
 
         return best_vid
+
+    def _sample_occluded_by_moving_vehicle(self, veh: 'TrackedVehicle') -> bool:
+        """True if a vehicle_sample for `veh` would capture pixels of
+        another foreground (moving) vehicle.
+
+        Returns True when any OTHER currently-tracked vehicle that is NOT
+        idle_alerted and NOT is_stationary has bbox IoU above
+        SAMPLE_OCCLUSION_IOU_THRESHOLD with `veh`. The idle-vs-idle carve-out
+        keeps two adjacent permanently-parked cars from blocking each
+        other's sampling.
+
+        Used to skip vehicle_sample emit during drive-by occlusion of a
+        parked car (the parked track's bbox region in the HD frame
+        contains pixels of the foreground intruder, polluting the
+        classifier's color/body/make/model vote).
+        """
+        for other_vid, other_veh in self.tracked_vehicles.items():
+            if other_vid == veh.vehicle_id:
+                continue
+            if other_veh.idle_alerted or other_veh.is_stationary:
+                continue
+            if compute_iou(veh.bbox, other_veh.bbox) > SAMPLE_OCCLUSION_IOU_THRESHOLD:
+                return True
+        return False
 
     def _try_live_center_match(self, bbox: list, class_name: str,
                                 current_ts: float = 0.0) -> str | None:

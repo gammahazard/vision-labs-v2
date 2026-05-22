@@ -79,6 +79,19 @@ VEHICLE_IDLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IDLE_IOU_THRESHOLD", "0.65
 # or small object inside a parked-truck bbox from false-merging.
 VEHICLE_IDLE_IOM_THRESHOLD = float(os.getenv("VEHICLE_IDLE_IOM_THRESHOLD", "0.9"))
 VEHICLE_IDLE_IOM_AREA_RATIO_MAX = float(os.getenv("VEHICLE_IDLE_IOM_AREA_RATIO_MAX", "2.0"))
+# Skip `vehicle_sample` emit when another currently-tracked non-idle
+# (i.e., moving) vehicle's bbox overlaps this track's bbox by more than
+# this IoU. Motivating case: a parked car's bbox region in the HD frame
+# captures pixels of a passing vehicle when the passing vehicle
+# physically occludes (or sits in front of) the parked car. Without the
+# skip, the parked car's classifier buffer accumulates crops with two
+# vehicles visible — body/make/model votes get pulled toward whatever
+# the foreground intruder looks like. The reservoir still fills from
+# unoccluded frames before/after the drive-by; skipping a few contested
+# samples doesn't starve a long parked-car track. Idle-vs-idle overlaps
+# (two parked cars adjacent) are NOT skipped because both vehicles
+# remain in the same relative position — no transient pollution.
+SAMPLE_OCCLUSION_IOU_THRESHOLD = float(os.getenv("SAMPLE_OCCLUSION_IOU_THRESHOLD", "0.15"))
 # Bumped 5.0 → 30.0 so a parked car briefly occluded by drive-by traffic
 # (delivery van, garbage truck stopping in front for >15 s) gets re-attached
 # to the same TrackedVehicle on the other side of the disturbance, instead of
