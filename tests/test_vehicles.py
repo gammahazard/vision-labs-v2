@@ -1134,6 +1134,51 @@ def test_drive_by_emits_vehicle_gone_but_not_vehicle_left(monkeypatch):
     assert left == [], f"expected NO vehicle_left for drive-by, got {left}"
 
 
+def test_brief_track_with_no_follow_up_traffic_still_expires(monkeypatch):
+    """Contract: `_process_vehicle_detections` must be called even on
+    empty-detection messages (and on empty xreadgroup polls) so the ghost
+    sweep can fire `vehicle_gone` for terminated tracks. Before the fix,
+    `main.py` skipped the call when `detections` was empty — a single-frame
+    drive-by on an otherwise quiet camera left the vehicle stuck in
+    `tracked_vehicles` forever and the vehicle-attributes flush never ran.
+    """
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import (
+        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL,
+    )
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # One-frame drive-by — the actual symptom on cam1.
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 200], "class_name": "car",
+          "confidence": 0.85}],
+        timestamp=0.0,
+    )
+    assert len(m.tracked_vehicles) == 1
+
+    # The fix: main.py now calls this on every poll, even with no new
+    # detections. Each empty call lets the sweep run.
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    expire_t = stale_t + VEHICLE_GHOST_TTL + 1.0
+    m._process_vehicle_detections([], timestamp=expire_t)
+
+    assert len(m.tracked_vehicles) == 0, \
+        "tracked_vehicles must be drained after ghost expiry"
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
+    assert len(gone) == 1, (
+        "vehicle_gone must fire for a brief drive-by even without follow-up "
+        "traffic — that's the trigger vehicle-attributes uses to flush the "
+        f"per-track dir. got events: {events}"
+    )
+
+
 def test_idle_leave_emits_both_vehicle_gone_and_vehicle_left(monkeypatch):
     """A car that went idle then left should emit BOTH vehicle_gone
     (internal — attribute service flush trigger) AND vehicle_left (user-

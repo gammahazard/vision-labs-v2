@@ -23,6 +23,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle-attributes per-track dirs invisible to Browse** — 20 compose blocks switched from `snapshot-data` → `qnap-snapshots` to match the dashboard. *Requires per-cam vehicle-attributes recreate.*
 - **Vehicle-attribute crops misaligned with bbox** — vehicle-detector ships HD bytes inline with detection; tracker writes per-sample `vehicle_hd_sample:*`. *Requires 3 service rebuilds.*
 - **`person_identified` events never fired despite cyan bbox** — replaced delete-on-empty with TTL refresh (`IDENTITY_KEY_TTL_SEC=5`). *Requires face-recognizer rebuild.*
+- **Brief drive-bys never produced a per-track dir** — tracker's `main.py` gated the ghost sweep on non-empty detections, so a single-frame car with no follow-up traffic never aged out; vehicle_gone never fired and vehicle-attributes never flushed. Now sweeps every poll. *Requires tracker rebuild.*
 
 ### Changed
 - **Browse day view simplified** — flat snapshot grid + single `📸 Vehicle crops taken (N)` button opening a per-track modal.

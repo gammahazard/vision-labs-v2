@@ -198,13 +198,26 @@ def run():
                         tracker.frame_width = int(fw)
                         tracker.frame_height = int(fh)
 
-                    if detections:
-                        tracker._process_vehicle_detections(
-                            detections, timestamp, frame_bytes,
-                            hd_frame_bytes=hd_frame_bytes,
-                        )
+                    # Call unconditionally — `_process_vehicle_detections`
+                    # also runs the ghost-migration + ghost-expiry sweep that
+                    # fires `vehicle_gone` for terminated tracks. If we skip
+                    # on empty detections, a brief drive-by followed by no
+                    # further traffic leaves the tracked vehicle in
+                    # `tracked_vehicles` forever — no vehicle_gone, no
+                    # vehicle-attributes flush, no per-track dir on disk.
+                    # Mirror of the `tracker.update(detections, ...)` person
+                    # path above which is also called unconditionally.
+                    tracker._process_vehicle_detections(
+                        detections, timestamp, frame_bytes,
+                        hd_frame_bytes=hd_frame_bytes,
+                    )
 
                     r.xack(VEHICLE_STREAM, VEHICLE_CONSUMER_GROUP, message_id)
+        else:
+            # vehicle-detector produced no message in this poll window.
+            # Still tick the cleanup so a track whose last frame was N s
+            # ago can age out even if the detector goes briefly silent.
+            tracker._process_vehicle_detections([], time.time())
 
     logger.info(
         f"Tracker stopped. Total events emitted: {tracker.total_events}"
