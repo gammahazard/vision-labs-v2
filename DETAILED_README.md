@@ -79,6 +79,7 @@ For a deeper walk through Redis streams/keys, pub/sub channels, and service-by-s
 | **vehicle-detector** | ✅ `DETECTOR_GPU` | YOLOv8s inference, publishes vehicle bounding boxes (car/truck/bus/motorcycle). Profile-gated per slot |
 | **tracker** | — | IoU matching across frames, assigns persistent IDs, publishes semantic events. Profile-gated per slot |
 | **face-recognizer** | ✅ `DETECTOR_GPU` | InsightFace embedding + SQLite enrollment DB, publishes identity matches. Port not exposed on host — access via dashboard proxy at `/api/faces`. Profile-gated per slot |
+| **vehicle-attributes** | ✅ `DETECTOR_GPU` | Per-cam HD-crop buffer; flushes per-track dir (`hero.jpg`, `angle_*.jpg`, `metadata.json`) on `vehicle_gone`. Phase 3 classifier (ConvNeXt-Tiny color + body/make/model heads, lazy-fetched from HF Hub) populates `metadata.json.attributes` when `ENABLE_CLASSIFIER=1`. Profile-gated per slot |
 | **dashboard** | — | FastAPI backend + static frontend — WebSocket live view (authenticated), REST APIs, background pollers, retention prune. Always on (not profile-gated) |
 | **ollama** | ✅ `CHAT_GPU` | Local LLM server — Qwen 3 14B (chat + tools) and MiniCPM-V (vision). Always on |
 | **recorder** | — | ffmpeg RTSP→`.ts` copy (no transcode), 1-hour segments, 3-day retention. Default destination `./data/recordings/`. Profile-gated per slot |

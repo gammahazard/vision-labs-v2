@@ -94,6 +94,7 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 | **vehicle-detector** | custom | — | GPU 0 | YOLOv8s, publishes vehicle bboxes |
 | **tracker** | custom | — | — | IoU-based person/vehicle tracking, event publishing |
 | **face-recognizer** | custom | *internal only (8081 not exposed)* | GPU 0 | InsightFace embedding, SQLite DB, REST API proxied through dashboard |
+| **vehicle-attributes** | custom | — | GPU 0 | Per-cam HD-crop buffer; flushes per-track dir on track end. Phase 3 v0 ConvNeXt-Tiny classifier (two models: color + body/make/model) lazy-loaded from HF Hub, gated by `ENABLE_CLASSIFIER`. Profile-gated per slot |
 | **dashboard** | custom | 8080 | — | FastAPI + WebSocket + static files + background tasks. WebSocket `/ws/live` requires session cookie |
 | **ollama** | ollama/ollama | 11434 | GPU 1 | LLM inference (Qwen 3 14B, MiniCPM-V) |
 | **recorder** | custom | host net | — | RTSP→`.ts` ffmpeg copy, 1-hour segments, 3-day retention. Runs by default to `./data/recordings/` (bind mount). All `recorder-camN` (cam1..cam20) are profile-gated to their slot; `recorder.py` reads RTSP URL from `cameras:registry` if `RTSP_URL` env is empty (same fallback as the ingester) |
