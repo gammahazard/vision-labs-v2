@@ -137,20 +137,27 @@ def test_consistency_skips_when_either_is_none():
     assert new_model == ('Civic', 0.8)
 
 
-def _mock_model(num_crops: int):
-    """Returns a callable that mimics the multi-head model's forward pass."""
+def _mock_color_model(num_crops: int):
+    """Mimics the color model's forward pass — returns logits over 10 colors."""
+    import torch
+    def fake_forward(_x):
+        out = torch.zeros(num_crops, 10)
+        out[:, 4] = 10.0   # 'red'
+        return out
+    return fake_forward
+
+
+def _mock_multihead(num_crops: int):
+    """Mimics the multi-head model's forward pass — returns 3 logit tensors."""
     import torch
     def fake_forward(_x):
         out = {
-            'color': torch.zeros(num_crops, 10),
             'body':  torch.zeros(num_crops, 8),
             'make':  torch.zeros(num_crops, 50),
             'model': torch.zeros(num_crops, 196),
         }
         # Logit magnitude chosen so the 196-class softmax for model crosses
-        # the 0.65 threshold from the spec. For color/body/make (≤50 classes)
-        # logit=5 is plenty; we use 10 uniformly for simplicity.
-        out['color'][:, 4] = 10.0   # 'red'
+        # the 0.65 threshold from the spec. Smaller heads cross sooner.
         out['body'][:, 0] = 10.0    # 'sedan'
         out['make'][:, 21] = 10.0   # 'Honda' (per the mock classes below)
         out['model'][:, 50] = 10.0  # arbitrary model index
@@ -164,7 +171,11 @@ def test_run_classifier_and_vote_drive_by_predicts_all_four(monkeypatch):
     from services.vehicle_attributes.buffer import TrackBuffer
     import torch
 
-    monkeypatch.setattr(clf, "_load_model", lambda: _mock_model(num_crops=3))
+    monkeypatch.setattr(clf, "_load_color_model",
+                        lambda: _mock_color_model(num_crops=3))
+    monkeypatch.setattr(clf, "_load_multihead_model",
+                        lambda: _mock_multihead(num_crops=3))
+    monkeypatch.setattr(clf, "_is_monochrome", lambda _b: False)
     monkeypatch.setattr(clf, "_load_classes", lambda: {
         'color': ['yellow','orange','green','gray','red','blue','white','golden','brown','black'],
         'body':  ['sedan','suv','coupe','pickup','van','hatchback','convertible','wagon'],
@@ -188,6 +199,7 @@ def test_run_classifier_and_vote_drive_by_predicts_all_four(monkeypatch):
     assert out['model'] == 'm50'
     assert out['voting_samples'] == 3
     assert out['classifier_version'].startswith('v0-')
+    assert out['ir_track'] is False
 
 
 def test_run_classifier_and_vote_idle_skips_model(monkeypatch):
@@ -196,7 +208,11 @@ def test_run_classifier_and_vote_idle_skips_model(monkeypatch):
     from services.vehicle_attributes.buffer import TrackBuffer
     import torch
 
-    monkeypatch.setattr(clf, "_load_model", lambda: _mock_model(num_crops=2))
+    monkeypatch.setattr(clf, "_load_color_model",
+                        lambda: _mock_color_model(num_crops=2))
+    monkeypatch.setattr(clf, "_load_multihead_model",
+                        lambda: _mock_multihead(num_crops=2))
+    monkeypatch.setattr(clf, "_is_monochrome", lambda _b: False)
     monkeypatch.setattr(clf, "_load_classes", lambda: {
         'color': ['yellow','orange','green','gray','red','blue','white','golden','brown','black'],
         'body':  ['sedan','suv','coupe','pickup','van','hatchback','convertible','wagon'],
@@ -225,7 +241,9 @@ def test_run_classifier_and_vote_empty_buffer_returns_all_null(monkeypatch):
     import classifier as clf
     from services.vehicle_attributes.buffer import TrackBuffer
 
-    monkeypatch.setattr(clf, "_load_model", lambda: None)
+    monkeypatch.setattr(clf, "_load_color_model", lambda: None)
+    monkeypatch.setattr(clf, "_load_multihead_model", lambda: None)
+    monkeypatch.setattr(clf, "_is_monochrome", lambda _b: False)
     monkeypatch.setattr(clf, "_load_classes", lambda: {
         'color': [], 'body': [], 'make': [], 'model': [], 'make_to_models': {},
     })
@@ -237,3 +255,41 @@ def test_run_classifier_and_vote_empty_buffer_returns_all_null(monkeypatch):
     assert out['make'] is None
     assert out['model'] is None
     assert out['voting_samples'] == 0
+
+
+def test_run_classifier_and_vote_ir_track_skips_color(monkeypatch):
+    """IR/night-vision tracks: color is suppressed, make/body/model still run."""
+    import services.vehicle_attributes  # noqa: F401
+    import classifier as clf
+    from services.vehicle_attributes.buffer import TrackBuffer
+    import torch
+
+    monkeypatch.setattr(clf, "_load_color_model",
+                        lambda: _mock_color_model(num_crops=3))
+    monkeypatch.setattr(clf, "_load_multihead_model",
+                        lambda: _mock_multihead(num_crops=3))
+    # Force every crop to be classified as monochrome → IR-track path.
+    monkeypatch.setattr(clf, "_is_monochrome", lambda _b: True)
+    monkeypatch.setattr(clf, "_load_classes", lambda: {
+        'color': ['yellow','orange','green','gray','red','blue','white','golden','brown','black'],
+        'body':  ['sedan','suv','coupe','pickup','van','hatchback','convertible','wagon'],
+        'make':  ['Acura'] * 21 + ['Honda'] + ['Toyota'] * 28,
+        'model': [f'm{i}' for i in range(196)],
+        'make_to_models': {'Honda': ['m50']},
+    })
+    monkeypatch.setattr(clf, "_preprocess",
+                        lambda crops: torch.zeros(len(crops), 3, 224, 224))
+
+    buf = TrackBuffer(track_id="v_ir", camera_id="cam1", first_seen=0.0)
+    for _ in range(3):
+        buf.append(crop=_make_jpeg(np.zeros((100, 80, 3), dtype=np.uint8)),
+                   yolo_conf=0.8, bbox=[10, 20, 50, 60])
+
+    out = clf.run_classifier_and_vote(buf, event_kind="drive_by")
+    assert out['color'] is None
+    assert out['color_confidence'] is None
+    assert out['ir_track'] is True
+    # Multi-head heads still emit predictions on IR frames.
+    assert out['body_type'] == 'sedan'
+    assert out['make'] == 'Honda'
+    assert out['model'] == 'm50'

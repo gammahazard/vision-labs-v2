@@ -25,6 +25,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ### Changed
 - **Browse day view simplified** — dropped the confusing "Per-track view (N tracks)" section. Day view is now the legacy flat snapshot grid + a single `📸 Vehicle crops taken (N)` button at the top. Click → modal with grouped-by-track thumbnails. Click a thumbnail → existing fullscreen photo viewer. `/api/browse/days` now also returns `track_count` per day.
+- **Classifier split into two ConvNeXt-Tiny models** — frozen ImageNet backbone + linear color head (VeRi-776 trained) and fine-tuned Stanford-Cars backbone + body/make/model heads; one shared backbone couldn't serve both training regimes. Adds IR/night-vision skip-color path (`IR_SATURATION_THRESHOLD`, default 8.0) so the color head doesn't emit noise on monochrome night frames. *Requires vehicle-attributes rebuild + new `color_head_v0` / `multihead_v0` weights on HF Hub.*
 
 ---
 
