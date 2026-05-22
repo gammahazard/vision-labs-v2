@@ -65,12 +65,43 @@ class FakeRedis:
         return 0
 
     # --- Stream ops ---
-    def xrevrange(self, name, count=None, *args, **kwargs):
+    def xrevrange(self, name, max=None, min=None, count=None, **kwargs):
+        """Mimic real Redis: `max=`/`min=` are stream ID cursors.
+        `(ID` = exclusive; `+`/`-` = +∞/-∞. Newest-first. `count` caps."""
         stream = self._streams.get(name, [])
-        result = list(reversed(stream))
+        reversed_stream = list(reversed(stream))
+
+        def _id_key(sid):
+            try:
+                ms, seq = sid.split("-", 1)
+                return (int(ms), int(seq))
+            except (ValueError, AttributeError):
+                return (0, 0)
+
+        if max is not None and max != "+":
+            mx = max
+            mx_excl = isinstance(mx, str) and mx.startswith("(")
+            if mx_excl:
+                mx = mx[1:]
+            mx_key = _id_key(mx)
+            if mx_excl:
+                reversed_stream = [s for s in reversed_stream if _id_key(s[0]) < mx_key]
+            else:
+                reversed_stream = [s for s in reversed_stream if _id_key(s[0]) <= mx_key]
+        if min is not None and min != "-":
+            mn = min
+            mn_excl = isinstance(mn, str) and mn.startswith("(")
+            if mn_excl:
+                mn = mn[1:]
+            mn_key = _id_key(mn)
+            if mn_excl:
+                reversed_stream = [s for s in reversed_stream if _id_key(s[0]) > mn_key]
+            else:
+                reversed_stream = [s for s in reversed_stream if _id_key(s[0]) >= mn_key]
+
         if count:
-            result = result[:count]
-        return result
+            reversed_stream = reversed_stream[:count]
+        return reversed_stream
 
     def xlen(self, name):
         return len(self._streams.get(name, []))
@@ -450,6 +481,59 @@ class TestEventRoutes:
         # xrevrange returns newest first
         assert events[0]["event_type"] == "person_left"
         assert events[1]["event_type"] == "person_appeared"
+
+    def test_internal_events_dont_starve_user_events(self, event_client, fake_redis, setup_routes):
+        """Regression: cam1 events panel returned 0 events because
+        events:cam1 was 99% saturated with internal `vehicle_sample` writes
+        (tracker fires those every 3 frames; with the recent ghost-TTL
+        change a parked car keeps the track alive and generates them
+        continuously). The Phase 1 read used `count=N` then post-filtered,
+        so all N pulled rows were filtered out and the response was empty.
+
+        Fix verified: the reader batches and keeps scanning older messages
+        until it has N user-facing events or hits the per-camera cap.
+        """
+        client, _ = event_client
+        # 200 internal samples interleaved with 2 user-facing person events
+        # that are OLDER (smaller stream ID) — so a naive count=N read of
+        # the newest N would never see them.
+        stream = []
+        for i in range(200):
+            sid = f"{500 + i}-0"
+            stream.append((sid, {
+                "event_type": "vehicle_sample",
+                "vehicle_id": "vehicle_0001",
+                "camera_id": "cam1",
+                "timestamp": str(500 + i),
+            }))
+        # Two real events at the very bottom of the stream
+        stream.insert(0, ("100-0", {
+            "event_type": "person_appeared",
+            "person_id": "p1",
+            "camera_id": "cam1",
+            "timestamp": "100",
+        }))
+        stream.insert(1, ("200-0", {
+            "event_type": "person_left",
+            "person_id": "p1",
+            "camera_id": "cam1",
+            "timestamp": "200",
+        }))
+        fake_redis._streams["events:cam1"] = stream
+
+        resp = client.get("/api/events?count=20")
+        assert resp.status_code == 200
+        events = resp.json()["events"]
+        # Must surface BOTH user-facing events even though they sit under
+        # 200 internal samples.
+        event_types = [e["event_type"] for e in events]
+        assert "person_appeared" in event_types, \
+            f"user event starved by internal samples: {event_types}"
+        assert "person_left" in event_types
+        # And must not include any internal types
+        assert "vehicle_sample" not in event_types
+        assert "vehicle_gone" not in event_types
+
 
     def test_snapshot_serves_image(self, event_client):
         client, tmp_path = event_client

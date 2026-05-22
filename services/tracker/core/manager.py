@@ -28,6 +28,7 @@ from .config import (
     VEHICLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOU_THRESHOLD,
     VEHICLE_GHOST_TTL,
+    VEHICLE_IDLE_GHOST_TTL,
     VEHICLE_GHOST_MAX_DIST_RATIO,
     MIN_BBOX_AREA,
     IDENTITY_GRACE_SECONDS,
@@ -391,10 +392,16 @@ class PersonTracker:
         # drive-by cars never set idle_alerted, so they no longer spam the
         # events panel + Telegram with exit events. See contracts/streams.py
         # comment on VEHICLE_GONE_EVENT.
-        expired_ghost_ids = [
-            vid for vid, (_, ghost_ts) in self._ghost_vehicles.items()
-            if timestamp - ghost_ts > VEHICLE_GHOST_TTL
-        ]
+        # Idle-confirmed tracks get a much longer ghost window because the
+        # detector intermittently misses parked cars (RTSP/frame_hd hiccups,
+        # brief obstruction). Without this, the same parked car spawns a new
+        # track every gap > 40 s — observed live on cam1: identical bbox
+        # producing vehicle_0011 → 0022 → 0029 → 0037 over 17 min.
+        expired_ghost_ids = []
+        for vid, (veh, ghost_ts) in self._ghost_vehicles.items():
+            ttl = VEHICLE_IDLE_GHOST_TTL if veh.idle_alerted else VEHICLE_GHOST_TTL
+            if timestamp - ghost_ts > ttl:
+                expired_ghost_ids.append(vid)
         for vid in expired_ghost_ids:
             veh, _ = self._ghost_vehicles.pop(vid)
             self._emit_vehicle_gone_event(veh, timestamp)
