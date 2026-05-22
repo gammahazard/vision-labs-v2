@@ -165,3 +165,89 @@ def test_handle_vehicle_idle_also_flushes(tmp_path):
     handle_event(event, buffers, r_bin=None, hd_size=(2304, 1296),
                  snapshot_root=str(tmp_path))
     assert "v_x" not in buffers
+
+
+def test_flush_does_not_call_classifier_when_disabled(monkeypatch, tmp_path):
+    """ENABLE_CLASSIFIER=0 (default): _flush writes null-attributes metadata,
+    classifier module is NOT called."""
+    from services.vehicle_attributes import service as svc
+    from services.vehicle_attributes.buffer import TrackBuffer
+
+    monkeypatch.setenv("ENABLE_CLASSIFIER", "0")
+    import importlib
+    importlib.reload(svc)
+
+    buf = TrackBuffer(track_id="vG", camera_id="cam1", first_seen=1779394901.5)
+    buf.append(crop=b"\xff\xd8jpg", yolo_conf=0.85, bbox=[10, 20, 50, 60])
+    buffers = {"vG": buf}
+
+    classifier_called = {'flag': False}
+    def _trip(*_a, **_k):
+        classifier_called['flag'] = True
+        return {}
+    # Patch on the REAL dashed-name classifier module (mirror of Task 8's pattern)
+    import services.vehicle_attributes  # primes sys.path
+    import classifier
+    monkeypatch.setattr(classifier, "run_classifier_and_vote", _trip)
+
+    event = {
+        "event_type": "vehicle_gone",
+        "vehicle_id": "vG",
+        "camera_id": "cam1",
+        "timestamp": "1779394907.2",
+        "vehicle_class": "car",
+        "was_idle": "False",
+    }
+    svc.handle_event(event, buffers, r_bin=None, hd_size=(2304, 1296),
+                     snapshot_root=str(tmp_path))
+
+    assert classifier_called['flag'] is False
+    import json as _json
+    meta = _json.loads(
+        (tmp_path / 'cam1' / '2026-05-21' / 'vG' / 'metadata.json').read_text()
+    )
+    assert meta['attributes']['color'] is None
+
+
+def test_flush_calls_classifier_when_enabled(monkeypatch, tmp_path):
+    from services.vehicle_attributes import service as svc
+    from services.vehicle_attributes.buffer import TrackBuffer
+
+    monkeypatch.setenv("ENABLE_CLASSIFIER", "1")
+    import importlib
+    importlib.reload(svc)
+
+    buf = TrackBuffer(track_id="vH", camera_id="cam1", first_seen=1779394901.5)
+    buf.append(crop=b"\xff\xd8jpg", yolo_conf=0.85, bbox=[10, 20, 50, 60])
+    buffers = {"vH": buf}
+
+    expected_attrs = {
+        'color': 'red', 'color_confidence': 0.8,
+        'body_type': 'sedan', 'body_type_confidence': 0.75,
+        'make': 'Honda', 'make_confidence': 0.7,
+        'model': None, 'model_confidence': None,
+        'voting_samples': 1,
+        'classifier_version': 'v0-test-2026-05-21',
+    }
+    import services.vehicle_attributes  # primes sys.path
+    import classifier
+    monkeypatch.setattr(classifier, "run_classifier_and_vote",
+                        lambda _buf, _kind: expected_attrs)
+
+    event = {
+        "event_type": "vehicle_gone",
+        "vehicle_id": "vH",
+        "camera_id": "cam1",
+        "timestamp": "1779394907.2",
+        "vehicle_class": "car",
+        "was_idle": "False",
+    }
+    svc.handle_event(event, buffers, r_bin=None, hd_size=(2304, 1296),
+                     snapshot_root=str(tmp_path))
+
+    import json as _json
+    meta = _json.loads(
+        (tmp_path / 'cam1' / '2026-05-21' / 'vH' / 'metadata.json').read_text()
+    )
+    assert meta['attributes']['color'] == 'red'
+    assert meta['attributes']['make'] == 'Honda'

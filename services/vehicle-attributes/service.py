@@ -172,22 +172,33 @@ def _flush(event: dict, buffers: dict,
     if buf is None:
         return
     last_seen = float(event.get("timestamp", "0") or 0)
-    # Classify the track: `vehicle_idle` is explicitly idle. `vehicle_gone`
-    # carries `was_idle` (str "True"/"False") so consumers don't have to
-    # re-derive from duration. Defaults to drive_by when neither signal says
-    # idle (covers any future event-shape changes safely).
     if event.get("event_type") == "vehicle_idle":
         event_kind = "idle"
     elif event.get("was_idle") == "True":
         event_kind = "idle"
     else:
         event_kind = "drive_by"
+
+    attributes = None
+    if os.environ.get("ENABLE_CLASSIFIER", "0") == "1":
+        try:
+            # Lazy import — Phase 1 service starts fast when classifier is
+            # disabled (no torch import until first inference call).
+            from classifier import run_classifier_and_vote
+            attributes = run_classifier_and_vote(buf, event_kind)
+        except Exception as e:
+            logger.exception(
+                f"classifier failed for {track_id}, falling back to null attrs: {e}"
+            )
+            attributes = None
+
     flush_buffer_to_disk(
         buf,
         last_seen=last_seen,
         event_kind=event_kind,
         vehicle_class=event.get("vehicle_class", ""),
         snapshot_root=snapshot_root,
+        attributes=attributes,
     )
 
 
