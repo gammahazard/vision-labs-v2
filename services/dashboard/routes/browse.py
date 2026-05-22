@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 import httpx
 
 import routes as ctx
+from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 router = APIRouter(prefix="/api/browse", tags=["browse"])
 
@@ -233,7 +234,7 @@ async def list_day_tracks(date: str, camera: str = ""):
                 "dir_id": dir_id,
                 "camera": cam_safe,
                 "date": date,
-                "time": datetime.fromtimestamp(meta.get("first_seen", 0)).strftime("%H:%M:%S"),
+                "time": datetime.fromtimestamp(meta.get("first_seen", 0), tz=TZ_LOCAL).strftime("%H:%M:%S"),
                 "first_seen": meta.get("first_seen"),
                 "hero_url": f"/api/browse/tracks/{date}/{cam_safe}/{dir_id}/hero.jpg",
                 "angle_urls": [
