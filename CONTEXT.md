@@ -485,7 +485,7 @@ Detectors use `restart: on-failure` (NOT `unless-stopped`) so that a clean exit 
 | `prometheus-data` | prometheus | metrics history |
 | `grafana-data` | grafana | dashboard state |
 | `portainer-data` | portainer | Portainer admin user, settings |
-| `qnap-snapshots` | dashboard:/data/snapshots | person + vehicle JPEGs |
+| `qnap-snapshots` | dashboard:/data/snapshots + vehicle-attributes-cam{N}:/data/snapshots | person + vehicle JPEGs (flat poller output) + per-track dirs (Phase 1) |
 | `qnap-events` | dashboard:/data/events | daily JSONL journal |
 | `qnap-telegram` | dashboard:/data/telegram | Telegram media archive |
 | `qnap-videos` | dashboard:/data/videos | reserved |
@@ -645,6 +645,10 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
     Before the fix, `vehicle_left` fired on every ghost expiry — including 0.5s drive-bys that never went idle. Combined with the IoU identity-swap bug (one physical car briefly splits into two `TrackedVehicle` IDs), the events panel got two "left" events for a single car driving past. The semantic split (gone vs left) cleaned up the user-facing noise without breaking the attribute pipeline.
     
     **Note:** the underlying IoU identity-swap bug is NOT fixed by this split — it just means drive-by-noise no longer compounds it. See `[[vehicle-left-double-fire-bug]]` memory note for the IoU follow-up work.
+
+31. **`/data/snapshots` must mount the `qnap-snapshots` volume, NOT `snapshot-data`.** The dashboard's flat snapshot poller and the Browse `/api/browse/tracks/{date}` endpoint both read from `ctx.VEHICLE_SNAPSHOT_DIR` = `/data/snapshots/vehicles/`. Phase 1's initial compose blocks mounted a NEW `snapshot-data:` volume — the data was being written there and read from `qnap-snapshots`, so per-track dirs were invisible in Browse. Fixed by repointing all 20 `vehicle-attributes-camN` blocks at `qnap-snapshots`. Any new service that writes vehicle/person snapshots MUST mount the same `qnap-snapshots` volume as the dashboard. Don't introduce a new snapshot volume.
+
+32. **IoU center-distance threshold:** `VEHICLE_GHOST_MAX_DIST_RATIO` is the multiplier of `bbox_w` used by both `_try_ghost_match` (ghost-buffer re-association) and `_try_live_center_match` (live-track IoU swap fallback). Default 3.5 after a cam1 fish-eye case (225-px shift in 1.1 s on a fast-moving car) showed 2.0 was too tight. Wide-angle home cams skew higher than this; narrow lens cams might tolerate lower. If you ever see "two TrackedVehicles for the same car" across consecutive frames again, the first knob is this ratio.
 
 ---
 

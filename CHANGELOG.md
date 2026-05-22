@@ -9,14 +9,17 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ## [Unreleased]
 
 ### Added
-- **Edit pencil ✏ on every camera row** — modal to rename, edit lat/lon, toggle detectors without delete + re-add. Reuses `data-requires=` so `detect_faces → detect_persons` is gated inside the modal too.
-- **Vehicle attributes Phase 1** — new per-cam `vehicle-attributes-cam{N}` service buffers HD crops per tracked vehicle and writes `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}` on `vehicle_gone` / `vehicle_idle`. No classifier yet — Phase 3 ships ML. New `detect_vehicle_attributes` flag (hard-depends on `detect_vehicles`); tracker emits `vehicle_sample` every Nth matched update (gated by `EMIT_VEHICLE_SAMPLES`, off by default). Orchestrator allowlist + per-cam expansion extended. Browse renders grouped cards above the flat snapshot grid. *Requires new service image build + tracker rebuild.*
+- **Edit pencil ✏ on camera rows** — modal to rename, edit lat/lon, toggle detectors without delete + re-add.
+- **Vehicle attributes Phase 1** — per-cam `vehicle-attributes-cam{N}` service buffers HD crops, writes per-track dirs (`hero.jpg` + `angle_NN.jpg` + `metadata.json`) on track end. New `detect_vehicle_attributes` flag, `vehicle_sample` tracker event, Browse grouped cards. No classifier yet. *Requires new service build + tracker rebuild.*
 
 ### Fixed
-- **Detector-flag dependencies enforced** — UI (`js/lib/checkbox-dependencies.js`, generic `data-requires=`) + server (`cameras.py:_validate_camera`) both gate `detect_faces` on `detect_persons`. Wired into setup, add-camera, edit-camera.
-- **Mid-run `detect_*` toggles actually start/stop the detector** — `cameras.py:upsert_camera` publishes pre-expanded service names (`vehicle-detector-cam2`) on `config:apply`; orchestrator's `apply_config` allowlist + `_expand_per_cam_services` extended to pass `{prefix}-{profile}` through verbatim, targeting only the affected camera. *Requires orchestrator rebuild.*
-- **`vehicle_left` spamming the events panel for drive-by cars** — split the producer: new internal `vehicle_gone` event fires at every ghost-buffer expiry (carries `was_idle`, drives the attribute-service flush). `vehicle_left` now gated on `idle_alerted=True` — strict "your parked car drove off" semantic. *Requires tracker + vehicle-attributes rebuild.*
-- **IoU identity-swap on fast-moving vehicles** — consecutive-frame bbox shift could drop IoU below threshold (live: 50 px shift, IoU≈0.14 < 0.2) and spawn a second TrackedVehicle for the same car. Added `_try_live_center_match` (mirror of `_try_ghost_match`, same-class, `bbox_w × 2.0` threshold) as a fallback after the IoU step. *Requires tracker rebuild.*
+- **Detector-flag dependencies enforced** — `detect_faces` requires `detect_persons` now hard-gated UI (`data-requires=`) + server (`_validate_camera`).
+- **Mid-run `detect_*` toggles take effect** — `upsert_camera` publishes pre-expanded `{prefix}-{profile}` on `config:apply`; orchestrator routes to the single affected camera. *Requires orchestrator rebuild.*
+- **`vehicle_left` spammed events panel for drive-bys** — split producer: new internal `vehicle_gone` for all track ends; `vehicle_left` now idle-leave only (gated on `idle_alerted`). *Requires tracker + vehicle-attributes rebuild.*
+- **IoU identity-swap on fast-moving vehicles** — added `_try_live_center_match` fallback after the IoU step. *Requires tracker rebuild.*
+- **`vehicle_sample` + `vehicle_gone` leaked into events panel** — filtered server-side in `routes/events.py`; stream still carries them for the attribute service. *Dashboard restart only.*
+- **IoU center-distance ratio too tight for wide-angle cams** — bumped `VEHICLE_GHOST_MAX_DIST_RATIO` 2.0 → 3.5 (catches 225-px shifts seen on cam1 fish-eye). *Requires tracker rebuild.*
+- **Vehicle-attributes per-track dirs invisible to Browse** — Phase 1 compose mounted `snapshot-data` but dashboard reads `qnap-snapshots`; the data was being written and read on two different volumes. All 20 vehicle-attributes-camN blocks now mount `qnap-snapshots`; orphan `snapshot-data:` volume removed. *Requires per-cam vehicle-attributes recreate.*
 
 ---
 

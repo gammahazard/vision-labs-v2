@@ -68,7 +68,18 @@ VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))
 # (30s) = 40 s — wider than any realistic drive-by but still tight enough
 # that a genuinely-departed car fires vehicle_left within ~45 s of leaving.
 VEHICLE_GHOST_TTL = float(os.getenv("VEHICLE_GHOST_TTL", "30.0"))
-VEHICLE_GHOST_MAX_DIST_RATIO = float(os.getenv("VEHICLE_GHOST_MAX_DIST_RATIO", "2.0"))
+# Center-distance threshold expressed as a multiple of the bbox width.
+# Used both by `_try_ghost_match` (re-associating recently-departed tracks
+# from the ghost buffer) and `_try_live_center_match` (catching the IoU
+# identity-swap on fast-moving cars across consecutive detection frames).
+#
+# Bumped 2.0 → 3.5 after live cam1 data showed a single car shifting 225 px
+# between detections 1.1 s apart on a wide-angle fish-eye lens. The old
+# threshold (bbox_w * 2.0 ≈ 176 px for an 88-px-wide bbox) was too tight;
+# the new threshold (~308 px) covers a typical drive-by while still being
+# narrower than the distance between two cars passing in different lanes
+# of the same frame (which is usually 400+ px on a residential-street view).
+VEHICLE_GHOST_MAX_DIST_RATIO = float(os.getenv("VEHICLE_GHOST_MAX_DIST_RATIO", "3.5"))
 CONFIG_RELOAD_INTERVAL = int(os.getenv("CONFIG_RELOAD_INTERVAL", "10"))
 ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))
 ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "1"))
