@@ -845,11 +845,12 @@ class TestVehicleGhostBuffer:
 
     def test_too_far_does_not_match(self, fake_redis):
         """Center beyond bbox_width × VEHICLE_GHOST_MAX_DIST_RATIO → no match.
-        bbox_w = 200, ratio default 2.0 → max_dist = 400 px."""
+        bbox_w = 200, ratio default 3.5 → max_dist = 700 px. We test with an
+        800-px shift to stay clearly outside even the wider post-bump threshold."""
         tracker = self._new_tracker(fake_redis)
         self._seed_ghost(tracker, bbox=[100, 200, 300, 400])  # center (200,300)
-        # Detection 500px to the right — center (700, 300) → dist 500 > 400
-        result = tracker._try_ghost_match([600, 200, 800, 400], "car", 5.0)
+        # Detection 800px to the right — center (1000, 300) → dist 800 > 700
+        result = tracker._try_ghost_match([900, 200, 1100, 400], "car", 5.0)
         assert result is None
 
     def test_picks_nearest_when_multiple_candidates(self, fake_redis):
@@ -997,10 +998,40 @@ def test_drive_by_with_low_iou_consecutive_frames_does_not_double_track(monkeypa
     )
 
 
+def test_drive_by_with_225px_shift_in_one_second_does_not_double_track(monkeypatch):
+    """Reproduces the exact cam1 case observed 2026-05-21: a fast-moving car
+    on a wide-angle fish-eye cam jumped from bbox [461, 372, 559, 409] to
+    [688, 331, 776, 374] in 1.1 s — center shift of 225 px, IoU=0. The
+    original bbox_w*2.0 threshold (~196 px) missed this; bbox_w*3.5 (~343 px)
+    catches it. Must remain a single track."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [461, 372, 559, 409],
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    m._process_vehicle_detections(
+        [{"bbox": [688, 331, 776, 374],
+          "class_name": "car", "confidence": 0.8}],
+        timestamp=1.1,
+    )
+    assert len(m.tracked_vehicles) == 1, (
+        f"same physical car split into {len(m.tracked_vehicles)} TrackedVehicles; "
+        f"VEHICLE_GHOST_MAX_DIST_RATIO too tight for fast-moving cars"
+    )
+
+
 def test_two_genuinely_different_cars_far_apart_dont_merge(monkeypatch):
     """Two cars at very different positions in the frame should NOT match
-    via center-distance fallback. Verifies the fallback isn't over-eager.
-    Center distance ~750 px is well beyond `bbox_w * 2.0 = ~150 px`."""
+    via center-distance fallback. Verifies the fallback isn't over-eager
+    after the 2.0 → 3.5 bump. Center distance ~750 px is still well beyond
+    `bbox_w * 3.5 = 280 px` for 80-px-wide cars."""
     monkeypatch.setenv("CAMERA_ID", "cam1")
     import importlib
     from services.tracker.core import manager as mgr

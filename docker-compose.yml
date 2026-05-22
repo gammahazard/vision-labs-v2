@@ -281,7 +281,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -739,7 +739,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -942,7 +942,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -1135,7 +1135,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -1328,7 +1328,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -1521,7 +1521,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -1714,7 +1714,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -1907,7 +1907,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -2100,7 +2100,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -2293,7 +2293,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -2486,7 +2486,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -2679,7 +2679,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -2872,7 +2872,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -3065,7 +3065,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -3258,7 +3258,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -3451,7 +3451,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -3644,7 +3644,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -3837,7 +3837,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -4030,7 +4030,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -4223,7 +4223,7 @@ services:
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
-      - snapshot-data:/data/snapshots
+      - qnap-snapshots:/data/snapshots
       - vehicle-attribute-models:/models
     depends_on:
       redis:
@@ -4360,7 +4360,6 @@ volumes:
   # See docker-compose.qnap.yml for the QNAP/CIFS-backed versions of these.
   # qnap-recordings is no longer a named volume — recordings are bind-mounted
   # to ./data/recordings on the WSL host for easy Windows Explorer access.
-  snapshot-data:
   vehicle-attribute-models:
   qnap-snapshots:
   qnap-events:

@@ -488,7 +488,7 @@ Detectors use `restart: on-failure` (NOT `unless-stopped`) so that a clean exit 
 | `prometheus-data` | prometheus | metrics history |
 | `grafana-data` | grafana | dashboard state |
 | `portainer-data` | portainer | Portainer admin user, settings |
-| `qnap-snapshots` | dashboard:/data/snapshots | person + vehicle JPEGs |
+| `qnap-snapshots` | dashboard:/data/snapshots + vehicle-attributes-cam{N}:/data/snapshots | person + vehicle JPEGs (flat poller output) + per-track dirs (Phase 1) |
 | `qnap-events` | dashboard:/data/events | daily JSONL journal |
 | `qnap-telegram` | dashboard:/data/telegram | Telegram media archive |
 | `qnap-videos` | dashboard:/data/videos | reserved |
@@ -648,6 +648,12 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
     Before the fix, `vehicle_left` fired on every ghost expiry — including 0.5s drive-bys that never went idle. Combined with the IoU identity-swap bug (one physical car briefly splits into two `TrackedVehicle` IDs), the events panel got two "left" events for a single car driving past. The semantic split (gone vs left) cleaned up the user-facing noise without breaking the attribute pipeline.
     
     **Note:** the underlying IoU identity-swap bug is NOT fixed by this split — it just means drive-by-noise no longer compounds it. See `[[vehicle-left-double-fire-bug]]` memory note for the IoU follow-up work.
+
+31. **`/data/snapshots` must mount the `qnap-snapshots` volume, NOT `snapshot-data`.** The dashboard's flat snapshot poller and the Browse `/api/browse/tracks/{date}` endpoint both read from `ctx.VEHICLE_SNAPSHOT_DIR` = `/data/snapshots/vehicles/`. Phase 1's initial compose blocks mounted a NEW `snapshot-data:` volume — the data was being written there and read from `qnap-snapshots`, so per-track dirs were invisible in Browse. Fixed by repointing all 20 `vehicle-attributes-camN` blocks at `qnap-snapshots`. Any new service that writes vehicle/person snapshots MUST mount the same `qnap-snapshots` volume as the dashboard. Don't introduce a new snapshot volume.
+
+32. **IoU center-distance threshold:** `VEHICLE_GHOST_MAX_DIST_RATIO` is the multiplier of `bbox_w` used by both `_try_ghost_match` (ghost-buffer re-association) and `_try_live_center_match` (live-track IoU swap fallback). Default 3.5 after a cam1 fish-eye case (225-px shift in 1.1 s on a fast-moving car) showed 2.0 was too tight. Wide-angle home cams skew higher than this; narrow lens cams might tolerate lower. If you ever see "two TrackedVehicles for the same car" across consecutive frames again, the first knob is this ratio.
+
+33. **HD-frame-to-bbox pairing in the vehicle-attributes pipeline:** vehicle-detector ships `hd_frame_bytes` inline with each detection (fetched from `frame_hd:{cam}` at emit time). Tracker passes them through `_process_vehicle_detections(..., hd_frame_bytes=...)` and stashes on `TrackedVehicle.last_hd_frame_bytes`. On every `vehicle_sample` emit, the tracker writes those bytes to a per-sample Redis key `vehicle_hd_sample:{cam}:{vehicle_id}:{ms}` (60 s TTL) and includes the key name as `hd_snapshot_key` in the event payload. Vehicle-attributes-cam{N} reads that key first, falling back to the generic `frame_hd:{cam}` only if missing. Pairs bbox + HD frame from the same detection moment — same architecture as the v0.2.0 person-snapshot frame-pairing fix. **Residual drift note:** the gap between vehicle-detector's sub-stream bbox capture and camera-ingester's HD-frame capture is still on the order of camera frame intervals (~50 ms); for fast cars this can leave ~10–20 px drift. If that becomes user-visible, the next fix is to pair sub+HD at camera-ingester emit time (bigger refactor).
 
 ---
 

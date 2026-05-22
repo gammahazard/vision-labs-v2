@@ -37,6 +37,10 @@ class TrackedVehicle:
         self.idle_alerted = False           # Has idle notification fired
         self.snapshot_key = ""              # Redis key for stored snapshot
         self.snapshot_bbox = bbox           # Bbox at the time snapshot was captured
+        # HD frame bytes paired with the LATEST bbox by vehicle-detector at
+        # detection emit time. Phase 3 vehicle-attributes uses this for the
+        # per-sample HD snapshot key (avoids stale frame_hd:{cam} fetches).
+        self.last_hd_frame_bytes: bytes | None = None
         # Track center positions for movement detection
         cx = (bbox[0] + bbox[2]) / 2
         cy = (bbox[1] + bbox[3]) / 2

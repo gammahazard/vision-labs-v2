@@ -85,6 +85,12 @@ function _handleBrowseClick(ev) {
                 target.getAttribute("data-label") || "",
             );
             break;
+        case "open-crops-modal":
+            _openCropsModal(target.getAttribute("data-date"));
+            break;
+        case "close-crops-modal":
+            _closeCropsModal();
+            break;
         default:
             // Unknown action — ignore.
             break;
@@ -136,55 +142,15 @@ async function _loadBrowseHome() {
 }
 
 // ---------------------------------------------------------------------------
-// View: Day — per-track grouped cards (above) + flat thumbnail grid
+// View: Day — flat snapshot grid + a single "Vehicle crops taken" button
+//
+// Phase 1 of vehicle-attributes writes per-track dirs alongside the legacy
+// flat snapshots. We surface those crops via a MODAL (triggered by the
+// button at the top of the day view) rather than mixing them into the
+// main grid — the user wants the day view to feel like the old simple
+// "all the snapshots from today" page, with the per-track stuff as a
+// dedicated view-when-you-want-it overlay.
 // ---------------------------------------------------------------------------
-
-// Fetch /api/browse/tracks/{date} and return an HTML string for the grouped-card
-// section, or '' if there are no tracks. Sanitization happens at the call site
-// (same convention as the flat-grid renderer below).
-async function _renderDayTracks(date, camera) {
-    const url = `/api/browse/tracks/${encodeURIComponent(date)}`
-                + (camera ? `?camera=${encodeURIComponent(camera)}` : '');
-    try {
-        const res = await fetch(url);
-        if (!res.ok) return '';
-        const tracks = await res.json();
-        if (!Array.isArray(tracks) || tracks.length === 0) return '';
-
-        const cards = tracks.map(t => `
-            <div class="track-card" data-track-id="${t.track_id}">
-                <div class="track-hero">
-                    <img src="${t.hero_url}" alt="${t.vehicle_class} hero" loading="lazy">
-                    <span class="track-class-pill">${t.vehicle_class}</span>
-                </div>
-                <div class="track-meta">
-                    <div class="track-time">${t.time}
-                        <span class="track-event">${t.event_kind}</span>
-                    </div>
-                    <div class="track-stats">
-                        ${t.voting_samples} angle${t.voting_samples === 1 ? '' : 's'}
-                        · ${t.duration_seconds.toFixed(1)}s
-                    </div>
-                </div>
-                <div class="track-angles">
-                    ${t.angle_urls.map(u => `
-                        <img src="${u}" class="track-angle" loading="lazy" alt="angle">
-                    `).join('')}
-                </div>
-                <div class="track-attrs">${_formatAttrs(t.attributes)}</div>
-            </div>
-        `).join('');
-
-        return `<section class="track-cards-section">
-            <h3 style="margin:0.75rem 0 0.5rem;font-size:0.9rem;color:#94a3b8;">
-                Per-track view (${tracks.length} track${tracks.length === 1 ? '' : 's'})
-            </h3>
-            <div class="track-cards-grid">${cards}</div>
-        </section>`;
-    } catch (_) {
-        return '';
-    }
-}
 
 async function _browseDayClick(date) {
     _browseCurrentView = "day";
@@ -195,19 +161,27 @@ async function _browseDayClick(date) {
     container.innerHTML = '<div class="browse-loading">Loading…</div>';
 
     try {
-        // Fetch tracks and flat snapshots in parallel
-        const [tracksHtml, snapshots] = await Promise.all([
-            _renderDayTracks(date, null),
+        // Fetch flat snapshots + per-track count (used to gate the modal button)
+        const [snapshots, tracks] = await Promise.all([
             fetch(`/api/browse/days/${date}`).then(r => r.json()),
+            fetch(`/api/browse/tracks/${date}`).then(r => r.ok ? r.json() : []),
         ]);
+        const trackCount = Array.isArray(tracks) ? tracks.length : 0;
 
         let html = `<div class="browse-nav">
             <button class="browse-back-btn" data-action="back">← Back</button>
             <span class="browse-nav-title">${date} — ${snapshots.length} snapshot${snapshots.length !== 1 ? "s" : ""}</span>
         </div>`;
 
-        // Grouped-card section comes first (empty string when no tracks → no section)
-        html += tracksHtml;
+        // Vehicle crops modal trigger — only when there's something to show
+        if (trackCount > 0) {
+            html += `<div class="crops-modal-trigger-row">
+                <button type="button" class="crops-modal-trigger"
+                        data-action="open-crops-modal" data-date="${date}">
+                    📸 Vehicle crops taken (${trackCount})
+                </button>
+            </div>`;
+        }
 
         if (!snapshots.length) {
             html += '<div class="browse-empty">No snapshots for this day.</div>';
@@ -231,6 +205,108 @@ async function _browseDayClick(date) {
     } catch (e) {
         container.innerHTML = '<div class="browse-empty">Failed to load day snapshots.</div>';
     }
+}
+
+// ---------------------------------------------------------------------------
+// Vehicle crops modal — grouped-by-track thumbnail overlay
+//
+// Opened by `data-action="open-crops-modal"`. Re-fetches /api/browse/tracks
+// (cheap; same call we already used to get the count) and renders one
+// section per track with all that track's angle thumbnails. Each thumbnail
+// uses the existing `data-action="open"` plumbing so clicking opens the
+// existing fullscreen photo viewer — no new viewer code needed.
+//
+// Phase 3 (when the classifier is enabled): the per-track section header
+// will gain predicted attributes (color/body/make/model) rendered from
+// metadata.json.attributes. The data is already in `t.attributes` from
+// the API; we just don't render it yet because v0 ships with the
+// classifier disabled.
+// ---------------------------------------------------------------------------
+
+function _closeCropsModal() {
+    const m = document.getElementById("cropsModal");
+    if (m) m.remove();
+}
+
+async function _openCropsModal(date) {
+    _closeCropsModal();  // idempotent — avoid stacking
+
+    const container = document.getElementById("browseContent");
+    if (!container) return;
+
+    // Stub modal while we fetch
+    const stub = document.createElement("div");
+    stub.id = "cropsModal";
+    stub.className = "crops-modal-backdrop";
+    stub.innerHTML = _safeHtml(`<div class="crops-modal-panel">
+        <div class="crops-modal-loading">Loading…</div>
+    </div>`);
+    // Click outside the panel closes the modal — backdrop catches the click
+    stub.addEventListener("click", (ev) => {
+        if (ev.target === stub) _closeCropsModal();
+    });
+    container.appendChild(stub);
+
+    let tracks = [];
+    try {
+        const res = await fetch(`/api/browse/tracks/${encodeURIComponent(date)}`);
+        if (res.ok) tracks = await res.json();
+    } catch (_) {
+        // fall through with empty tracks
+    }
+
+    if (!Array.isArray(tracks) || !tracks.length) {
+        stub.innerHTML = _safeHtml(`<div class="crops-modal-panel">
+            <div class="crops-modal-header">
+                <span>Vehicle crops — ${date}</span>
+                <button type="button" class="crops-modal-close" data-action="close-crops-modal">×</button>
+            </div>
+            <div class="crops-modal-empty">No vehicle crops captured for this day.</div>
+        </div>`);
+        return;
+    }
+
+    let totalCrops = 0;
+    const sections = tracks.map(t => {
+        const allUrls = [t.hero_url, ...t.angle_urls];
+        totalCrops += allUrls.length;
+        const thumbs = allUrls.map((url, idx) => {
+            const label = `${t.track_id} ${idx === 0 ? "hero" : "angle " + idx}`;
+            return `<img class="crops-modal-thumb"
+                src="${url}"
+                alt="${label}"
+                loading="lazy"
+                data-action="open"
+                data-url="${url}"
+                data-label="${label}"
+                role="button"
+                tabindex="0">`;
+        }).join("");
+
+        const attrLine = _formatAttrs(t.attributes);
+        return `<section class="crops-modal-track">
+            <header class="crops-modal-track-header">
+                <span class="crops-modal-track-id">${t.track_id}</span>
+                <span class="crops-modal-track-meta">
+                    ${t.vehicle_class} · ${t.event_kind} · ${t.time}
+                    · ${t.duration_seconds.toFixed(1)}s
+                    · ${allUrls.length} crop${allUrls.length === 1 ? "" : "s"}
+                </span>
+            </header>
+            ${attrLine ? `<div class="track-attrs">${attrLine}</div>` : ""}
+            <div class="crops-modal-thumb-grid">${thumbs}</div>
+        </section>`;
+    }).join("");
+
+    stub.innerHTML = _safeHtml(`<div class="crops-modal-panel">
+        <div class="crops-modal-header">
+            <span>Vehicle crops — ${date} (${tracks.length} track${tracks.length === 1 ? "" : "s"}, ${totalCrops} crop${totalCrops === 1 ? "" : "s"})</span>
+            <button type="button" class="crops-modal-close" data-action="close-crops-modal">×</button>
+        </div>
+        <div class="crops-modal-body">
+            ${sections}
+        </div>
+    </div>`);
 }
 
 // ---------------------------------------------------------------------------

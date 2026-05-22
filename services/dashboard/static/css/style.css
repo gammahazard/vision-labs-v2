@@ -2592,52 +2592,130 @@ input[type="range"]::-moz-range-thumb {
     background: var(--danger-bg);
 }
 
-/* Phase 1 vehicle-attributes — per-track grouped cards (browse tab) */
-.track-cards-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 0.75rem;
+/* Phase 1 vehicle-attributes — "Vehicle crops taken" modal in browse tab.
+ * The old grouped-card section (`.track-card`, `.track-hero`, etc.) was
+ * removed in favor of a single modal trigger button + overlay so the day
+ * view stays as the simple flat snapshot grid it always was. */
+
+.crops-modal-trigger-row {
+    margin: 0.5rem 0 1rem;
 }
-.track-card {
+.crops-modal-trigger {
     background: #1a2235;
     border: 1px solid #2d3748;
-    border-radius: 10px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
+    border-radius: 8px;
+    color: #4ade80;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 0.55rem 0.9rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
-.track-hero {
-    position: relative;
-    aspect-ratio: 16/9;
-    background: #0f172a;
-}
-.track-hero img { width: 100%; height: 100%; object-fit: cover; }
-.track-class-pill {
-    position: absolute; top: 6px; left: 6px;
-    background: rgba(15,23,42,0.85); color: #4ade80;
-    font-size: 0.7rem; padding: 2px 8px; border-radius: 10px;
-}
-.track-meta {
-    padding: 0.5rem 0.75rem;
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 0.8rem; color: #cbd5e1;
-}
-.track-event { color: #94a3b8; margin-left: 0.4rem; font-style: italic; }
-.track-stats { color: #64748b; font-size: 0.75rem; }
-.track-angles {
-    display: flex; gap: 4px; padding: 0 0.75rem 0.75rem;
-    overflow-x: auto;
-}
-.track-angle {
-    height: 60px; width: 80px; object-fit: cover; border-radius: 4px;
-    flex-shrink: 0;
+.crops-modal-trigger:hover {
+    background: #233048;
+    border-color: #4ade80;
 }
 
-/* Phase 3 vehicle-attributes — attribute row on per-track cards */
+.crops-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1500;
+    padding: 1.5rem;
+}
+.crops-modal-panel {
+    background: #1a2235;
+    border: 1px solid #2d3748;
+    border-radius: 12px;
+    max-width: 960px;
+    width: 100%;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.crops-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid #2d3748;
+    color: #e2e8f0;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+.crops-modal-close {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 1.5rem;
+    line-height: 1;
+    padding: 0 0.25rem;
+}
+.crops-modal-close:hover { color: #f1f5f9; }
+.crops-modal-body {
+    overflow-y: auto;
+    padding: 0.5rem 1rem 1rem;
+}
+.crops-modal-loading,
+.crops-modal-empty {
+    padding: 2rem 1rem;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 0.9rem;
+}
+
+.crops-modal-track {
+    margin: 0.75rem 0 1.25rem;
+}
+.crops-modal-track-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    margin-bottom: 0.4rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid #2d3748;
+}
+.crops-modal-track-id {
+    color: #e2e8f0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: ui-monospace, monospace;
+}
+.crops-modal-track-meta {
+    color: #94a3b8;
+    font-size: 0.75rem;
+}
+.crops-modal-thumb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.5rem;
+}
+.crops-modal-thumb {
+    width: 100%;
+    aspect-ratio: 16/9;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid #2d3748;
+    background: #0f172a;
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.crops-modal-thumb:hover {
+    border-color: #4ade80;
+    transform: translateY(-1px);
+}
+
+/* Phase 3 vehicle-attributes — attribute row shown inside each modal track section */
 .track-attrs {
     color: #cbd5e1;
     font-size: 0.78rem;
-    padding: 0 0.75rem 0.75rem;
+    padding: 0.25rem 0.75rem 0;
 }
 .track-attrs-beta {
     color: #64748b;

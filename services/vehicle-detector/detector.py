@@ -48,6 +48,7 @@ from streams import (
     DETECTION_STREAM as _DET_TMPL,
     CONFIG_KEY as _CFG_TMPL,
     DETECTION_FRAME_KEY as _DET_FRAME_TMPL,
+    HD_FRAME_KEY as _HD_FRAME_TMPL,
     stream_key,
 )
 
@@ -68,6 +69,7 @@ FRAME_STREAM = stream_key(_FRAME_TMPL, camera_id=CAMERA_ID)
 DETECTION_STREAM = stream_key(_DET_TMPL, detector_type="vehicle", camera_id=CAMERA_ID)
 CONFIG_KEY = stream_key(_CFG_TMPL, camera_id=CAMERA_ID)
 DETECTION_FRAME = stream_key(_DET_FRAME_TMPL, detector_type="vehicle", camera_id=CAMERA_ID)
+HD_FRAME_KEY = stream_key(_HD_FRAME_TMPL, camera_id=CAMERA_ID)
 
 # Max detections to keep in the output stream
 MAX_DETECTION_STREAM_LEN = int(os.getenv("MAX_DETECTION_STREAM_LEN", "1000"))
@@ -333,6 +335,18 @@ def run():
                     # Also store the frame bytes for snapshot capture
                     if detections:
                         det_msg["frame_bytes"] = frame_bytes
+                        # Pair the HD frame with this detection so downstream
+                        # consumers (vehicle-attributes) get the bbox + frame
+                        # from temporally-aligned moments — mirror of the
+                        # v0.2.0 pose-detector frame_bytes fix that solved
+                        # the person-snapshot drift bug. Fetched at emit time
+                        # so it's as fresh as the sub-stream frame the bbox
+                        # was computed on. None if camera-ingester hasn't
+                        # written HD recently (TTL 5 s on `frame_hd:{cam}`);
+                        # in that case downstream falls back to its own lookup.
+                        hd_bytes = r.get(HD_FRAME_KEY)
+                        if hd_bytes:
+                            det_msg["hd_frame_bytes"] = hd_bytes
 
                     r.xadd(
                         DETECTION_STREAM,
