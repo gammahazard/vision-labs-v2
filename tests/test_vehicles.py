@@ -1492,6 +1492,61 @@ def test_idle_iom_rescue_skips_non_idle_tracks(monkeypatch):
     assert result is None, "IoM rescue must skip non-idle tracks"
 
 
+def test_idle_iom_rescue_priority_over_competing_non_idle_track(monkeypatch):
+    """Live regression — duplicate vehicle_idle at 12:46 on cam1.
+
+    A passing truck spawned vehicle_0002 with a wide bbox containing the
+    parked Honda. The Honda's bbox-jittered detection then arrived at
+    [735.2, 324.1, 809.3, 358.1]:
+      - IoU vs vehicle_0001 (idle Honda, bbox [736.5, 314.7, 841.0, 358.6])
+        = 0.534 — below the 0.65 idle gate.
+      - IoU vs vehicle_0002 (truck, bbox [691.6, 320.4, 808.5, 373.5])
+        = 0.40 — above the 0.20 regular gate.
+
+    Before this fix, IoM rescue ran AFTER the primary IoU loop, so
+    vehicle_0002 won the match and never reached the rescue. vehicle_0001
+    was eligible (IoM=0.98, area_ratio=1.82) but never checked. Result:
+    the Honda's detections kept going to the truck track, and the next
+    Honda-position detection spawned a phantom vehicle_0003 on top of
+    the parked car → duplicate idle alert 150 s later.
+
+    Reordering: IoM rescue runs FIRST. Idle tracks are sticky."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    m._process_vehicle_detections(
+        [{"bbox": [736.5, 314.7, 841.0, 358.6], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    next(iter(m.tracked_vehicles.values())).idle_alerted = True
+
+    m._process_vehicle_detections(
+        [{"bbox": [691.6, 320.4, 808.5, 373.5], "class_name": "truck",
+          "confidence": 0.41}],
+        timestamp=0.4,
+    )
+    assert len(m.tracked_vehicles) == 2
+
+    m._process_vehicle_detections(
+        [{"bbox": [735.2, 324.1, 809.3, 358.1], "class_name": "car",
+          "confidence": 0.5}],
+        timestamp=0.8,
+    )
+
+    v1 = m.tracked_vehicles["vehicle_0001"]
+    v2 = m.tracked_vehicles["vehicle_0002"]
+    assert v1.bbox == [735.2, 324.1, 809.3, 358.1], \
+        f"vehicle_0001 should have absorbed via IoM, got {v1.bbox}"
+    assert v2.bbox == [691.6, 320.4, 808.5, 373.5], \
+        f"vehicle_0002 should NOT have stolen the Honda's detection, got {v2.bbox}"
+
+
 def test_idle_iom_rescue_respects_class_compatibility_for_4wheel(monkeypatch):
     """Positive case for #41 interaction — YOLO flips class car↔truck on
     the same physical parked vehicle AND outputs a jittered bbox.

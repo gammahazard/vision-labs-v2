@@ -286,50 +286,44 @@ class PersonTracker:
             if self._check_in_dead_zone(bbox):
                 continue
 
-            # Try to match to existing tracked vehicle
             best_match_id = None
-            best_iou = VEHICLE_IOU_THRESHOLD
 
-            for vid, veh in self.tracked_vehicles.items():
-                iou = compute_iou(bbox, veh.bbox)
-                # Idle-confirmed tracks demand a tighter IoU before accepting
-                # a new detection. A parked car's bbox is fixed; a real
-                # re-detection of the same car overlaps near-perfectly. A
-                # drive-by passing through that bbox region used to merge in
-                # at IoU ~0.25–0.45, polluting the parked car's crop buffer
-                # with crops of a different physical vehicle. Observed live:
-                # vehicle_0001 captured 7 crops of a parked car + 1 crop of
-                # an SUV that drove through that spot, then the classifier
-                # vote split between them and body_type came out at conf
-                # 0.54 (just under the 0.55 threshold).
-                #
-                # Gate on `is_stationary or idle_alerted`, not idle_alerted
-                # alone — is_stationary flips True after ~5 center-history
-                # samples (~1 s) once the track stops moving, while
-                # idle_alerted only fires after vehicle_idle_timeout (150s).
-                # Without is_stationary in the gate, a freshly-parked car
-                # is protected only after 150 s of accumulating pollution:
-                # vehicle_0011 had two passing-car bboxes merged into its
-                # crops at +1 s and +40 s, both well before idle_alerted.
-                tight_iou = veh.idle_alerted or veh.is_stationary
-                threshold = (VEHICLE_IDLE_IOU_THRESHOLD
-                             if tight_iou
-                             else VEHICLE_IOU_THRESHOLD)
-                if iou > best_iou and iou >= threshold:
-                    best_iou = iou
-                    best_match_id = vid
+            # Pass 1 — IoM rescue for idle/stationary tracks runs BEFORE
+            # the primary IoU loop. Idle tracks are "sticky": when a
+            # detection near-perfectly aligns with an idle bbox (IoM ≥
+            # VEHICLE_IDLE_IOM_THRESHOLD and area ratio ≤ ...IOM_AREA_RATIO_MAX),
+            # it absorbs into the idle track. Reordered from "after primary
+            # loop" because the post-loop position lost to non-idle tracks
+            # that happened to overlap a little (observed live at 16:44:
+            # a fresh truck track at IoU 0.40 stole the Honda's
+            # bbox-jittered detections, eventually spawning a phantom
+            # vehicle_0003 that re-fired vehicle_idle 150s later).
+            best_match_id = self._try_idle_iom_match(bbox, class_name)
 
-            # IoM (intersection-over-min) escape hatch for idle tracks
-            # ONLY. The tight idle IoU gate (0.65) rejects detections whose
-            # bbox is the same parked car with detector jitter widening it
-            # by ~30 px (curb shadow, adjacent vehicle clipping). Without
-            # the escape hatch, a phantom track spawns directly on top of
-            # the idle car and fires a duplicate vehicle_idle 150s later.
-            # IoM threshold is high (0.9) and we require the area ratio
-            # to be ≤2× so a person standing inside a parked-truck bbox
-            # can't false-merge (person area is ~1% of truck area).
+            # Pass 2 — regular IoU loop, only if IoM rescue didn't match.
+            #
+            # Idle-confirmed tracks demand a tighter IoU before accepting
+            # a new detection. A parked car's bbox is fixed; a real
+            # re-detection of the same car overlaps near-perfectly. A
+            # drive-by passing through that bbox region used to merge in
+            # at IoU ~0.25–0.45, polluting the parked car's crop buffer
+            # with crops of a different physical vehicle.
+            #
+            # Gate on `is_stationary or idle_alerted`, not idle_alerted
+            # alone — is_stationary flips True after ~5 center-history
+            # samples (~1 s) once the track stops moving, while
+            # idle_alerted only fires after vehicle_idle_timeout (150s).
             if not best_match_id:
-                best_match_id = self._try_idle_iom_match(bbox, class_name)
+                best_iou = VEHICLE_IOU_THRESHOLD
+                for vid, veh in self.tracked_vehicles.items():
+                    iou = compute_iou(bbox, veh.bbox)
+                    tight_iou = veh.idle_alerted or veh.is_stationary
+                    threshold = (VEHICLE_IDLE_IOU_THRESHOLD
+                                 if tight_iou
+                                 else VEHICLE_IOU_THRESHOLD)
+                    if iou > best_iou and iou >= threshold:
+                        best_iou = iou
+                        best_match_id = vid
 
             # IoU match can fail across consecutive frames when a fast-moving
             # car shifts by more than half its width — IoU drops below
