@@ -23,14 +23,46 @@ def test_buffer_append_records_all_three_lists():
 
 
 def test_buffer_caps_at_max_crops():
+    """Reservoir sampling: buffer always at max_crops once seen > max, and
+    the kept samples are spread across the input sequence (not just first N).
+
+    With random.seed(42), the reservoir produces a deterministic-but-spread
+    sample set — exact indices don't matter, but they must NOT be [0,1,2]
+    (which is what first-N would keep)."""
+    import random
+    random.seed(42)
     b = TrackBuffer(track_id="v", camera_id="cam1", first_seen=0.0,
                     max_crops=3)
-    for i in range(5):
+    for i in range(10):
         b.append(crop=bytes([i]), yolo_conf=0.5, bbox=[0, 0, 1, 1])
-    assert len(b.crops) == 3
-    # First-N policy: drive-bys show broadest angle coverage early.
-    assert b.crops == [bytes([0]), bytes([1]), bytes([2])]
+    assert len(b.crops) == 3, "buffer must stay at cap"
     assert b.is_full() is True
+    kept_bytes = sorted(int(c[0]) for c in b.crops)
+    assert kept_bytes != [0, 1, 2], (
+        "first-N retention would be [0,1,2]; reservoir picks spread samples"
+    )
+
+
+def test_buffer_reservoir_sampling_is_statistically_uniform():
+    """Across many runs, each input index has ~equal probability of being
+    in the final reservoir."""
+    import random
+    n_runs = 200
+    max_crops = 3
+    n_inputs = 10
+    sum_kept_indices = 0
+    for run in range(n_runs):
+        random.seed(run)
+        b = TrackBuffer(track_id="v", camera_id="cam1", first_seen=0.0,
+                        max_crops=max_crops)
+        for i in range(n_inputs):
+            b.append(crop=bytes([i]), yolo_conf=0.5, bbox=[0, 0, 1, 1])
+        sum_kept_indices += sum(int(c[0]) for c in b.crops)
+    expected = n_runs * max_crops * (n_inputs - 1) / 2
+    observed = sum_kept_indices
+    assert 0.8 * expected < observed < 1.2 * expected, (
+        f"reservoir mean drift: expected ~{expected}, got {observed}"
+    )
 
 
 def test_buffer_hero_index_picks_highest_confidence():

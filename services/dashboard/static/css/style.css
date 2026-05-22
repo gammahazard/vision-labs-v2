@@ -2710,3 +2710,16 @@ input[type="range"]::-moz-range-thumb {
     border-color: #4ade80;
     transform: translateY(-1px);
 }
+
+/* Phase 3 vehicle-attributes — attribute row shown inside each modal track section */
+.track-attrs {
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    padding: 0.25rem 0.75rem 0;
+}
+.track-attrs-beta {
+    color: #64748b;
+    font-size: 0.7rem;
+    font-style: italic;
+    margin-left: 0.4rem;
+}

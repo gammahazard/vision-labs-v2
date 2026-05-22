@@ -266,15 +266,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam1:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   # ---------------------------------------------------------------------------
@@ -704,15 +724,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam2:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam2:
@@ -887,15 +927,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam3:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam3:
@@ -1060,15 +1120,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam4:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam4:
@@ -1233,15 +1313,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam5:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam5:
@@ -1406,15 +1506,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam6:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam6:
@@ -1579,15 +1699,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam7:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam7:
@@ -1752,15 +1892,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam8:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam8:
@@ -1925,15 +2085,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam9:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam9:
@@ -2098,15 +2278,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam10:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam10:
@@ -2271,15 +2471,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam11:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam11:
@@ -2444,15 +2664,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam12:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam12:
@@ -2617,15 +2857,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam13:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam13:
@@ -2790,15 +3050,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam14:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam14:
@@ -2963,15 +3243,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam15:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam15:
@@ -3136,15 +3436,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam16:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam16:
@@ -3309,15 +3629,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam17:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam17:
@@ -3482,15 +3822,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam18:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam18:
@@ -3655,15 +4015,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam19:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam19:
@@ -3828,15 +4208,35 @@ services:
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
+      # Phase 3 classifier — disabled by default until weights exist on HF Hub
+      - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
+      - VEHICLE_ATTR_MODELS_DIR=/models
+      - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
+      - BODY_CONF_THRESHOLD=${BODY_CONF_THRESHOLD:-0.55}
+      - MAKE_CONF_THRESHOLD=${MAKE_CONF_THRESHOLD:-0.55}
+      - MODEL_CONF_THRESHOLD=${MODEL_CONF_THRESHOLD:-0.65}
+      - DETECTOR_GPU=${DETECTOR_GPU:-0}
+      - CUDA_VISIBLE_DEVICES=${DETECTOR_GPU:-0}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     volumes:
       - ./contracts:/app/contracts:ro
       - ./:/workspace:ro
       - qnap-snapshots:/data/snapshots
+      - vehicle-attribute-models:/models
     depends_on:
       redis:
         condition: service_healthy
       tracker-cam20:
         condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${DETECTOR_GPU:-0}']
+              capabilities: [gpu]
     restart: on-failure
 
   face-recognizer-cam20:
@@ -3960,6 +4360,7 @@ volumes:
   # See docker-compose.qnap.yml for the QNAP/CIFS-backed versions of these.
   # qnap-recordings is no longer a named volume — recordings are bind-mounted
   # to ./data/recordings on the WSL host for easy Windows Explorer access.
+  vehicle-attribute-models:
   qnap-snapshots:
   qnap-events:
   qnap-telegram:

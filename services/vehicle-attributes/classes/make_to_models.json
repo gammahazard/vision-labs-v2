@@ -1,0 +1,30 @@
+{
+  "Chevrolet": [
+    "Silverado",
+    "Malibu",
+    "Camaro",
+    "Equinox",
+    "Tahoe"
+  ],
+  "Ford": [
+    "F-150",
+    "Mustang",
+    "Expedition",
+    "Edge",
+    "Escape"
+  ],
+  "Honda": [
+    "Civic",
+    "Accord",
+    "CR-V",
+    "Odyssey",
+    "Pilot"
+  ],
+  "Toyota": [
+    "Camry",
+    "Corolla",
+    "Highlander",
+    "4Runner",
+    "Tundra"
+  ]
+}

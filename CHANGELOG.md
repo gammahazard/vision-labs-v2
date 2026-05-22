@@ -11,6 +11,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ### Added
 - **Edit pencil ✏ on camera rows** — modal to rename, edit lat/lon, toggle detectors without delete + re-add.
 - **Vehicle attributes Phase 1** — per-cam `vehicle-attributes-cam{N}` service buffers HD crops, writes per-track dirs (`hero.jpg` + `angle_NN.jpg` + `metadata.json`) on track end. New `detect_vehicle_attributes` flag, `vehicle_sample` tracker event, Browse grouped cards. No classifier yet. *Requires new service build + tracker rebuild.*
+- **Vehicle attributes Phase 3 (v0 classifier)** — ConvNeXt-Tiny multi-head fills `metadata.json.attributes` with color + body + make (always) + model (drive-by tracks only). Gated by `ENABLE_CLASSIFIER` env (default 0); deploys before trained weights exist. *Requires vehicle-attributes rebuild + HF Hub-hosted weights when enabled.*
 
 ### Fixed
 - **Detector-flag dependencies enforced** — `detect_faces` requires `detect_persons` now hard-gated UI (`data-requires=`) + server (`_validate_camera`).

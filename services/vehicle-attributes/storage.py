@@ -1,19 +1,20 @@
-"""Filesystem layout writer for vehicle-attributes Phase 1.
+"""Filesystem layout writer for vehicle-attributes Phase 1/3.
 
 Writes per-track directories at:
     /data/snapshots/vehicles/{camera}/{date}/{track_id}/
         hero.jpg            -- highest-confidence crop
         angle_NN.jpg        -- remaining crops (zero-padded index)
-        metadata.json       -- track metadata + (Phase 1) null attribute block
+        metadata.json       -- track metadata + attribute block
 
 Phase 1's metadata.json attribute block is all-null placeholders. Phase 3
-will fill in {color, body_type, make} with classifier output. The all-null
-shape is committed now so Phase 3 only adds values, doesn't restructure.
+populates it by passing `attributes=` to flush_buffer_to_disk. Omitting the
+kwarg preserves the Phase 1 null-block behavior (backward compat).
 """
 import json
 import logging
 import os
 from datetime import datetime
+from typing import Optional
 
 from buffer import TrackBuffer
 
@@ -31,15 +32,16 @@ def flush_buffer_to_disk(
     event_kind: str,           # "drive_by" | "idle"
     vehicle_class: str,        # "car" | "truck" | "bus" | ...
     snapshot_root: str,
+    attributes: Optional[dict] = None,
 ) -> None:
     """Write the buffer to /data/snapshots/vehicles/{cam}/{date}/{track_id}/.
 
-    Empty buffer = silent no-op.
+    `attributes`: optional dict from the Phase 3 classifier. When provided,
+    becomes the `attributes` block in metadata.json. When None (Phase 1
+    behavior + Phase 3 with ENABLE_CLASSIFIER=0), the block is all-null.
     """
     if not buf.crops:
-        logger.debug(
-            f"Flush {buf.track_id}: empty buffer, skipping"
-        )
+        logger.debug(f"Flush {buf.track_id}: empty buffer, skipping")
         return
 
     date_str = _date_str_from_first_seen(buf.first_seen)
@@ -49,12 +51,10 @@ def flush_buffer_to_disk(
 
     hero_idx = buf.hero_index()
 
-    # Hero
     hero_path = os.path.join(track_dir, "hero.jpg")
     with open(hero_path, "wb") as fh:
         fh.write(buf.crops[hero_idx])
 
-    # Angles: every non-hero crop, zero-padded sequential
     angle_n = 1
     for i, crop in enumerate(buf.crops):
         if i == hero_idx:
@@ -64,7 +64,14 @@ def flush_buffer_to_disk(
             fh.write(crop)
         angle_n += 1
 
-    # Metadata
+    if attributes is None:
+        attributes = {
+            "color": None, "color_confidence": None,
+            "body_type": None, "body_type_confidence": None,
+            "make": None, "make_confidence": None,
+            "model": None, "model_confidence": None,
+        }
+
     meta = {
         "track_id": buf.track_id,
         "camera_id": buf.camera_id,
@@ -75,17 +82,7 @@ def flush_buffer_to_disk(
         "vehicle_class": vehicle_class,
         "hero_frame_index": hero_idx,
         "voting_samples": len(buf.crops),
-        # Phase 1: classifier hasn't shipped yet. Shape committed; Phase 3
-        # will populate non-null values. See spec §2.5.
-        "attributes": {
-            "color": None,
-            "color_confidence": None,
-            "body_type": None,
-            "body_type_confidence": None,
-            "make": None,
-            "make_confidence": None,
-            "model": None,
-        },
+        "attributes": attributes,
         "snapshot_bbox": buf.bboxes[hero_idx],
     }
     meta_path = os.path.join(track_dir, "metadata.json")
@@ -93,6 +90,6 @@ def flush_buffer_to_disk(
         json.dump(meta, fh, indent=2)
 
     logger.info(
-        f"Flushed {buf.track_id} -> {track_dir} "
+        f"Flushed {buf.track_id} → {track_dir} "
         f"({len(buf.crops)} crops, hero=angle_{hero_idx}, kind={event_kind})"
     )

@@ -39,6 +39,22 @@ function initBrowse() {
     _loadBrowseHome();
 }
 
+// Returns an HTML snippet showing non-null color/body/make/model with a
+// (beta) tag. Returns '' when attrs is null/undefined or all fields blank.
+function _formatAttrs(attrs) {
+    if (!attrs) return '';
+    const color = attrs.color || '';
+    const body = attrs.body_type || '';
+    const make = attrs.make || '';
+    const model = attrs.model || '';
+    if (!color && !body && !make && !model) return '';
+    const left = [color, body].filter(Boolean).join(' ');
+    const right = [make, model].filter(Boolean).join(' ');
+    let combined = left;
+    if (right) combined += (left ? ' · ' : '') + right;
+    return `${combined} <span class="track-attrs-beta">(beta)</span>`;
+}
+
 // Delegated click handler on #browseContent. Bound once. Looks at the
 // closest [data-action] ancestor of the click target and dispatches.
 function _bindBrowseClickListener() {
@@ -267,6 +283,7 @@ async function _openCropsModal(date) {
                 tabindex="0">`;
         }).join("");
 
+        const attrLine = _formatAttrs(t.attributes);
         return `<section class="crops-modal-track">
             <header class="crops-modal-track-header">
                 <span class="crops-modal-track-id">${t.track_id}</span>
@@ -276,6 +293,7 @@ async function _openCropsModal(date) {
                     · ${allUrls.length} crop${allUrls.length === 1 ? "" : "s"}
                 </span>
             </header>
+            ${attrLine ? `<div class="track-attrs">${attrLine}</div>` : ""}
             <div class="crops-modal-thumb-grid">${thumbs}</div>
         </section>`;
     }).join("");
