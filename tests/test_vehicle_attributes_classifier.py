@@ -202,7 +202,7 @@ def test_run_classifier_and_vote_drive_by_predicts_all_four(monkeypatch):
     assert out['ir_track'] is False
 
 
-def test_run_classifier_and_vote_idle_skips_model(monkeypatch):
+def test_run_classifier_and_vote_idle_event_still_runs_all_heads(monkeypatch):
     import services.vehicle_attributes  # ensure sys.path is set up  # noqa: F401
     import classifier as clf
     from services.vehicle_attributes.buffer import TrackBuffer
@@ -232,8 +232,57 @@ def test_run_classifier_and_vote_idle_skips_model(monkeypatch):
     assert out['color'] == 'red'
     assert out['body_type'] == 'sedan'
     assert out['make'] == 'Honda'
-    assert out['model'] is None
-    assert out['model_confidence'] is None
+    # Model head now runs on idle too — parked cars give well-sampled
+    # multi-angle views and a model prediction is signal worth showing.
+    assert out['model'] == 'm50'
+    assert out['model_confidence'] is not None
+
+
+def test_run_classifier_and_vote_below_threshold_shows_confidence(monkeypatch):
+    """Contract: when a head VOTES but its winning class is below the
+    threshold, the label is None but the confidence still reports the
+    losing value. Previously color + model nulled out the confidence too,
+    which made it impossible to see 'color was 0.53, just barely under
+    the 0.55 threshold' vs 'color was 0.18, way off'. Body + make already
+    behaved this way; this test locks in the same for color + model."""
+    import services.vehicle_attributes  # noqa: F401
+    import classifier as clf
+    from services.vehicle_attributes.buffer import TrackBuffer
+    import torch
+
+    def _below_threshold_color(num_crops):
+        """Color fake whose softmax winner sits well below 0.55."""
+        def fake(_x):
+            out = torch.full((num_crops, 10), 0.5)
+            out[:, 0] = 1.5  # mildly favors 'yellow' but vote stays ~0.40
+            return out
+        return fake
+
+    monkeypatch.setattr(clf, "_load_color_model",
+                        lambda: _below_threshold_color(num_crops=2))
+    monkeypatch.setattr(clf, "_load_multihead_model",
+                        lambda: _mock_multihead(num_crops=2))
+    monkeypatch.setattr(clf, "_is_monochrome", lambda _b: False)
+    monkeypatch.setattr(clf, "_load_classes", lambda: {
+        'color': ['yellow','orange','green','gray','red','blue','white','golden','brown','black'],
+        'body':  ['sedan','suv','coupe','pickup','van','hatchback','convertible','wagon'],
+        'make':  ['Acura'] * 21 + ['Honda'] + ['Toyota'] * 28,
+        'model': [f'm{i}' for i in range(196)],
+        'make_to_models': {'Honda': ['m50']},
+    })
+    monkeypatch.setattr(clf, "_preprocess",
+                        lambda crops: torch.zeros(len(crops), 3, 224, 224))
+
+    buf = TrackBuffer(track_id="v_low_conf", camera_id="cam1", first_seen=0.0)
+    for _ in range(2):
+        buf.append(crop=_make_jpeg(np.zeros((100, 80, 3), dtype=np.uint8)),
+                   yolo_conf=0.8, bbox=[10, 20, 50, 60])
+
+    out = clf.run_classifier_and_vote(buf, event_kind="drive_by")
+    # Color voted but lost: label is None, conf is NOW reported (the fix).
+    assert out['color'] is None
+    assert out['color_confidence'] is not None
+    assert 0.0 < out['color_confidence'] < 0.55
 
 
 def test_run_classifier_and_vote_empty_buffer_returns_all_null(monkeypatch):

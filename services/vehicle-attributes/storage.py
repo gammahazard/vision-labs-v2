@@ -45,8 +45,13 @@ def flush_buffer_to_disk(
         return
 
     date_str = _date_str_from_first_seen(buf.first_seen)
-    track_dir = os.path.join(snapshot_root, buf.camera_id, date_str,
-                             buf.track_id)
+    # Append the integer first-seen epoch to the dir name so a new
+    # tracker session (which resets _next_vehicle_id to 1 and re-mints
+    # vehicle_0001) can't overwrite an earlier physical vehicle's track
+    # dir of the same id on the same day. metadata.json still carries
+    # the original `track_id` (vehicle_NNNN) for event consumers.
+    dir_name = f"{buf.track_id}_{int(buf.first_seen)}"
+    track_dir = os.path.join(snapshot_root, buf.camera_id, date_str, dir_name)
     os.makedirs(track_dir, exist_ok=True)
 
     hero_idx = buf.hero_index()

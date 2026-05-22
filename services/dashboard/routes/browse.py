@@ -214,21 +214,30 @@ async def list_day_tracks(date: str, camera: str = ""):
                     meta = json.load(fh)
             except (OSError, ValueError):
                 continue
-            track_id = meta.get("track_id", entry.name)
+            # The URL path component MUST be the actual on-disk dir name
+            # (entry.name) — that's what serve_track_image resolves. The
+            # JSON `track_id` field shows the friendly vehicle_NNNN id
+            # from metadata.json for UI display. Since storage.py now
+            # appends the first-seen epoch to dir names to avoid
+            # collisions across tracker restarts, entry.name and
+            # meta["track_id"] are no longer the same string.
+            dir_id = entry.name
+            display_id = meta.get("track_id", entry.name)
             angles = sorted(
                 f.name for f in os.scandir(entry.path)
                 if f.is_file() and f.name.startswith("angle_")
                 and f.name.endswith(".jpg")
             )
             tracks.append({
-                "track_id": track_id,
+                "track_id": display_id,
+                "dir_id": dir_id,
                 "camera": cam_safe,
                 "date": date,
                 "time": datetime.fromtimestamp(meta.get("first_seen", 0)).strftime("%H:%M:%S"),
                 "first_seen": meta.get("first_seen"),
-                "hero_url": f"/api/browse/tracks/{date}/{cam_safe}/{track_id}/hero.jpg",
+                "hero_url": f"/api/browse/tracks/{date}/{cam_safe}/{dir_id}/hero.jpg",
                 "angle_urls": [
-                    f"/api/browse/tracks/{date}/{cam_safe}/{track_id}/{a}"
+                    f"/api/browse/tracks/{date}/{cam_safe}/{dir_id}/{a}"
                     for a in angles
                 ],
                 "vehicle_class": meta.get("vehicle_class", "vehicle"),
