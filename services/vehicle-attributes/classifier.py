@@ -109,22 +109,48 @@ def _enforce_make_model_consistency(
 
 # ---------------------------------------------------------------------------
 # Model + classes loading (singletons, lazy)
+#
+# v0 ships TWO models, not one:
+#   - color_model: ImageNet-pretrained ConvNeXt-Tiny backbone (frozen) +
+#     linear color head trained on VeRi-776.
+#   - multihead_model: ConvNeXt-Tiny backbone fine-tuned on Stanford Cars-196
+#     + body / make / model heads.
+#
+# Sharing one backbone across both didn't work: color training needed the
+# generic ImageNet feature space (cheap, no overfit), and make/model needed
+# a backbone specialized to fine-grained vehicles. Fine-tuning one backbone
+# for cars would erase the color head's learned mapping. Two models cost
+# ~1.2 GB VRAM total — well within the small-tier budget.
 # ---------------------------------------------------------------------------
 
-_MODEL = None
+_COLOR_MODEL = None
+_MULTIHEAD_MODEL = None
 _CLASSES = None
 
 MODELS_DIR = os.environ.get("VEHICLE_ATTR_MODELS_DIR", "/models")
 HF_REPO = os.environ.get("VEHICLE_ATTR_HF_REPO",
-                          "gammahazard/vision-labs-vehicle-attributes")
-MODEL_NAME = os.environ.get("VEHICLE_ATTR_MODEL", "convnext_tiny_v0")
+                          "mangolover/vision-labs-vehicle-attributes")
+COLOR_MODEL_NAME = os.environ.get(
+    "VEHICLE_ATTR_COLOR_MODEL", "color_head_v0",
+)
+MULTIHEAD_MODEL_NAME = os.environ.get(
+    "VEHICLE_ATTR_MULTIHEAD_MODEL", "multihead_v0",
+)
 
 COLOR_CONF = float(os.environ.get("COLOR_CONF_THRESHOLD", "0.55"))
 BODY_CONF = float(os.environ.get("BODY_CONF_THRESHOLD", "0.55"))
 MAKE_CONF = float(os.environ.get("MAKE_CONF_THRESHOLD", "0.55"))
 MODEL_CONF = float(os.environ.get("MODEL_CONF_THRESHOLD", "0.65"))
 
-MODEL_VERSION = f"v0-{MODEL_NAME}-2026-05-21"
+# Saturation threshold under which a crop is treated as monochrome / IR.
+# Skips color classification because all RGB channels are equal and the
+# VeRi-776 head would just emit noise. Body/make/model still run — they
+# rely on shape, not chroma.
+IR_SATURATION_THRESHOLD = float(
+    os.environ.get("IR_SATURATION_THRESHOLD", "8.0"),
+)
+
+MODEL_VERSION = f"v0-color={COLOR_MODEL_NAME}-multihead={MULTIHEAD_MODEL_NAME}"
 
 
 def _classes_dir() -> Path:
@@ -148,20 +174,60 @@ def _load_classes() -> dict:
     return _CLASSES
 
 
-def _build_model_arch():
-    """Construct the multi-head ConvNeXt-Tiny architecture (no weights)."""
+def _is_monochrome(jpeg_bytes: bytes) -> bool:
+    """Detect IR / night-vision frames whose RGB channels are nearly equal.
+
+    Color head trained on VeRi-776 sees uniformly low-saturation input and
+    emits noise. Cheaper to skip color and return None than to pretend.
+    """
+    arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+    bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if bgr is None:
+        return False
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    return float(hsv[..., 1].mean()) < IR_SATURATION_THRESHOLD
+
+
+def _build_color_model():
+    """ImageNet-pretrained ConvNeXt-Tiny + linear color head (no learned
+    backbone weights here — backbone stays at its in22k-ft-in1k state).
+    """
     import torch.nn as nn
     import timm
     classes = _load_classes()
-    backbone = timm.create_model('convnext_tiny', pretrained=False,
-                                  num_classes=0)
+    backbone = timm.create_model(
+        'convnext_tiny', pretrained=True, num_classes=0,
+    )
     feat_dim = backbone.num_features
 
-    class MultiHead(nn.Module):
+    class ColorModel(nn.Module):
         def __init__(self):
             super().__init__()
             self.backbone = backbone
             self.color_head = nn.Linear(feat_dim, len(classes['color']))
+
+        def forward(self, x):
+            return self.color_head(self.backbone(x))
+    return ColorModel()
+
+
+def _build_multihead_model():
+    """ConvNeXt-Tiny + body/make/model heads. Backbone weights come from
+    the fine-tuned Stanford-Cars checkpoint, NOT ImageNet — pretrained=False
+    here so we don't waste a download replacing weights we're about to load.
+    """
+    import torch.nn as nn
+    import timm
+    classes = _load_classes()
+    backbone = timm.create_model(
+        'convnext_tiny', pretrained=False, num_classes=0,
+    )
+    feat_dim = backbone.num_features
+
+    class MultiHeadModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.backbone = backbone
             self.body_head = nn.Linear(feat_dim, len(classes['body']))
             self.make_head = nn.Linear(feat_dim, len(classes['make']))
             self.model_head = nn.Linear(feat_dim, len(classes['model']))
@@ -169,49 +235,80 @@ def _build_model_arch():
         def forward(self, x):
             feats = self.backbone(x)
             return {
-                'color': self.color_head(feats),
                 'body':  self.body_head(feats),
                 'make':  self.make_head(feats),
                 'model': self.model_head(feats),
             }
-    return MultiHead()
+    return MultiHeadModel()
 
 
-def _load_model():
-    """Lazy-load the trained multi-head model. Downloads weights on first call.
-    Raises if weights can't be obtained.
+def _download_weights(filename: str) -> Path:
+    """Download `<filename>.safetensors` from HF Hub into MODELS_DIR if
+    missing, return the local path.
     """
-    global _MODEL
-    if _MODEL is not None:
-        return _MODEL
-
-    import torch
     from huggingface_hub import hf_hub_download
 
     target_dir = Path(MODELS_DIR)
     target_dir.mkdir(parents=True, exist_ok=True)
-    weights_path = target_dir / f"{MODEL_NAME}.safetensors"
-
+    weights_path = target_dir / f"{filename}.safetensors"
     if not weights_path.exists():
-        logger.info(f"downloading {MODEL_NAME} weights from {HF_REPO}")
+        logger.info(f"downloading {filename} weights from {HF_REPO}")
         downloaded = hf_hub_download(
             repo_id=HF_REPO,
-            filename=f"{MODEL_NAME}.safetensors",
+            filename=f"{filename}.safetensors",
             local_dir=str(target_dir),
         )
         if Path(downloaded) != weights_path:
             os.replace(downloaded, weights_path)
+    return weights_path
 
-    model = _build_model_arch()
+
+def _load_color_model():
+    """Lazy-load the color model singleton."""
+    global _COLOR_MODEL
+    if _COLOR_MODEL is not None:
+        return _COLOR_MODEL
+    import torch
     from safetensors.torch import load_file
-    state = load_file(str(weights_path))
+    weights = _download_weights(COLOR_MODEL_NAME)
+    model = _build_color_model()
+    state = load_file(str(weights))
+    # color_head.safetensors only contains the linear-head tensors; missing
+    # backbone params keep their ImageNet-pretrained values.
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if unexpected:
+        logger.warning(f"color model: unexpected keys {unexpected}")
+    model.train(False)
+    if torch.cuda.is_available():
+        model = model.cuda()
+    _COLOR_MODEL = model
+    logger.info(
+        f"loaded color model {COLOR_MODEL_NAME} "
+        f"({'cuda' if torch.cuda.is_available() else 'cpu'})"
+    )
+    return _COLOR_MODEL
+
+
+def _load_multihead_model():
+    """Lazy-load the body/make/model singleton."""
+    global _MULTIHEAD_MODEL
+    if _MULTIHEAD_MODEL is not None:
+        return _MULTIHEAD_MODEL
+    import torch
+    from safetensors.torch import load_file
+    weights = _download_weights(MULTIHEAD_MODEL_NAME)
+    model = _build_multihead_model()
+    state = load_file(str(weights))
     model.load_state_dict(state)
     model.train(False)
     if torch.cuda.is_available():
         model = model.cuda()
-    _MODEL = model
-    logger.info(f"loaded {MODEL_NAME} into {'cuda' if torch.cuda.is_available() else 'cpu'}")
-    return _MODEL
+    _MULTIHEAD_MODEL = model
+    logger.info(
+        f"loaded multi-head model {MULTIHEAD_MODEL_NAME} "
+        f"({'cuda' if torch.cuda.is_available() else 'cpu'})"
+    )
+    return _MULTIHEAD_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -219,9 +316,13 @@ def _load_model():
 # ---------------------------------------------------------------------------
 
 def run_classifier_and_vote(buf, event_kind: str) -> dict:
-    """Run the multi-head classifier across all crops in the buffer,
+    """Run the color + multi-head classifiers across all crops in the buffer,
     apply voting + thresholds + make-model consistency, return attributes
     dict for storage.py to merge into metadata.json.
+
+    Two model forward passes per flush (one per backbone). Color is skipped
+    on IR/monochrome frames — the head was trained on saturated VeRi-776
+    crops and would just emit noise on night-vision input.
     """
     import torch
 
@@ -237,25 +338,49 @@ def run_classifier_and_vote(buf, event_kind: str) -> dict:
             'classifier_version': MODEL_VERSION,
         }
 
-    model = _load_model()
     crops_t = _preprocess(buf.crops)
-    if torch.cuda.is_available() and crops_t.numel() > 0:
+    if crops_t.numel() == 0:
+        return {
+            'color': None, 'color_confidence': None,
+            'body_type': None, 'body_type_confidence': None,
+            'make': None, 'make_confidence': None,
+            'model': None, 'model_confidence': None,
+            'voting_samples': 0,
+            'classifier_version': MODEL_VERSION,
+        }
+    if torch.cuda.is_available():
         crops_t = crops_t.cuda()
 
-    with torch.inference_mode():
-        logits = model(crops_t)
-    probs = {task: torch.softmax(t, dim=1) for task, t in logits.items()}
+    # Treat the track as IR if MORE THAN HALF of its crops are monochrome.
+    # One-off camera glare on a daytime frame shouldn't suppress color.
+    n_mono = sum(1 for c in buf.crops if _is_monochrome(c))
+    is_ir_track = n_mono > len(buf.crops) // 2
 
-    color_out = _vote(probs['color'], buf.confidences, classes['color'],
-                      COLOR_CONF)
-    body_out = _vote(probs['body'], buf.confidences, classes['body'],
+    # Color path — skip entirely on IR tracks.
+    if is_ir_track:
+        color_out = (None, 0.0)
+    else:
+        color_model = _load_color_model()
+        with torch.inference_mode():
+            color_logits = color_model(crops_t)
+        color_probs = torch.softmax(color_logits, dim=1)
+        color_out = _vote(color_probs, buf.confidences, classes['color'],
+                          COLOR_CONF)
+
+    # Multi-head path — body / make / model.
+    multihead = _load_multihead_model()
+    with torch.inference_mode():
+        mh_logits = multihead(crops_t)
+    mh_probs = {task: torch.softmax(t, dim=1) for task, t in mh_logits.items()}
+
+    body_out = _vote(mh_probs['body'], buf.confidences, classes['body'],
                      BODY_CONF)
-    make_out = _vote(probs['make'], buf.confidences, classes['make'],
+    make_out = _vote(mh_probs['make'], buf.confidences, classes['make'],
                      MAKE_CONF)
     if event_kind == 'idle':
         model_out = (None, 0.0)
     else:
-        model_out = _vote(probs['model'], buf.confidences, classes['model'],
+        model_out = _vote(mh_probs['model'], buf.confidences, classes['model'],
                           MODEL_CONF)
 
     make_out, model_out = _enforce_make_model_consistency(
@@ -264,7 +389,7 @@ def run_classifier_and_vote(buf, event_kind: str) -> dict:
 
     return {
         'color': color_out[0],
-        'color_confidence': color_out[1],
+        'color_confidence': color_out[1] if color_out[0] is not None else None,
         'body_type': body_out[0],
         'body_type_confidence': body_out[1],
         'make': make_out[0],
@@ -273,4 +398,5 @@ def run_classifier_and_vote(buf, event_kind: str) -> dict:
         'model_confidence': model_out[1] if model_out[0] is not None else None,
         'voting_samples': len(buf.crops),
         'classifier_version': MODEL_VERSION,
+        'ir_track': is_ir_track,
     }
