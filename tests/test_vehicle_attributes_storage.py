@@ -70,3 +70,40 @@ def test_flush_empty_buffer_is_a_noop(tmp_path):
                          snapshot_root=str(tmp_path))
     # No directory created, no error raised
     assert not (tmp_path / "cam1").exists()
+
+
+def test_flush_writes_attributes_when_provided(tmp_path):
+    b = _seeded_buffer(2)
+    attrs = {
+        'color': 'red',
+        'color_confidence': 0.82,
+        'body_type': 'sedan',
+        'body_type_confidence': 0.78,
+        'make': 'Honda',
+        'make_confidence': 0.71,
+        'model': 'Civic',
+        'model_confidence': 0.68,
+        'voting_samples': 2,
+        'classifier_version': 'v0-convnext_tiny_v0-2026-05-21',
+    }
+    flush_buffer_to_disk(b, last_seen=1779394907.2, event_kind='drive_by',
+                         vehicle_class='car', snapshot_root=str(tmp_path),
+                         attributes=attrs)
+    track_dir = tmp_path / 'cam1' / '2026-05-21' / 'vehicle_0042'
+    meta = json.loads((track_dir / 'metadata.json').read_text())
+    assert meta['attributes']['color'] == 'red'
+    assert meta['attributes']['make'] == 'Honda'
+    assert meta['attributes']['model'] == 'Civic'
+    assert meta['attributes']['classifier_version'].startswith('v0-')
+
+
+def test_flush_omitted_attributes_keeps_phase1_null_block(tmp_path):
+    b = _seeded_buffer(2)
+    flush_buffer_to_disk(b, last_seen=1779394907.2, event_kind='drive_by',
+                         vehicle_class='car', snapshot_root=str(tmp_path))
+    track_dir = tmp_path / 'cam1' / '2026-05-21' / 'vehicle_0042'
+    meta = json.loads((track_dir / 'metadata.json').read_text())
+    assert meta['attributes']['color'] is None
+    assert meta['attributes']['body_type'] is None
+    assert meta['attributes']['make'] is None
+    assert meta['attributes']['model'] is None
