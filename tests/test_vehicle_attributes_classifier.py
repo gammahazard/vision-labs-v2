@@ -37,3 +37,49 @@ def test_preprocess_rejects_invalid_jpeg_gracefully():
     invalid = b"\x00\x01\x02 not a jpeg"
     t = _preprocess([valid, invalid, valid])
     assert tuple(t.shape) == (2, 3, 224, 224)
+
+
+def test_vote_single_strong_prediction():
+    import torch
+    from services.vehicle_attributes.classifier import _vote
+    classes = ['A', 'B', 'C']
+    probs = torch.tensor([[0.05, 0.90, 0.05]])
+    yolo_confs = [0.8]
+    winner, conf = _vote(probs, yolo_confs, classes, threshold=0.55)
+    assert winner == 'B'
+    assert conf > 0.55
+
+
+def test_vote_below_threshold_returns_none():
+    import torch
+    from services.vehicle_attributes.classifier import _vote
+    classes = ['A', 'B', 'C']
+    probs = torch.tensor([[0.4, 0.35, 0.25]])
+    yolo_confs = [0.7]
+    winner, conf = _vote(probs, yolo_confs, classes, threshold=0.55)
+    assert winner is None
+    assert conf < 0.55
+
+
+def test_vote_weighted_by_yolo_confidence():
+    import torch
+    from services.vehicle_attributes.classifier import _vote
+    classes = ['A', 'B']
+    probs = torch.tensor([
+        [0.95, 0.05],
+        [0.55, 0.45],
+    ])
+    yolo_confs = [0.1, 0.95]
+    winner, conf = _vote(probs, yolo_confs, classes, threshold=0.55)
+    assert winner == 'A'
+
+
+def test_vote_empty_input_returns_none():
+    import torch
+    from services.vehicle_attributes.classifier import _vote
+    classes = ['A', 'B']
+    probs = torch.empty(0, 2)
+    yolo_confs = []
+    winner, conf = _vote(probs, yolo_confs, classes, threshold=0.55)
+    assert winner is None
+    assert conf == 0.0

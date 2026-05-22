@@ -61,3 +61,25 @@ def _preprocess(jpeg_crops: list[bytes]):
     if not tensors:
         return torch.empty(0, 3, 224, 224)
     return torch.stack(tensors)
+
+
+def _vote(per_crop_probs, yolo_confs: list[float],
+          classes: list[str], threshold: float):
+    """Weighted majority vote across crops.
+    Returns (winner_label_or_None, winner_confidence).
+    """
+    import torch
+    if per_crop_probs.numel() == 0 or not yolo_confs:
+        return (None, 0.0)
+    yc = torch.tensor(yolo_confs, dtype=per_crop_probs.dtype,
+                      device=per_crop_probs.device)
+    weighted = (per_crop_probs * yc.unsqueeze(1)).sum(dim=0)
+    total = weighted.sum()
+    if total <= 0:
+        return (None, 0.0)
+    weighted = weighted / total
+    winner_idx = int(weighted.argmax().item())
+    winner_conf = float(weighted[winner_idx].item())
+    if winner_conf < threshold:
+        return (None, winner_conf)
+    return (classes[winner_idx], winner_conf)
