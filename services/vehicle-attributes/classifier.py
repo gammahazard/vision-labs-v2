@@ -137,10 +137,10 @@ MULTIHEAD_MODEL_NAME = os.environ.get(
     "VEHICLE_ATTR_MULTIHEAD_MODEL", "multihead_v0",
 )
 
-COLOR_CONF = float(os.environ.get("COLOR_CONF_THRESHOLD", "0.55"))
-BODY_CONF = float(os.environ.get("BODY_CONF_THRESHOLD", "0.55"))
-MAKE_CONF = float(os.environ.get("MAKE_CONF_THRESHOLD", "0.55"))
-MODEL_CONF = float(os.environ.get("MODEL_CONF_THRESHOLD", "0.65"))
+COLOR_CONF = float(os.environ.get("COLOR_CONF_THRESHOLD", "0.35"))
+BODY_CONF = float(os.environ.get("BODY_CONF_THRESHOLD", "0.40"))
+MAKE_CONF = float(os.environ.get("MAKE_CONF_THRESHOLD", "0.40"))
+MODEL_CONF = float(os.environ.get("MODEL_CONF_THRESHOLD", "0.45"))
 
 # Saturation threshold under which a crop is treated as monochrome / IR.
 # Skips color classification because all RGB channels are equal and the
