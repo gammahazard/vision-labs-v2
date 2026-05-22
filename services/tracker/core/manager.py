@@ -301,6 +301,29 @@ class PersonTracker:
             # vehicle_0003 that re-fired vehicle_idle 150s later).
             best_match_id = self._try_idle_iom_match(bbox, class_name)
 
+            # Pass 1b — IoM rescue for idle GHOST tracks. Runs before the
+            # primary IoU loop so a non-idle live track can't claim a
+            # detection that belongs to a recently-ghosted idle track.
+            # Observed live: when a passing pickup spawned vehicle_0003
+            # and the real Honda track (vehicle_0001) went to ghost from
+            # the 10 s lost-timeout during the pickup's transit, vehicle_0003's
+            # bbox shifted onto the Honda's position and absorbed all subsequent
+            # Honda-bbox detections via the primary IoU loop. vehicle_0001 stayed
+            # in the ghost buffer for the full idle-ghost TTL (600 s) while
+            # vehicle_0003 became "the new idle Honda" 150 s later and fired a
+            # duplicate vehicle_idle.
+            if not best_match_id:
+                ghost_id = self._try_idle_iom_ghost_match(bbox, class_name)
+                if ghost_id:
+                    veh, _ = self._ghost_vehicles.pop(ghost_id)
+                    veh.update(bbox, class_name, confidence, timestamp)
+                    self.tracked_vehicles[ghost_id] = veh
+                    logger.info(
+                        f"vehicle {ghost_id} re-associated via idle IoM "
+                        f"ghost rescue (no new vehicle_detected emitted)"
+                    )
+                    continue  # skip rest of loop for this detection
+
             # Pass 2 — regular IoU loop, only if IoM rescue didn't match.
             #
             # Idle-confirmed tracks demand a tighter IoU before accepting
@@ -542,6 +565,56 @@ class PersonTracker:
             i_area = (ix2 - ix1) * (iy2 - iy1)
             iom = i_area / min(a_area, b_area)
 
+            if iom >= best_iom:
+                best_iom = iom
+                best_vid = vid
+
+        return best_vid
+
+    def _try_idle_iom_ghost_match(self, bbox: list, class_name: str) -> str | None:
+        """Same as _try_idle_iom_match but checks _ghost_vehicles (idle only).
+
+        Needed because when a parked car's detector intermittently drops
+        for >VEHICLE_LOST_TIMEOUT (10 s) — e.g., a passing vehicle visually
+        blocks YOLO for a moment — the idle track moves to the ghost
+        buffer. Without this rescue, a non-idle live track passing through
+        the same area can claim the parked car's subsequent detections via
+        the primary IoU loop before the regular ghost_match (center
+        distance) gets a chance, because primary IoU runs first.
+
+        Returns a ghost vehicle_id when the same gates pass
+        (IoM ≥ VEHICLE_IDLE_IOM_THRESHOLD, area ratio ≤ ...AREA_RATIO_MAX,
+        class compatible). Caller must pop from _ghost_vehicles and add
+        back to tracked_vehicles (mirroring _try_ghost_match's contract).
+        """
+        a_x1, a_y1, a_x2, a_y2 = bbox
+        a_area = (a_x2 - a_x1) * (a_y2 - a_y1)
+        if a_area <= 0:
+            return None
+
+        best_vid = None
+        best_iom = VEHICLE_IDLE_IOM_THRESHOLD
+
+        for vid, (veh, _ghost_ts) in self._ghost_vehicles.items():
+            if not veh.idle_alerted:
+                continue  # only idle ghosts are sticky
+            if not _class_compatible(veh.class_name, class_name):
+                continue
+            b_x1, b_y1, b_x2, b_y2 = veh.bbox
+            b_area = (b_x2 - b_x1) * (b_y2 - b_y1)
+            if b_area <= 0:
+                continue
+            area_ratio = max(a_area, b_area) / min(a_area, b_area)
+            if area_ratio > VEHICLE_IDLE_IOM_AREA_RATIO_MAX:
+                continue
+            ix1 = max(a_x1, b_x1)
+            iy1 = max(a_y1, b_y1)
+            ix2 = min(a_x2, b_x2)
+            iy2 = min(a_y2, b_y2)
+            if ix2 <= ix1 or iy2 <= iy1:
+                continue
+            i_area = (ix2 - ix1) * (iy2 - iy1)
+            iom = i_area / min(a_area, b_area)
             if iom >= best_iom:
                 best_iom = iom
                 best_vid = vid

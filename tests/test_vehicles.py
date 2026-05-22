@@ -1547,6 +1547,114 @@ def test_idle_iom_rescue_priority_over_competing_non_idle_track(monkeypatch):
         f"vehicle_0002 should NOT have stolen the Honda's detection, got {v2.bbox}"
 
 
+def test_idle_iom_ghost_rescue_revives_ghosted_parked_car(monkeypatch):
+    """Live regression — duplicate vehicle_idle at 17:14 on cam1.
+
+    The parked Honda was idle (vehicle_0001) at bbox=[735, 323, 809, 358].
+    A pickup drove past at a low-left bbox [455, 368, 560, 411], spawning
+    vehicle_0003 as a truck. During the pickup's transit (~20 s), the
+    detector intermittently lost the Honda. After 10 s without an update,
+    vehicle_0001 moved to the ghost buffer.
+
+    Subsequent Honda-position detections then matched vehicle_0003 via
+    the primary IoU loop — because (a) IoM rescue only checked
+    tracked_vehicles, not ghosts, and vehicle_0001 was no longer in
+    tracked_vehicles; (b) regular ghost_match runs LAST, after primary
+    IoU has already claimed the detection. vehicle_0003's bbox shifted
+    to the Honda's position and accumulated 415 frames, firing its own
+    vehicle_idle 150 s later → duplicate notification.
+
+    Fix: extend IoM rescue to also scan idle ghost vehicles, BEFORE the
+    primary IoU loop. The Honda ghost gets re-associated immediately
+    when the next tight Honda-bbox detection arrives, preempting any
+    non-idle live track that happens to overlap."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # vehicle_0001 = parked Honda (idle)
+    m._process_vehicle_detections(
+        [{"bbox": [735, 323, 809, 358], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    honda = next(iter(m.tracked_vehicles.values()))
+    honda.idle_alerted = True
+    honda_id = honda.vehicle_id
+
+    # Simulate Honda dropping from tracked_vehicles to ghost buffer.
+    # Mirrors what happens after VEHICLE_LOST_TIMEOUT s with no detection.
+    m._ghost_vehicles[honda_id] = (m.tracked_vehicles.pop(honda_id), 1.0)
+
+    # vehicle_0003 = pickup spawned at different position, non-idle
+    m._process_vehicle_detections(
+        [{"bbox": [455, 368, 560, 411], "class_name": "truck",
+          "confidence": 0.5}],
+        timestamp=2.0,
+    )
+    assert "vehicle_0002" in m.tracked_vehicles
+    pickup = m.tracked_vehicles["vehicle_0002"]
+    assert not pickup.idle_alerted
+
+    # Pickup's bbox drifts toward the Honda's area (simulating the pickup
+    # transiting past the parked car) — IoU with the Honda detection
+    # would be high enough for the primary IoU loop to grab it.
+    pickup.bbox = [700, 320, 800, 360]
+
+    # Now feed a Honda-position detection. Without the ghost-IoM rescue,
+    # primary IoU would grab vehicle_0002 (pickup). With the fix,
+    # vehicle_0001 returns from ghost.
+    m._process_vehicle_detections(
+        [{"bbox": [735, 323, 809, 358], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=3.0,
+    )
+
+    assert honda_id in m.tracked_vehicles, \
+        f"ghosted Honda must be revived via idle IoM ghost rescue, " \
+        f"tracked_vehicles={list(m.tracked_vehicles)}"
+    assert honda_id not in m._ghost_vehicles, \
+        "Honda must be removed from ghost buffer after revival"
+    # Pickup's bbox must not have been updated to the Honda's bbox.
+    assert m.tracked_vehicles["vehicle_0002"].bbox == [700, 320, 800, 360], \
+        "pickup must not have stolen the Honda's detection"
+
+
+def test_idle_iom_ghost_rescue_respects_area_ratio_gate(monkeypatch):
+    """Negative case: a pickup-sized detection arriving while the Honda's
+    idle ghost is in the buffer must NOT revive the Honda — area ratio
+    >2x means it's a different physical vehicle. The same gates that
+    protect live tracks apply to ghosts."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    m._process_vehicle_detections(
+        [{"bbox": [735, 323, 809, 358], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    honda = next(iter(m.tracked_vehicles.values()))
+    honda.idle_alerted = True
+    honda_id = honda.vehicle_id
+    m._ghost_vehicles[honda_id] = (m.tracked_vehicles.pop(honda_id), 1.0)
+
+    # Try to revive with a much larger bbox — pickup-sized, area ratio ~4x
+    result = m._try_idle_iom_ghost_match(
+        bbox=[700, 310, 870, 380], class_name="truck",
+    )
+    assert result is None, \
+        "ghost rescue must reject pickup-sized bbox over Honda idle ghost"
+
+
 def test_sample_skipped_when_moving_vehicle_overlaps_idle_track(monkeypatch):
     """When a passing (non-idle) vehicle physically overlaps a parked
     idle track's bbox region, the HD-frame crop for the parked track
