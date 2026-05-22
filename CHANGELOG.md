@@ -14,6 +14,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
 
 ### Fixed
+- **Classifier produced null attributes despite torch loading** — `services/vehicle-attributes/classes/*.json` were the PR #22 stubs (body=8, make=50); trained weights expect body=9, make=49. `load_state_dict` rejected the checkpoint, classifier fell back to null on every flush. Copied the real JSONs from `training-output/` over the stubs. *Requires vehicle-attributes rebuild.*
 - **Detector-flag dependencies enforced** — `detect_faces` now hard-gated on `detect_persons` (UI + server).
 - **Mid-run `detect_*` toggles take effect** — `upsert_camera` ships pre-expanded `{prefix}-{profile}` on `config:apply`. *Requires orchestrator rebuild.*
 - **`vehicle_left` spammed events panel for drive-bys** — new internal `vehicle_gone`; `vehicle_left` now idle-leave only. *Requires tracker + vehicle-attributes rebuild.*
