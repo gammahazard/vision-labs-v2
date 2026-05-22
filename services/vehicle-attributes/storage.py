@@ -77,6 +77,19 @@ def flush_buffer_to_disk(
             "model": None, "model_confidence": None,
         }
 
+    # Pop the 768-dim track embedding (Phase C grouping foundation) out
+    # of `attributes` before serializing metadata.json — it's an array,
+    # not human-readable, and would bloat the JSON. Save as a separate
+    # embedding.npy file in the track dir.
+    embedding = attributes.pop("embedding", None) if isinstance(attributes, dict) else None
+    if embedding is not None:
+        try:
+            import numpy as np
+            emb_arr = np.asarray(embedding, dtype="float32")
+            np.save(os.path.join(track_dir, "embedding.npy"), emb_arr)
+        except Exception as e:
+            logger.warning(f"failed to save embedding for {buf.track_id}: {e}")
+
     meta = {
         "track_id": buf.track_id,
         "camera_id": buf.camera_id,

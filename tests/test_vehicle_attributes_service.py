@@ -349,3 +349,94 @@ def test_flush_calls_classifier_when_enabled(monkeypatch, tmp_path):
     )
     assert meta['attributes']['color'] == 'red'
     assert meta['attributes']['make'] == 'Honda'
+
+
+def test_flush_writes_embedding_npy_when_classifier_returns_one(monkeypatch, tmp_path):
+    """Phase C1 — the classifier returns an `embedding` (768-dim numpy
+    array) inside the attributes dict. storage.py pops it out and saves
+    it as `embedding.npy` next to `hero.jpg`. The metadata.json's
+    `attributes` block must NOT contain the embedding (it's an array,
+    would bloat the JSON)."""
+    import numpy as np
+    from services.vehicle_attributes import service as svc
+    from services.vehicle_attributes.buffer import TrackBuffer
+
+    monkeypatch.setenv("ENABLE_CLASSIFIER", "1")
+    import importlib
+    importlib.reload(svc)
+
+    buf = TrackBuffer(track_id="vEMB", camera_id="cam1", first_seen=1779394901.5)
+    buf.append(crop=b"\xff\xd8jpg", yolo_conf=0.85, bbox=[10, 20, 50, 60])
+    buffers = {"vEMB": buf}
+
+    fake_embedding = np.arange(768, dtype="float32") / 768.0
+    fake_embedding /= np.linalg.norm(fake_embedding)  # L2-normalize
+    expected_attrs = {
+        'color': 'gray', 'color_confidence': 0.7,
+        'body_type': 'sedan', 'body_type_confidence': 0.7,
+        'make': 'Honda', 'make_confidence': 0.65,
+        'model': None, 'model_confidence': None,
+        'voting_samples': 1,
+        'classifier_version': 'v0-test-emb',
+        'embedding': fake_embedding,
+    }
+    import services.vehicle_attributes  # primes sys.path
+    import classifier
+    monkeypatch.setattr(classifier, "run_classifier_and_vote",
+                        lambda _buf, _kind: expected_attrs)
+
+    event = {
+        "event_type": "vehicle_gone",
+        "vehicle_id": "vEMB",
+        "camera_id": "cam1",
+        "timestamp": "1779394907.2",
+        "vehicle_class": "car",
+        "was_idle": "False",
+    }
+    svc.handle_event(event, buffers, r_bin=None, hd_size=(2304, 1296),
+                     snapshot_root=str(tmp_path))
+
+    track_dir = tmp_path / 'cam1' / '2026-05-21' / 'vEMB_1779394901'
+    emb_path = track_dir / 'embedding.npy'
+    assert emb_path.is_file(), "embedding.npy must be written"
+
+    loaded = np.load(emb_path)
+    assert loaded.shape == (768,)
+    assert loaded.dtype == np.float32
+    np.testing.assert_array_almost_equal(loaded, fake_embedding, decimal=5)
+
+    # metadata.json's attributes block must NOT contain the embedding
+    import json as _json
+    meta = _json.loads((track_dir / 'metadata.json').read_text())
+    assert 'embedding' not in meta['attributes'], \
+        "embedding must be popped from attributes before JSON serialization"
+
+
+def test_flush_skips_embedding_when_classifier_disabled(monkeypatch, tmp_path):
+    """No classifier → no embedding key in attributes → no embedding.npy
+    file. The metadata.json gets the null-attributes block."""
+    from services.vehicle_attributes import service as svc
+    from services.vehicle_attributes.buffer import TrackBuffer
+
+    monkeypatch.setenv("ENABLE_CLASSIFIER", "0")
+    import importlib
+    importlib.reload(svc)
+
+    buf = TrackBuffer(track_id="vNO", camera_id="cam1", first_seen=1779394901.5)
+    buf.append(crop=b"\xff\xd8jpg", yolo_conf=0.85, bbox=[10, 20, 50, 60])
+    buffers = {"vNO": buf}
+
+    event = {
+        "event_type": "vehicle_gone",
+        "vehicle_id": "vNO",
+        "camera_id": "cam1",
+        "timestamp": "1779394907.2",
+        "vehicle_class": "car",
+        "was_idle": "False",
+    }
+    svc.handle_event(event, buffers, r_bin=None, hd_size=(2304, 1296),
+                     snapshot_root=str(tmp_path))
+
+    track_dir = tmp_path / 'cam1' / '2026-05-21' / 'vNO_1779394901'
+    assert not (track_dir / 'embedding.npy').exists(), \
+        "no embedding.npy expected when classifier disabled"

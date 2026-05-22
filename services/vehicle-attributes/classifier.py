@@ -238,6 +238,13 @@ def _build_multihead_model():
                 'body':  self.body_head(feats),
                 'make':  self.make_head(feats),
                 'model': self.model_head(feats),
+                # Penultimate-layer features (ConvNeXt-Tiny GAP output,
+                # 768-dim). Used for Phase C same-vehicle grouping —
+                # mean-pool across crops, L2-normalize, cosine-similarity
+                # against a vehicle gallery to match an encounter to a
+                # previously-seen physical vehicle. Cheap to expose since
+                # the backbone forward pass already computes this.
+                'features': feats,
             }
     return MultiHeadModel()
 
@@ -371,7 +378,19 @@ def run_classifier_and_vote(buf, event_kind: str) -> dict:
     multihead = _load_multihead_model()
     with torch.inference_mode():
         mh_logits = multihead(crops_t)
-    mh_probs = {task: torch.softmax(t, dim=1) for task, t in mh_logits.items()}
+    # Per-crop backbone features (ConvNeXt-Tiny GAP, 768-dim). Mean-pool
+    # across all crops, then L2-normalize, to get a single per-track
+    # embedding for Phase C same-vehicle grouping. Returned in the
+    # attributes dict; storage.py writes it as `embedding.npy` next to
+    # `hero.jpg` and pops it from the metadata.json content so the JSON
+    # stays human-readable.
+    features = mh_logits['features']  # [N, 768]
+    feat_normed = torch.nn.functional.normalize(features, dim=1)
+    track_emb = feat_normed.mean(dim=0)
+    track_emb = torch.nn.functional.normalize(track_emb, dim=0)
+    embedding_np = track_emb.detach().cpu().numpy().astype('float32')
+    mh_probs = {task: torch.softmax(t, dim=1) for task, t in mh_logits.items()
+                if task != 'features'}
 
     body_out = _vote(mh_probs['body'], buf.confidences, classes['body'],
                      BODY_CONF)
@@ -414,4 +433,8 @@ def run_classifier_and_vote(buf, event_kind: str) -> dict:
         'voting_samples': len(buf.crops),
         'classifier_version': MODEL_VERSION,
         'ir_track': is_ir_track,
+        # Per-track 768-dim embedding (numpy float32). storage.py pops
+        # this from the dict before writing metadata.json and saves it
+        # as a separate embedding.npy file.
+        'embedding': embedding_np,
     }
