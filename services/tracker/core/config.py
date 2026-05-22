@@ -59,6 +59,14 @@ MAX_EVENT_STREAM_LEN = int(os.getenv("MAX_EVENT_STREAM_LEN", "5000"))
 VEHICLE_IDLE_TIMEOUT = float(os.getenv("VEHICLE_IDLE_TIMEOUT", "90.0"))
 VEHICLE_LOST_TIMEOUT = float(os.getenv("VEHICLE_LOST_TIMEOUT", "10.0"))
 VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))
+# Idle-confirmed tracks demand a much tighter IoU before accepting a new
+# detection. A parked car's bbox is fixed, so a real re-detection of the
+# same car has near-perfect overlap (≥0.7 typical). A drive-by car
+# passing through the idle bbox would IoU around 0.2–0.4 and used to be
+# merged in — its crops then ended up in the parked car's track buffer,
+# polluting the classifier vote (observed live: vehicle_0001 angle_5
+# was a different physical vehicle).
+VEHICLE_IDLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IDLE_IOU_THRESHOLD", "0.65"))
 # Bumped 5.0 → 30.0 so a parked car briefly occluded by drive-by traffic
 # (delivery van, garbage truck stopping in front for >15 s) gets re-attached
 # to the same TrackedVehicle on the other side of the disturbance, instead of

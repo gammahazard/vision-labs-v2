@@ -1180,6 +1180,83 @@ def test_drive_by_emits_vehicle_gone_but_not_vehicle_left(monkeypatch):
     assert left == [], f"expected NO vehicle_left for drive-by, got {left}"
 
 
+def test_idle_track_rejects_low_iou_drive_by_match(monkeypatch):
+    """Contract: a parked (idle-confirmed) car must NOT absorb a drive-by
+    car that briefly overlaps its bbox at modest IoU. Observed live on
+    cam1: vehicle_0001 was a parked car that captured 8 crops over 152 s.
+    One of those crops (angle_05) was a different physical vehicle — an
+    SUV that drove through the parked car's bbox region with IoU ~0.3.
+    The classifier vote then split between the two vehicles' colors /
+    body types, dragging confidence down under the 0.55 threshold.
+
+    Fix: when a tracked vehicle is idle_alerted, require
+    VEHICLE_IDLE_IOU_THRESHOLD (0.65 default) before merging — only
+    near-perfect bbox overlap is accepted. Drive-bys fail to merge and
+    correctly mint their own track."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Parked car at bbox [100, 100, 200, 200] — mark idle directly.
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 200], "class_name": "car",
+          "confidence": 0.85}],
+        timestamp=0.0,
+    )
+    parked = next(iter(m.tracked_vehicles.values()))
+    parked.idle_alerted = True
+    assert len(m.tracked_vehicles) == 1
+
+    # A drive-by SUV passes with bbox [120, 120, 220, 220] — overlaps the
+    # parked car's bbox at IoU ~0.39, well above the regular 0.2 threshold
+    # but well below the 0.65 idle threshold. Must NOT merge.
+    m._process_vehicle_detections(
+        [{"bbox": [120, 120, 220, 220], "class_name": "car",
+          "confidence": 0.78}],
+        timestamp=2.0,
+    )
+
+    # Two distinct tracks now: the parked car AND the drive-by.
+    assert len(m.tracked_vehicles) == 2, (
+        f"drive-by must NOT merge into idle track; tracks="
+        f"{[(v.vehicle_id, v.bbox, v.idle_alerted) for v in m.tracked_vehicles.values()]}"
+    )
+
+
+def test_idle_track_accepts_high_iou_re_detection_of_same_car(monkeypatch):
+    """Contract: the IoU tightening must NOT block the parked car itself.
+    When the detector re-finds the SAME parked car at nearly the same bbox
+    (IoU >=0.65 — typical for a stationary YOLO bbox with sub-pixel jitter),
+    the existing track must continue, NOT a new one minted."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 200], "class_name": "car",
+          "confidence": 0.85}],
+        timestamp=0.0,
+    )
+    parked = next(iter(m.tracked_vehicles.values()))
+    parked.idle_alerted = True
+
+    # Same car re-detected with tiny bbox jitter — IoU ~0.94, well above
+    # the 0.65 idle threshold.
+    m._process_vehicle_detections(
+        [{"bbox": [103, 103, 203, 203], "class_name": "car",
+          "confidence": 0.85}],
+        timestamp=2.0,
+    )
+    assert len(m.tracked_vehicles) == 1, "same parked car must keep its track"
+
+
 def test_idle_confirmed_track_survives_long_detector_gap(monkeypatch):
     """Contract: a parked car (idle_alerted=True) that the detector briefly
     misses for > VEHICLE_GHOST_TTL but < VEHICLE_IDLE_GHOST_TTL must NOT

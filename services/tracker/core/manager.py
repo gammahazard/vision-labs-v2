@@ -26,6 +26,7 @@ from .config import (
     VEHICLE_IDLE_TIMEOUT,
     VEHICLE_LOST_TIMEOUT,
     VEHICLE_IOU_THRESHOLD,
+    VEHICLE_IDLE_IOU_THRESHOLD,
     VEHICLE_GHOST_TTL,
     VEHICLE_IDLE_GHOST_TTL,
     VEHICLE_GHOST_MAX_DIST_RATIO,
@@ -256,7 +257,20 @@ class PersonTracker:
 
             for vid, veh in self.tracked_vehicles.items():
                 iou = compute_iou(bbox, veh.bbox)
-                if iou > best_iou:
+                # Idle-confirmed tracks demand a tighter IoU before accepting
+                # a new detection. A parked car's bbox is fixed; a real
+                # re-detection of the same car overlaps near-perfectly. A
+                # drive-by passing through that bbox region used to merge in
+                # at IoU ~0.25–0.45, polluting the parked car's crop buffer
+                # with crops of a different physical vehicle. Observed live:
+                # vehicle_0001 captured 7 crops of a parked car + 1 crop of
+                # an SUV that drove through that spot, then the classifier
+                # vote split between them and body_type came out at conf
+                # 0.54 (just under the 0.55 threshold).
+                threshold = (VEHICLE_IDLE_IOU_THRESHOLD
+                             if veh.idle_alerted
+                             else VEHICLE_IOU_THRESHOLD)
+                if iou > best_iou and iou >= threshold:
                     best_iou = iou
                     best_match_id = vid
 
@@ -421,6 +435,15 @@ class PersonTracker:
         for vid, veh in self.tracked_vehicles.items():
             if veh.class_name != class_name:
                 continue
+            # Idle-confirmed tracks must not be matched via the loose
+            # center-distance fallback. This fallback exists for FAST cars
+            # whose IoU drops between consecutive frames — parked cars
+            # don't move. Letting an idle track match this way would let
+            # a drive-by car that already failed the tight idle-IoU check
+            # sneak back in via the looser center-distance path. Skipping
+            # them here keeps the idle-IoU tightening effective.
+            if veh.idle_alerted:
+                continue
             vx = (veh.bbox[0] + veh.bbox[2]) / 2
             vy = (veh.bbox[1] + veh.bbox[3]) / 2
             dist = ((cx - vx) ** 2 + (cy - vy) ** 2) ** 0.5
@@ -446,7 +469,16 @@ class PersonTracker:
             gx = (veh.bbox[0] + veh.bbox[2]) / 2
             gy = (veh.bbox[1] + veh.bbox[3]) / 2
             dist = ((cx - gx) ** 2 + (cy - gy) ** 2) ** 0.5
-            if dist < best_dist:
+            # Idle ghosts: stricter center-distance bound. A parked car
+            # ghosted by a brief detector miss should re-attach only if
+            # the new detection is essentially at the same spot
+            # (≤ 30 % of bbox width). The loose 3.5× threshold is meant
+            # for fast-moving drive-by cars; applied to a stationary
+            # ghost it would let an unrelated nearby vehicle inherit
+            # the parked car's track id.
+            idle_max = bbox_w * 0.3
+            effective_max = idle_max if veh.idle_alerted else max_dist
+            if dist < effective_max and dist < best_dist:
                 best_dist = dist
                 best_id = vid
         return best_id
