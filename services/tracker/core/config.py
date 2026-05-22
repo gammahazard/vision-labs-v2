@@ -68,6 +68,12 @@ VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))
 # (30s) = 40 s — wider than any realistic drive-by but still tight enough
 # that a genuinely-departed car fires vehicle_left within ~45 s of leaving.
 VEHICLE_GHOST_TTL = float(os.getenv("VEHICLE_GHOST_TTL", "30.0"))
+# Idle-confirmed vehicles (TrackedVehicle.idle_alerted == True) get a MUCH
+# longer ghost window — a parked car detected intermittently every 10-15
+# minutes (RTSP reconnect, frame_hd TTL hiccup) would otherwise spawn a
+# new track every gap. Default 600 s = 10 min covers realistic detector
+# stutter without making the track ID stale across actual departures.
+VEHICLE_IDLE_GHOST_TTL = float(os.getenv("VEHICLE_IDLE_GHOST_TTL", "600.0"))
 # Center-distance threshold expressed as a multiple of the bbox width.
 # Used both by `_try_ghost_match` (re-associating recently-departed tracks
 # from the ghost buffer) and `_try_live_center_match` (catching the IoU

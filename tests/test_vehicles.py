@@ -1134,6 +1134,96 @@ def test_drive_by_emits_vehicle_gone_but_not_vehicle_left(monkeypatch):
     assert left == [], f"expected NO vehicle_left for drive-by, got {left}"
 
 
+def test_idle_confirmed_track_survives_long_detector_gap(monkeypatch):
+    """Contract: a parked car (idle_alerted=True) that the detector briefly
+    misses for > VEHICLE_GHOST_TTL but < VEHICLE_IDLE_GHOST_TTL must NOT
+    fire vehicle_gone — it must re-attach to the same track_id when the
+    detector re-finds it. Repeated short-gap misses on the same parked
+    car were spawning a new vehicle_NNNN every gap; observed live on cam1
+    where one parked car produced 4 separate tracks over 17 min."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import (
+        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL, VEHICLE_IDLE_GHOST_TTL,
+    )
+    assert VEHICLE_IDLE_GHOST_TTL > VEHICLE_GHOST_TTL, \
+        "idle ghost TTL must exceed the regular ghost TTL"
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    bbox = [100, 100, 200, 200]
+
+    # Park the car: detected at t=0, then mark idle_alerted=True directly
+    # (skips waiting VEHICLE_IDLE_TIMEOUT 90s — the test is about ghost
+    # expiry, not the idle-detection threshold).
+    m._process_vehicle_detections(
+        [{"bbox": bbox, "class_name": "car", "confidence": 0.85}],
+        timestamp=0.0,
+    )
+    veh = next(iter(m.tracked_vehicles.values()))
+    veh.idle_alerted = True
+
+    # Detector misses the car: track goes stale → ghosted at LOST_TIMEOUT+
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    assert veh.vehicle_id in m._ghost_vehicles, \
+        "track should be in ghost buffer after LOST_TIMEOUT"
+
+    # Time advances past the OLD ghost TTL (30 s) but still well within
+    # the IDLE ghost TTL (600 s default). Track must NOT be expired.
+    mid_t = stale_t + VEHICLE_GHOST_TTL + 30.0  # 30 s past old TTL
+    assert mid_t < stale_t + VEHICLE_IDLE_GHOST_TTL
+    m._process_vehicle_detections([], timestamp=mid_t)
+    assert veh.vehicle_id in m._ghost_vehicles, \
+        "idle ghost survived past old GHOST_TTL — bug is the regression we're guarding against"
+
+    # Past the IDLE ghost TTL: now it expires + fires vehicle_gone + vehicle_left.
+    expire_t = stale_t + VEHICLE_IDLE_GHOST_TTL + 1.0
+    m._process_vehicle_detections([], timestamp=expire_t)
+    assert veh.vehicle_id not in m._ghost_vehicles
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
+    left = [e for e in events if e.get("event_type") == "vehicle_left"]
+    assert len(gone) == 1, f"expected exactly 1 vehicle_gone at idle expiry: {events}"
+    assert len(left) == 1, f"idle-alerted track must emit vehicle_left at expiry: {events}"
+
+
+def test_non_idle_track_still_uses_regular_ghost_ttl(monkeypatch):
+    """Contract regression-guard: bumping the idle ghost TTL must NOT also
+    extend the regular ghost TTL for drive-by tracks. A drive-by track
+    (idle_alerted=False) must still fire vehicle_gone at the old 30 s
+    window, not the new 600 s window."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import (
+        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL,
+    )
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 200], "class_name": "car", "confidence": 0.85}],
+        timestamp=0.0,
+    )
+    veh = next(iter(m.tracked_vehicles.values()))
+    assert veh.idle_alerted is False
+
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    expire_t = stale_t + VEHICLE_GHOST_TTL + 1.0
+    m._process_vehicle_detections([], timestamp=expire_t)
+
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
+    assert len(gone) == 1
+    assert gone[0]["was_idle"] == "False"
+
+
 def test_brief_track_with_no_follow_up_traffic_still_expires(monkeypatch):
     """Contract: `_process_vehicle_detections` must be called even on
     empty-detection messages (and on empty xreadgroup polls) so the ghost
@@ -1188,7 +1278,7 @@ def test_idle_leave_emits_both_vehicle_gone_and_vehicle_left(monkeypatch):
     from services.tracker.core import manager as mgr
     importlib.reload(mgr)
     from services.tracker.core.config import (
-        VEHICLE_LOST_TIMEOUT, VEHICLE_GHOST_TTL,
+        VEHICLE_LOST_TIMEOUT, VEHICLE_IDLE_GHOST_TTL,
     )
 
     fake = FakeRedis()
@@ -1208,12 +1298,12 @@ def test_idle_leave_emits_both_vehicle_gone_and_vehicle_left(monkeypatch):
     veh = next(iter(m.tracked_vehicles.values()))
     veh.idle_alerted = True
 
-    # First sweep at LOST_TIMEOUT+ moves the vehicle into the ghost buffer
-    # (ghost_ts = this timestamp). Second sweep at GHOST_TTL+ past that
-    # ghost_ts is what actually fires the ghost-expiry emit.
+    # First sweep at LOST_TIMEOUT+ moves the vehicle into the ghost buffer.
+    # Idle-alerted tracks use VEHICLE_IDLE_GHOST_TTL (default 600 s) not the
+    # regular 30 s — see `_process_vehicle_detections` step 2b.
     stale_t = VEHICLE_LOST_TIMEOUT + 1.0
     m._process_vehicle_detections([], timestamp=stale_t)
-    expire_t = stale_t + VEHICLE_GHOST_TTL + 1.0
+    expire_t = stale_t + VEHICLE_IDLE_GHOST_TTL + 1.0
     m._process_vehicle_detections([], timestamp=expire_t)
 
     events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
