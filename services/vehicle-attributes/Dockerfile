@@ -19,14 +19,19 @@ FROM vision-labs-base:cuda12.8
 
 WORKDIR /app
 
-# PyTorch matched to the base image's CUDA 12.8 runtime
-RUN pip install --no-cache-dir \
+# PyTorch matched to the base image's CUDA 12.8 runtime.
+# Use `python -m pip` (not bare `pip`) so the install lands in the SAME
+# interpreter that `CMD ["python", ...]` runs against. Bare `pip` in the
+# base image resolves to Ubuntu's python3.10 while `python` resolves to
+# python3.11 — bare `pip install torch` silently installs it where the
+# service can't find it. Mirror of pose-detector.
+RUN python -m pip install --no-cache-dir \
       torch torchvision \
       --index-url https://download.pytorch.org/whl/cu128
 
 # Service deps
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
 # Source files + the static class label JSONs
 COPY service.py buffer.py storage.py classifier.py ./
