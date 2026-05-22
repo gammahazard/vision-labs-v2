@@ -1,28 +1,38 @@
 # services/vehicle-attributes/Dockerfile
 #
 # PURPOSE:
-#   Per-camera vehicle attribute pipeline (Phase 1: capture + group only,
-#   no classifier yet). Consumes events:{cam}, maintains per-track HD-crop
-#   buffers, writes /data/snapshots/vehicles/{cam}/{date}/{track_id}/.
+#   Per-camera vehicle attribute pipeline.
 #
-# NO GPU IN PHASE 1.
-#   Cropping + JPEG encode is CPU work. We deliberately use a slim
-#   python:3.11 base (not vision-labs-base:cuda12.8) to keep the image
-#   under 200 MB. Phase 3 will swap this base when the classifier ships.
+#   Phase 1: capture HD crops on vehicle_sample events, write per-track
+#   dirs with metadata.json (null attributes block) at vehicle_gone flush.
+#
+#   Phase 3 (this version): runs a ConvNeXt-Tiny multi-head classifier
+#   (color + body + make + model heads) on the buffered crops at flush
+#   time, fills the attributes block. Gated by ENABLE_CLASSIFIER env so
+#   the image can be deployed before trained weights exist on HF Hub.
+#
+# INHERITS FROM vision-labs-base:cuda12.8 (services/base/Dockerfile).
+# vision-labs-base does NOT ship PyTorch — each service installs the
+# framework it needs on top. Mirror of pose-detector's pattern.
 
-FROM python:3.11-slim
+FROM vision-labs-base:cuda12.8
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+# PyTorch matched to the base image's CUDA 12.8 runtime
+RUN pip install --no-cache-dir \
+      torch torchvision \
+      --index-url https://download.pytorch.org/whl/cu128
 
+# Service deps
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY service.py buffer.py storage.py ./
+# Source files + the static class label JSONs
+COPY service.py buffer.py storage.py classifier.py ./
+COPY classes/ ./classes/
 
-RUN mkdir -p /data
+# Snapshot output dir gets bind-mounted at runtime
+RUN mkdir -p /data /models
 
 CMD ["python", "-u", "service.py"]
