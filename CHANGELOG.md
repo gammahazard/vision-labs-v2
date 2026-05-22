@@ -9,6 +9,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ## [Unreleased]
 
 ### Added
+- **Per-track 768-dim embedding saved as `embedding.npy`** — foundation for same-vehicle grouping across encounters (Phase C of crop-quality plan). Mean-pooled L2-normalized ConvNeXt-Tiny backbone features. *Requires vehicle-attributes rebuild.*
 - **Edit pencil ✏ on camera rows** — modal to rename, edit lat/lon, toggle detectors without delete + re-add.
 - **Vehicle attributes Phase 1** — per-cam `vehicle-attributes-cam{N}` flushes per-track HD crops + `metadata.json` on track end. *Requires new service build + tracker rebuild.*
 - **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
