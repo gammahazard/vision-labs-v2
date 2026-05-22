@@ -1547,6 +1547,62 @@ def test_idle_iom_rescue_priority_over_competing_non_idle_track(monkeypatch):
         f"vehicle_0002 should NOT have stolen the Honda's detection, got {v2.bbox}"
 
 
+def test_sample_skipped_when_bbox_below_min_area(monkeypatch):
+    """Live observation on vehicle_0004: a fast-mover at frame edge
+    generated 3 detections with bboxes 73×35–82×37 px in the 896×512
+    sub-stream — at the lower edge of useful. fc=2 and fc=3 crops were
+    'barely have the car'. The new MIN_SAMPLE_BBOX_AREA_SUB_PX gate
+    skips samples whose bbox area falls below the threshold so the
+    classifier buffer doesn't accumulate mostly-road crops."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("MIN_SAMPLE_BBOX_AREA_SUB_PX", "1500")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # 30×30 = 900 px², below the 1500 threshold
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 130, 130], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    samples = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    assert samples == [], \
+        f"sub-threshold bbox must not emit a sample, got {samples}"
+    detected = [e for e in events if e.get("event_type") == "vehicle_detected"]
+    assert len(detected) == 1, \
+        "vehicle_detected still fires — we track it, just don't crop it"
+
+
+def test_sample_emitted_when_bbox_meets_min_area(monkeypatch):
+    """Negative case: a normal-sized vehicle bbox (above the threshold)
+    still emits samples. Gate doesn't over-tighten."""
+    monkeypatch.setenv("EMIT_VEHICLE_SAMPLES", "1")
+    monkeypatch.setenv("MIN_SAMPLE_BBOX_AREA_SUB_PX", "1500")
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # 80×40 = 3200 px² — above threshold
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 180, 140], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    events = [fields for _id, fields in fake._streams.get("events:cam1", [])]
+    samples = [e for e in events if e.get("event_type") == "vehicle_sample"]
+    assert len(samples) == 1, f"above-threshold bbox must emit, got {samples}"
+
+
 def test_non_idle_track_ghosts_at_shorter_driving_timeout(monkeypatch):
     """Non-idle (moving) tracks must move to ghost at the tighter
     VEHICLE_LOST_TIMEOUT_DRIVING (3 s), not the idle-track 10 s.
