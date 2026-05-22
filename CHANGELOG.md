@@ -14,6 +14,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
 
 ### Fixed
+- **Vehicle-crops modal closed itself every 30 s while open** — Browse panel auto-refresh skipped when `#cropsModal` is mounted. *Dashboard hard-refresh.*
 - **va service merged crops across tracker restarts when track IDs got re-used** — `vehicle_detected` now drops any buffer whose `first_seen` doesn't match. *Requires vehicle-attributes rebuild.*
 - **Phantom idle alert when a passing vehicle inherited a ghosted parked car's identity** — IoM rescue now also revives idle ghosts before primary IoU. *Requires tracker rebuild.*
 - **Parked-car crops captured the passing vehicle occluding them** — skip `vehicle_sample` when another moving track's bbox overlaps by IoU > 0.15. *Requires tracker rebuild.*

@@ -372,6 +372,12 @@ setInterval(() => {
     const panel = document.getElementById("browsePanel");
     if (!panel || panel.classList.contains("collapsed")) return;
 
+    // Skip refresh while the vehicle-crops modal is open — the modal is
+    // mounted inside #browseContent, so a re-render of the day view would
+    // nuke the modal element and the user would see the modal close
+    // itself every 30 seconds.
+    if (document.getElementById("cropsModal")) return;
+
     // Refresh whichever view is currently active
     if (_browseCurrentView === "home") {
         _loadBrowseHome();
@@ -387,7 +393,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!panel) return;
     const observer = new MutationObserver(() => {
         if (!panel.classList.contains("collapsed")) {
-            // Panel just opened — refresh immediately
+            // Panel just opened — refresh immediately. Skip if the
+            // vehicle-crops modal is mounted (same reason as the
+            // setInterval guard above).
+            if (document.getElementById("cropsModal")) return;
             if (_browseCurrentView === "home") {
                 _loadBrowseHome();
             } else if (_browseCurrentView === "day" && _browseCurrentDate) {
