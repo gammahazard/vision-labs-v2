@@ -78,7 +78,7 @@ def test_handle_vehicle_gone_flushes_and_deletes_buffer(tmp_path):
     handle_event(event, buffers, r_bin=None, hd_size=(2304, 1296),
                  snapshot_root=str(tmp_path))
     assert "vehicle_0042" not in buffers
-    track_dir = tmp_path / "cam1" / "2026-05-21" / "vehicle_0042"
+    track_dir = tmp_path / "cam1" / "2026-05-21" / "vehicle_0042_1779394901"
     assert (track_dir / "hero.jpg").is_file()
     assert (track_dir / "metadata.json").is_file()
     # was_idle=False → event_kind=drive_by
@@ -108,7 +108,7 @@ def test_handle_vehicle_gone_with_was_idle_records_idle_kind(tmp_path):
                  snapshot_root=str(tmp_path))
     import json
     meta = json.loads(
-        (tmp_path / "cam1" / "2026-05-21" / "vehicle_0050" / "metadata.json")
+        (tmp_path / "cam1" / "2026-05-21" / "vehicle_0050_1779394901" / "metadata.json")
         .read_text()
     )
     assert meta["event_kind"] == "idle"
@@ -204,7 +204,7 @@ def test_flush_does_not_call_classifier_when_disabled(monkeypatch, tmp_path):
     assert classifier_called['flag'] is False
     import json as _json
     meta = _json.loads(
-        (tmp_path / 'cam1' / '2026-05-21' / 'vG' / 'metadata.json').read_text()
+        (tmp_path / 'cam1' / '2026-05-21' / 'vG_1779394901' / 'metadata.json').read_text()
     )
     assert meta['attributes']['color'] is None
 
@@ -247,7 +247,7 @@ def test_flush_calls_classifier_when_enabled(monkeypatch, tmp_path):
 
     import json as _json
     meta = _json.loads(
-        (tmp_path / 'cam1' / '2026-05-21' / 'vH' / 'metadata.json').read_text()
+        (tmp_path / 'cam1' / '2026-05-21' / 'vH_1779394901' / 'metadata.json').read_text()
     )
     assert meta['attributes']['color'] == 'red'
     assert meta['attributes']['make'] == 'Honda'

@@ -15,6 +15,9 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ### Fixed
 - **Parked-car tracks absorbed drive-by crops in their first 150 s** — tight-IoU gate now triggers on `is_stationary or idle_alerted` (was idle_alerted-only, fires at +150 s). *Requires tracker rebuild.*
+- **Per-track dir names now include first-seen timestamp** — `vehicle_0001_<epoch>` instead of just `vehicle_0001`, so a new tracker session that re-mints `vehicle_0001` can't silently overwrite a previous physical vehicle's `hero.jpg` + `metadata.json` on the same day. *Requires vehicle-attributes rebuild.*
+- **Classifier confidence now visible when a head votes below threshold** — `color_confidence` + `model_confidence` were nulled out when their label fell under the cutoff, hiding 'was 0.53, just under 0.55' vs 'was 0.18, way off'. Now `conf=None` strictly means 'head not run' (IR-suppressed color); below-threshold votes report the actual conf. *Dashboard restart only.*
+- **Model head now runs on idle tracks too** — original spec deferred it to drive-by-only out of caution, but parked cars give well-sampled multi-angle views that should be easier to classify, not harder. Worth seeing weak predictions and tuning the threshold from data. *Requires vehicle-attributes rebuild.*
 - **Drive-by polluted an idle parked car's crops at IoU ~0.3** — `VEHICLE_IDLE_IOU_THRESHOLD` (default 0.65) for idle tracks; loose center-distance fallbacks skip idle tracks. *Requires tracker rebuild.*
 - **Events panel returned 0 for cam1** — internal `vehicle_sample` writes saturated the tail; reader now overscans (`MAX_REDIS_SCAN`, default 2000) until N user events surface. *Dashboard restart only.*
 - **`ModuleNotFoundError: torch` in vehicle-attributes** — Dockerfile `pip install` landed in python3.10; service runs python3.11. Switched to `python -m pip install`. *Requires vehicle-attributes rebuild.*
