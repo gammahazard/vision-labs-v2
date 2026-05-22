@@ -115,10 +115,28 @@ def handle_event(event: dict, buffers: dict,
 
 def _open_buffer(event: dict, buffers: dict) -> None:
     track_id = event.get("vehicle_id", "")
-    if not track_id or track_id in buffers:
+    if not track_id:
         return
     first_seen = float(event.get("vehicle_first_seen") or
                         event.get("timestamp", "0"))
+    existing = buffers.get(track_id)
+    if existing is not None:
+        if existing.first_seen == first_seen:
+            # Duplicate vehicle_detected for the same physical track — no-op.
+            return
+        # Stale buffer from a previous tracker session whose vehicle_gone
+        # never arrived (tracker was restarted while the track was alive).
+        # The track_id has been re-issued to a different physical vehicle.
+        # Drop the orphan; its crops would otherwise mix with the new
+        # vehicle's via reservoir sampling and the eventual flush would
+        # overwrite the previous dir (the `_<first_seen>` suffix only
+        # helps when buffer.first_seen reflects the live track).
+        logger.info(
+            f"dropping stale buffer for {track_id} "
+            f"(first_seen {existing.first_seen} → {first_seen}; "
+            f"previous tracker session likely restarted mid-track)"
+        )
+        buffers.pop(track_id, None)
     buffers[track_id] = TrackBuffer(
         track_id=track_id,
         camera_id=event.get("camera_id", ""),
@@ -132,10 +150,17 @@ def _accumulate_crop(event: dict, buffers: dict,
                      r_bin, hd_size: tuple) -> None:
     track_id = event.get("vehicle_id", "")
     buf = buffers.get(track_id)
-    if buf is None:
-        # Sample arrived before detected — open lazily.
+    # Lazy open if missing, OR replace if the buffer's first_seen doesn't
+    # match this sample's vehicle_first_seen (stale across tracker
+    # restart — see _open_buffer for the same logic).
+    sample_first_seen = float(
+        event.get("vehicle_first_seen") or event.get("timestamp", "0")
+    )
+    if buf is None or buf.first_seen != sample_first_seen:
         _open_buffer(event, buffers)
-        buf = buffers[track_id]
+        buf = buffers.get(track_id)
+        if buf is None:
+            return
     if buf.is_full() or r_bin is None:
         return
 

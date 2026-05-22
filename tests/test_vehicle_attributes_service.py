@@ -57,6 +57,104 @@ def test_handle_vehicle_detected_opens_buffer():
     assert buffers["vehicle_0042"].first_seen == 1779394901.0
 
 
+def test_vehicle_detected_drops_stale_buffer_from_previous_tracker_session():
+    """Live regression — at 17:14 prev tracker session opened a buffer
+    for vehicle_0003 (first_seen=17:14:06). The tracker restarted at
+    17:24 mid-track (vehicle_gone never fired). At 17:28 the new tracker
+    issued vehicle_0003 to a different physical vehicle (first_seen=
+    17:28:10). Without this fix, vehicle_detected was a no-op because
+    the buffer key already existed, and the new vehicle's samples got
+    appended to the orphan buffer — the eventual flush wrote to the
+    OLD dir (first_seen=17:14:06) overwriting it, with metadata showing
+    duration=887s and the prev vehicle's classifier vote."""
+    from services.vehicle_attributes.buffer import TrackBuffer
+    stale = TrackBuffer(track_id="vehicle_0003", camera_id="cam1",
+                        first_seen=1779470046.0)
+    stale.append(crop=b"\xff\xd8old", yolo_conf=0.5,
+                 bbox=[735, 323, 809, 358])
+    buffers = {"vehicle_0003": stale}
+
+    fresh_event = {
+        "event_type": "vehicle_detected",
+        "vehicle_id": "vehicle_0003",
+        "vehicle_first_seen": "1779470890",  # new tracker session
+        "camera_id": "cam1",
+        "bbox": json.dumps([453, 370, 552, 407]),
+        "vehicle_confidence": "0.6",
+        "vehicle_class": "truck",
+        "timestamp": "1779470890.4",
+    }
+    handle_event(fresh_event, buffers, r_bin=None, hd_size=(2304, 1296),
+                 snapshot_root="/tmp")
+
+    buf = buffers["vehicle_0003"]
+    assert buf.first_seen == 1779470890.0, \
+        f"buffer must adopt new first_seen, got {buf.first_seen}"
+    assert buf.crops == [], "stale crops must be dropped"
+
+
+def test_vehicle_detected_keeps_buffer_when_first_seen_matches():
+    """Idempotent vehicle_detected (same track_id + same first_seen) must
+    not wipe the buffer's accumulated crops."""
+    from services.vehicle_attributes.buffer import TrackBuffer
+    buf = TrackBuffer(track_id="vehicle_0003", camera_id="cam1",
+                      first_seen=1779394901.0)
+    buf.append(crop=b"\xff\xd8keep", yolo_conf=0.7,
+               bbox=[100, 100, 200, 200])
+    buffers = {"vehicle_0003": buf}
+
+    duplicate_event = {
+        "event_type": "vehicle_detected",
+        "vehicle_id": "vehicle_0003",
+        "vehicle_first_seen": "1779394901",
+        "camera_id": "cam1",
+        "bbox": json.dumps([100, 100, 200, 200]),
+        "vehicle_confidence": "0.7",
+        "vehicle_class": "car",
+        "timestamp": "1779394901.5",
+    }
+    handle_event(duplicate_event, buffers, r_bin=None, hd_size=(2304, 1296),
+                 snapshot_root="/tmp")
+
+    assert len(buffers["vehicle_0003"].crops) == 1, \
+        "idempotent vehicle_detected must not wipe an existing buffer"
+
+
+def test_vehicle_sample_drops_stale_buffer_via_lazy_open():
+    """If the tracker restarts mid-track and the new tracker session's
+    very first event we receive is a vehicle_sample (not vehicle_detected
+    — possible if vehicle_detected raced ahead via a different consumer),
+    the lazy-open path in _accumulate_crop must also detect the stale
+    buffer and drop it. Otherwise samples accumulate into the orphan."""
+    from services.vehicle_attributes.buffer import TrackBuffer
+    stale = TrackBuffer(track_id="vehicle_0003", camera_id="cam1",
+                        first_seen=1779470046.0)
+    stale.append(crop=b"\xff\xd8old", yolo_conf=0.5,
+                 bbox=[100, 100, 200, 200])
+    buffers = {"vehicle_0003": stale}
+
+    sample_event = {
+        "event_type": "vehicle_sample",
+        "vehicle_id": "vehicle_0003",
+        "vehicle_first_seen": "1779470890",
+        "camera_id": "cam1",
+        "bbox": json.dumps([453, 370, 552, 407]),
+        "vehicle_confidence": "0.6",
+        "vehicle_class": "truck",
+        "timestamp": "1779470890.4",
+        "hd_snapshot_key": "",
+    }
+    # r_bin=None means _accumulate_crop early-returns before HD fetch,
+    # but the buffer-staleness check runs first.
+    handle_event(sample_event, buffers, r_bin=None, hd_size=(2304, 1296),
+                 snapshot_root="/tmp")
+
+    buf = buffers["vehicle_0003"]
+    assert buf.first_seen == 1779470890.0, \
+        f"lazy-open path must adopt new first_seen, got {buf.first_seen}"
+    assert buf.crops == [], "stale crops must be dropped"
+
+
 def test_handle_vehicle_gone_flushes_and_deletes_buffer(tmp_path):
     """vehicle_gone is the buffer-flush trigger for all track ends (drive-by
     + idle-leave). vehicle_left was the trigger pre-fix but it's now gated
