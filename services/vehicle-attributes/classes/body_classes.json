@@ -1,10 +1,11 @@
 [
+  "convertible",
+  "coupe",
+  "hatchback",
+  "minivan",
+  "pickup",
   "sedan",
   "suv",
-  "coupe",
-  "pickup",
   "van",
-  "hatchback",
-  "convertible",
   "wagon"
 ]
