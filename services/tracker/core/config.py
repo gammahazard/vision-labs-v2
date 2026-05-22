@@ -79,6 +79,20 @@ VEHICLE_IDLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IDLE_IOU_THRESHOLD", "0.65
 # or small object inside a parked-truck bbox from false-merging.
 VEHICLE_IDLE_IOM_THRESHOLD = float(os.getenv("VEHICLE_IDLE_IOM_THRESHOLD", "0.9"))
 VEHICLE_IDLE_IOM_AREA_RATIO_MAX = float(os.getenv("VEHICLE_IDLE_IOM_AREA_RATIO_MAX", "2.0"))
+# Size-ratio sanity gate for primary IoU matches against STALE tracks
+# (last_seen > VEHICLE_MATCH_STALE_SECS ago). A non-idle track that
+# hasn't been refreshed in >1 s sitting at e.g. [80x40] should not be
+# allowed to claim a new detection at [180x110] just because their
+# IoU is above 0.2 — they're almost certainly two different physical
+# vehicles entering the same screen region. Live regression: a small
+# car briefly detected at 15:09:45, then 10 s later a bus drove
+# through the same general area; the bus's wider bbox got merged
+# into the car's track via primary IoU 0.33, polluting the classifier
+# vote ("yellow SUV AM General" for what should have been a school
+# bus). Recent matches (≤ 1 s gap) skip the gate so legitimate
+# frame-to-frame bbox jitter still works.
+VEHICLE_MATCH_STALE_SECS = float(os.getenv("VEHICLE_MATCH_STALE_SECS", "1.0"))
+VEHICLE_MATCH_AREA_RATIO_MAX = float(os.getenv("VEHICLE_MATCH_AREA_RATIO_MAX", "2.5"))
 # Skip `vehicle_sample` emit when another currently-tracked non-idle
 # (i.e., moving) vehicle's bbox overlaps this track's bbox by more than
 # this IoU. Motivating case: a parked car's bbox region in the HD frame

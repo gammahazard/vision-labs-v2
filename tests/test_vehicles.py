@@ -1547,6 +1547,118 @@ def test_idle_iom_rescue_priority_over_competing_non_idle_track(monkeypatch):
         f"vehicle_0002 should NOT have stolen the Honda's detection, got {v2.bbox}"
 
 
+def test_stale_track_rejects_size_mismatched_iou_match(monkeypatch):
+    """Live regression at 15:09:45 on cam1 — vehicle_0023.
+
+    A small car was detected at bbox [760, 318, 840, 356] (~79×38 = 3000 px²).
+    The detector then lost it. 10 s later a school bus drove through
+    the same general screen area with bbox [724, 258, 896, 365]
+    (~172×107 = 18400 px²). IoU between the old car bbox and the new
+    bus bbox was 0.33 — above the 0.2 non-idle threshold — so the
+    primary IoU loop merged the bus into the car's track. The buffer
+    ended up with one car crop + five bus crops; the classifier voted
+    'yellow SUV AM General' for what should have been a school bus.
+
+    Fix: size-ratio sanity gate. When matching against a track whose
+    last_seen is more than VEHICLE_MATCH_STALE_SECS ago (default 1.0),
+    require the new detection's bbox area to be within
+    VEHICLE_MATCH_AREA_RATIO_MAX (default 2.5) of the track's bbox area.
+    Bus-vs-car ratio of 6× fails the gate."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Small car spawn at t=0
+    m._process_vehicle_detections(
+        [{"bbox": [760, 318, 840, 356], "class_name": "car",
+          "confidence": 0.6}],
+        timestamp=0.0,
+    )
+    assert "vehicle_0001" in m.tracked_vehicles
+    car_id = "vehicle_0001"
+
+    # 10 s later — large bus detection arrives at IoU > 0.2 with the car's
+    # last bbox but area ratio ~6×. Must NOT match the car track.
+    m._process_vehicle_detections(
+        [{"bbox": [724, 258, 896, 365], "class_name": "bus",
+          "confidence": 0.6}],
+        timestamp=10.0,
+    )
+
+    # Either the bus spawned its own track (correct) or the car was
+    # rejected. Verify the car's bbox was not overwritten with bus dims.
+    car = m.tracked_vehicles.get(car_id)
+    if car is not None:
+        assert car.bbox == [760, 318, 840, 356], \
+            f"car track must not absorb the bus detection, got {car.bbox}"
+    # And there must be a separate bus track.
+    bus_tracks = [v for v in m.tracked_vehicles.values()
+                  if v.class_name == "bus"]
+    assert len(bus_tracks) == 1, \
+        f"bus must spawn its own track, got tracked_vehicles={list(m.tracked_vehicles)}"
+
+
+def test_recent_track_accepts_normal_bbox_growth_within_stale_window(monkeypatch):
+    """Negative case for the size gate — within the stale window
+    (≤1 s since last_seen), normal frame-to-frame bbox jitter or
+    perspective-driven growth still matches. The gate must NOT fire."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    # Spawn at small bbox
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 160], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    # 0.5 s later — same vehicle, bbox grew somewhat (perspective).
+    # Area ratio = (140*84) / (100*60) = 1.96 — > IoU threshold,
+    # under area-ratio cap (2.5), within stale window (0.5 < 1.0).
+    m._process_vehicle_detections(
+        [{"bbox": [110, 95, 250, 179], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.5,
+    )
+    assert len(m.tracked_vehicles) == 1, \
+        "normal frame-to-frame bbox growth within stale window must match"
+    assert m.tracked_vehicles["vehicle_0001"].bbox == [110, 95, 250, 179]
+
+
+def test_stale_track_accepts_similar_size_match(monkeypatch):
+    """Negative case — a stale track (5 s gap) re-acquiring a same-size
+    bbox must STILL match. The size gate only catches wildly-different
+    sizes, not legit detector-stutter recovery."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 160], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    # 5 s gap — well past stale window. New bbox is similar size and
+    # mostly overlapping — same physical vehicle reappearing.
+    m._process_vehicle_detections(
+        [{"bbox": [105, 102, 205, 162], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=5.0,
+    )
+    assert len(m.tracked_vehicles) == 1, \
+        "stale track with similar-size match must re-acquire"
+
+
 def test_idle_iom_ghost_rescue_revives_ghosted_parked_car(monkeypatch):
     """Live regression — duplicate vehicle_idle at 17:14 on cam1.
 

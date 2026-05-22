@@ -29,6 +29,8 @@ from .config import (
     VEHICLE_IDLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOM_THRESHOLD,
     VEHICLE_IDLE_IOM_AREA_RATIO_MAX,
+    VEHICLE_MATCH_STALE_SECS,
+    VEHICLE_MATCH_AREA_RATIO_MAX,
     SAMPLE_OCCLUSION_IOU_THRESHOLD,
     VEHICLE_GHOST_TTL,
     VEHICLE_IDLE_GHOST_TTL,
@@ -339,12 +341,30 @@ class PersonTracker:
             # idle_alerted only fires after vehicle_idle_timeout (150s).
             if not best_match_id:
                 best_iou = VEHICLE_IOU_THRESHOLD
+                det_area = max(0, bbox[2] - bbox[0]) * max(0, bbox[3] - bbox[1])
                 for vid, veh in self.tracked_vehicles.items():
                     iou = compute_iou(bbox, veh.bbox)
                     tight_iou = veh.idle_alerted or veh.is_stationary
                     threshold = (VEHICLE_IDLE_IOU_THRESHOLD
                                  if tight_iou
                                  else VEHICLE_IOU_THRESHOLD)
+
+                    # Size-ratio sanity gate for STALE tracks. A non-idle
+                    # track that's been silent for > VEHICLE_MATCH_STALE_SECS
+                    # must not claim a detection whose bbox area is wildly
+                    # different from its own — that's almost certainly a
+                    # different physical vehicle entering the same screen
+                    # region (live regression: small car at 15:09:45 lost
+                    # detection for 10 s, then a school bus arrived at IoU
+                    # 0.33 with area 6× the car's, got merged in and
+                    # polluted the classifier vote).
+                    if (timestamp - veh.last_seen) > VEHICLE_MATCH_STALE_SECS:
+                        veh_area = max(0, veh.bbox[2] - veh.bbox[0]) * max(0, veh.bbox[3] - veh.bbox[1])
+                        if det_area > 0 and veh_area > 0:
+                            area_ratio = max(det_area, veh_area) / min(det_area, veh_area)
+                            if area_ratio > VEHICLE_MATCH_AREA_RATIO_MAX:
+                                continue
+
                     if iou > best_iou and iou >= threshold:
                         best_iou = iou
                         best_match_id = vid
@@ -668,6 +688,7 @@ class PersonTracker:
         cy = (bbox[1] + bbox[3]) / 2
         bbox_w = max(1.0, bbox[2] - bbox[0])
         max_dist = bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO
+        det_area = max(0, bbox[2] - bbox[0]) * max(0, bbox[3] - bbox[1])
         best_id = None
         best_dist = max_dist
         for vid, veh in self.tracked_vehicles.items():
@@ -682,6 +703,19 @@ class PersonTracker:
                 continue
             if not _class_compatible(veh.class_name, class_name):
                 continue  # bus vs car etc; car↔truck flicker is allowed
+            # Size-ratio gate for stale tracks. Mirrors the primary IoU
+            # loop's gate — without it, a non-idle stale track whose
+            # bbox center happens to be near a new (much-larger or
+            # much-smaller) detection would still merge via this loose
+            # center-distance fallback. Same live-regression as the
+            # primary loop's gate (school bus inheriting the small car's
+            # track at 15:09:45).
+            if current_ts and (current_ts - veh.last_seen) > VEHICLE_MATCH_STALE_SECS:
+                veh_area = max(0, veh.bbox[2] - veh.bbox[0]) * max(0, veh.bbox[3] - veh.bbox[1])
+                if det_area > 0 and veh_area > 0:
+                    area_ratio = max(det_area, veh_area) / min(det_area, veh_area)
+                    if area_ratio > VEHICLE_MATCH_AREA_RATIO_MAX:
+                        continue
             # Idle-confirmed tracks must not be matched via the loose
             # center-distance fallback. This fallback exists for FAST cars
             # whose IoU drops between consecutive frames — parked cars
