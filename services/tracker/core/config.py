@@ -67,6 +67,18 @@ VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))
 # polluting the classifier vote (observed live: vehicle_0001 angle_5
 # was a different physical vehicle).
 VEHICLE_IDLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IDLE_IOU_THRESHOLD", "0.65"))
+# Escape hatch for the tight idle IoU gate above. YOLO sometimes outputs
+# a slightly-wider/taller bbox on a parked car (curb shadow, adjacent
+# vehicle clipping), and that jittered detection has IoU below 0.65 but
+# intersection-over-min ≈ 1.0 (the smaller box is fully inside the
+# larger). Without an escape hatch the jittered detection spawned a
+# phantom track on top of the parked car and fired a duplicate
+# vehicle_idle 150s later. Observed live: vehicle_0001 [w=75,h=35] vs
+# incoming [w=109,h=44], IoU=0.53, IoM=0.99 — duplicate idle at 12:25.
+# Area-ratio gate (≤ VEHICLE_IDLE_IOM_AREA_RATIO_MAX) prevents a person
+# or small object inside a parked-truck bbox from false-merging.
+VEHICLE_IDLE_IOM_THRESHOLD = float(os.getenv("VEHICLE_IDLE_IOM_THRESHOLD", "0.9"))
+VEHICLE_IDLE_IOM_AREA_RATIO_MAX = float(os.getenv("VEHICLE_IDLE_IOM_AREA_RATIO_MAX", "2.0"))
 # Bumped 5.0 → 30.0 so a parked car briefly occluded by drive-by traffic
 # (delivery van, garbage truck stopping in front for >15 s) gets re-attached
 # to the same TrackedVehicle on the other side of the disturbance, instead of
