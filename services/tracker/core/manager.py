@@ -27,6 +27,7 @@ from .config import (
     VEHICLE_LOST_TIMEOUT,
     VEHICLE_LOST_TIMEOUT_DRIVING,
     VEHICLE_CENTER_MATCH_STALE_SECS,
+    MIN_SAMPLE_BBOX_AREA_SUB_PX,
     VEHICLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOM_THRESHOLD,
@@ -450,6 +451,7 @@ class PersonTracker:
                     EMIT_VEHICLE_SAMPLES
                     and (veh.frame_count <= EAGER_SAMPLE_FRAMES
                          or veh.frame_count % SAMPLE_INTERVAL_FRAMES == 0)
+                    and self._bbox_area(veh.bbox) >= MIN_SAMPLE_BBOX_AREA_SUB_PX
                     and not self._sample_occluded_by_moving_vehicle(veh)
                 ):
                     self._emit_vehicle_sample_event(veh, timestamp)
@@ -495,6 +497,7 @@ class PersonTracker:
                 # cars overlapping at frame edge), skip the spawn sample.
                 if (
                     EMIT_VEHICLE_SAMPLES
+                    and self._bbox_area(veh.bbox) >= MIN_SAMPLE_BBOX_AREA_SUB_PX
                     and not self._sample_occluded_by_moving_vehicle(veh)
                 ):
                     self._emit_vehicle_sample_event(veh, timestamp)
@@ -653,6 +656,17 @@ class PersonTracker:
                 best_vid = vid
 
         return best_vid
+
+    @staticmethod
+    def _bbox_area(bbox: list) -> int:
+        """Sub-stream-coordinate bbox area (used as a sample-quality
+        gate — see MIN_SAMPLE_BBOX_AREA_SUB_PX). Returns 0 for a
+        degenerate / empty bbox."""
+        if not bbox or len(bbox) < 4:
+            return 0
+        w = max(0, bbox[2] - bbox[0])
+        h = max(0, bbox[3] - bbox[1])
+        return int(w * h)
 
     def _sample_occluded_by_moving_vehicle(self, veh: 'TrackedVehicle') -> bool:
         """True if a vehicle_sample for `veh` would capture pixels of

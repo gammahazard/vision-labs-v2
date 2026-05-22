@@ -42,7 +42,7 @@ CAMERA_ID = os.getenv("CAMERA_ID", "")
 SNAPSHOT_ROOT = os.getenv("SNAPSHOT_ROOT", "/data/snapshots/vehicles")
 MAX_BUFFER_CROPS = int(os.getenv("MAX_BUFFER_CROPS", "8"))
 MIN_CROP_AREA_HD_PX = int(os.getenv("MIN_CROP_AREA_HD_PX", "2500"))  # 50×50
-CROP_PADDING_PCT = float(os.getenv("CROP_PADDING_PCT", "0.20"))
+CROP_PADDING_PCT = float(os.getenv("CROP_PADDING_PCT", "0.35"))
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "85"))
 
 

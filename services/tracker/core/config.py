@@ -75,6 +75,16 @@ VEHICLE_LOST_TIMEOUT_DRIVING = float(os.getenv("VEHICLE_LOST_TIMEOUT_DRIVING", "
 # they can't legitimately claim, while preserving the fast-mover rescue
 # for which the fallback was designed.
 VEHICLE_CENTER_MATCH_STALE_SECS = float(os.getenv("VEHICLE_CENTER_MATCH_STALE_SECS", "2.0"))
+# Minimum bbox area (in sub-stream pixels, 896×512) for a detection to
+# be sampled into the va buffer. Sub-threshold bboxes are usually:
+# (a) the vehicle entering frame-edge with only its bumper visible
+# (b) the vehicle leaving frame-edge with only a sliver remaining
+# In both cases the crop is mostly road/background, polluting the
+# classifier's color/body vote. The MIN_CROP_AREA_HD_PX gate in the va
+# service already drops these downstream, but emitting them costs a
+# Redis HD-frame write + a stream XADD per skip. Filter at the source.
+# 1500 px² ≈ 40×38 sub-stream → 100×95 HD with default scaling.
+MIN_SAMPLE_BBOX_AREA_SUB_PX = int(os.getenv("MIN_SAMPLE_BBOX_AREA_SUB_PX", "1500"))
 VEHICLE_IOU_THRESHOLD = float(os.getenv("VEHICLE_IOU_THRESHOLD", "0.2"))
 # Idle-confirmed tracks demand a much tighter IoU before accepting a new
 # detection. A parked car's bbox is fixed, so a real re-detection of the

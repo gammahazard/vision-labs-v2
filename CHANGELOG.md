@@ -14,6 +14,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
 
 ### Fixed
+- **Crop padding too tight for fast-mover bbox drift + sub-threshold bboxes still sampled** — `CROP_PADDING_PCT` default 0.20 → 0.35 + new `MIN_SAMPLE_BBOX_AREA_SUB_PX` (1500) gate skips tiny edge-of-frame bboxes. *Requires tracker + vehicle-attributes rebuild.*
 - **Stale non-idle tracks lingered 10 s before ghosting + live_center_match accepted 269-px center jumps after long gaps** — driving tracks now ghost at 3 s (`VEHICLE_LOST_TIMEOUT_DRIVING`); `_try_live_center_match` skips tracks silent > 2 s (`VEHICLE_CENTER_MATCH_STALE_SECS`). *Requires tracker rebuild.*
 - **Stale track absorbed an unrelated vehicle of very different size** — primary IoU + `_try_live_center_match` now reject matches against tracks idle > `VEHICLE_MATCH_STALE_SECS` (1 s) when bbox-area ratio > `VEHICLE_MATCH_AREA_RATIO_MAX` (2.5×). *Requires tracker rebuild.*
 - **Browse vehicle-crops modal showed times in UTC instead of `LOCATION_TIMEZONE`** — `routes/browse.py` missed the `tz=TZ_LOCAL` kwarg. *Dashboard restart only.*
