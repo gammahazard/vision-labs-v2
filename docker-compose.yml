@@ -268,7 +268,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -726,7 +726,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -929,7 +929,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -1122,7 +1122,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -1315,7 +1315,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -1508,7 +1508,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -1701,7 +1701,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -1894,7 +1894,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -2087,7 +2087,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -2280,7 +2280,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -2473,7 +2473,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -2666,7 +2666,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -2859,7 +2859,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -3052,7 +3052,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -3245,7 +3245,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -3438,7 +3438,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -3631,7 +3631,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -3824,7 +3824,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -4017,7 +4017,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
@@ -4210,7 +4210,7 @@ services:
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
-      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-gammahazard/vision-labs-vehicle-attributes}
+      - VEHICLE_ATTR_HF_REPO=${VEHICLE_ATTR_HF_REPO:-mangolover/vision-labs-vehicle-attributes}
       - VEHICLE_ATTR_MODEL=${VEHICLE_ATTR_MODEL:-convnext_tiny_v0}
       - VEHICLE_ATTR_MODELS_DIR=/models
       - COLOR_CONF_THRESHOLD=${COLOR_CONF_THRESHOLD:-0.55}
