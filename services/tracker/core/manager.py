@@ -27,6 +27,8 @@ from .config import (
     VEHICLE_LOST_TIMEOUT,
     VEHICLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOU_THRESHOLD,
+    VEHICLE_IDLE_IOM_THRESHOLD,
+    VEHICLE_IDLE_IOM_AREA_RATIO_MAX,
     VEHICLE_GHOST_TTL,
     VEHICLE_IDLE_GHOST_TTL,
     VEHICLE_GHOST_MAX_DIST_RATIO,
@@ -307,6 +309,18 @@ class PersonTracker:
                     best_iou = iou
                     best_match_id = vid
 
+            # IoM (intersection-over-min) escape hatch for idle tracks
+            # ONLY. The tight idle IoU gate (0.65) rejects detections whose
+            # bbox is the same parked car with detector jitter widening it
+            # by ~30 px (curb shadow, adjacent vehicle clipping). Without
+            # the escape hatch, a phantom track spawns directly on top of
+            # the idle car and fires a duplicate vehicle_idle 150s later.
+            # IoM threshold is high (0.9) and we require the area ratio
+            # to be ≤2× so a person standing inside a parked-truck bbox
+            # can't false-merge (person area is ~1% of truck area).
+            if not best_match_id:
+                best_match_id = self._try_idle_iom_match(bbox, class_name)
+
             # IoU match can fail across consecutive frames when a fast-moving
             # car shifts by more than half its width — IoU drops below
             # VEHICLE_IOU_THRESHOLD even though it's clearly the same car.
@@ -442,6 +456,64 @@ class PersonTracker:
             self._emit_vehicle_gone_event(veh, timestamp)
             if veh.idle_alerted:
                 self._emit_vehicle_left_event(veh, timestamp)
+
+    def _try_idle_iom_match(self, bbox: list, class_name: str) -> str | None:
+        """Borderline-IoU rescue for idle/stationary tracks.
+
+        The tight idle IoU gate (VEHICLE_IDLE_IOU_THRESHOLD=0.65) rejects
+        detections whose bbox is the same parked car but YOLO-jittered
+        slightly wider/taller. Without this, a jittered detection spawns
+        a phantom track on top of the idle car and fires a duplicate
+        vehicle_idle 150s later (observed live at 12:25 on cam1).
+
+        Returns the matched vehicle_id when:
+          1. an existing track is idle or stationary,
+          2. the detection's class is compatible (car↔truck↔bus equivalence
+             from #41 applies, so bbox-jitter on the same vehicle won't
+             miss when YOLO also flips class), and
+          3. intersection-over-min ≥ VEHICLE_IDLE_IOM_THRESHOLD AND the
+             two bboxes are within VEHICLE_IDLE_IOM_AREA_RATIO_MAX in area
+             (rules out person/cyclist inside parked-truck bbox).
+
+        Returns None otherwise. Does not modify state.
+        """
+        a_x1, a_y1, a_x2, a_y2 = bbox
+        a_area = (a_x2 - a_x1) * (a_y2 - a_y1)
+        if a_area <= 0:
+            return None
+
+        best_vid = None
+        best_iom = VEHICLE_IDLE_IOM_THRESHOLD  # only beat the threshold
+
+        for vid, veh in self.tracked_vehicles.items():
+            if not (veh.idle_alerted or veh.is_stationary):
+                continue
+            if not _class_compatible(veh.class_name, class_name):
+                continue
+            b_x1, b_y1, b_x2, b_y2 = veh.bbox
+            b_area = (b_x2 - b_x1) * (b_y2 - b_y1)
+            if b_area <= 0:
+                continue
+
+            # Area-ratio gate first — cheap rejection of person-in-truck shapes.
+            area_ratio = max(a_area, b_area) / min(a_area, b_area)
+            if area_ratio > VEHICLE_IDLE_IOM_AREA_RATIO_MAX:
+                continue
+
+            ix1 = max(a_x1, b_x1)
+            iy1 = max(a_y1, b_y1)
+            ix2 = min(a_x2, b_x2)
+            iy2 = min(a_y2, b_y2)
+            if ix2 <= ix1 or iy2 <= iy1:
+                continue
+            i_area = (ix2 - ix1) * (iy2 - iy1)
+            iom = i_area / min(a_area, b_area)
+
+            if iom >= best_iom:
+                best_iom = iom
+                best_vid = vid
+
+        return best_vid
 
     def _try_live_center_match(self, bbox: list, class_name: str,
                                 current_ts: float = 0.0) -> str | None:

@@ -1315,6 +1315,138 @@ def test_idle_track_accepts_high_iou_re_detection_of_same_car(monkeypatch):
     assert len(m.tracked_vehicles) == 1, "same parked car must keep its track"
 
 
+def test_idle_track_absorbs_jittered_wider_bbox_via_iom_escape_hatch(monkeypatch):
+    """Live regression — duplicate vehicle_idle at 12:25 on cam1.
+
+    The parked Honda was tracked at bbox [734.8, 323.8, 809.6, 358.4]
+    (w=74.8 h=34.6). YOLO then emitted a detection at
+    [735.4, 317.4, 844.1, 361.6] (w=108.7 h=44.2) — same parked car but
+    the bbox extended 35px to the right (curb shadow / adjacent vehicle
+    clipping). IoU is 0.53 — below the 0.65 idle gate — so the strict
+    IoU loop rejects the merge. _try_idle_iom_match must catch it
+    because intersection-over-min ≈ 0.99 and area ratio is 1.86 (<2.0).
+
+    Without this rescue, the jittered detection spawns a phantom track
+    on top of the idle car and fires a duplicate vehicle_idle 150 s
+    later."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [735, 324, 810, 358], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    assert len(m.tracked_vehicles) == 1
+    parked = next(iter(m.tracked_vehicles.values()))
+    parked.idle_alerted = True
+    original_id = parked.vehicle_id
+
+    # Same parked car, jittered wider bbox. IoU = 0.53, IoM = 0.99.
+    m._process_vehicle_detections(
+        [{"bbox": [735, 317, 844, 362], "class_name": "car",
+          "confidence": 0.75}],
+        timestamp=1.0,
+    )
+    assert len(m.tracked_vehicles) == 1, "jittered bbox must absorb into idle track"
+    assert next(iter(m.tracked_vehicles)) == original_id, \
+        "track id must be preserved, not re-issued"
+
+
+def test_idle_iom_rescue_rejects_person_inside_truck_bbox(monkeypatch):
+    """Negative case: a parked truck's bbox fully contains a pedestrian's
+    bbox (IoM = 1.0 from the person's perspective). The IoM rescue MUST
+    NOT fire — area ratio is ~25× and a `person` class isn't compatible
+    with `car/truck/bus`. Without these guards, IoM=1.0 would always
+    win and the tracker would silently merge unrelated detections."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    # parked truck — large bbox
+    m._process_vehicle_detections(
+        [{"bbox": [200, 200, 600, 500], "class_name": "truck",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    parked = next(iter(m.tracked_vehicles.values()))
+    parked.idle_alerted = True
+
+    # pedestrian-shaped bbox fully inside the truck bbox — but as a
+    # 'motorcycle' (since vehicle-detector wouldn't emit 'person'). Area
+    # ratio = (400*300) / (40*100) = 30×. Class 'motorcycle' is also not
+    # in the car/truck/bus equiv set, so _class_compatible returns False.
+    iom_match = m._try_idle_iom_match(
+        bbox=[300, 250, 340, 350], class_name="motorcycle",
+    )
+    assert iom_match is None, \
+        "IoM rescue must reject when class mismatched OR area ratio too large"
+
+
+def test_idle_iom_rescue_skips_non_idle_tracks(monkeypatch):
+    """A drive-by car briefly overlapping another moving car's bbox must
+    NOT merge via the IoM rescue — the rescue is for idle/stationary
+    tracks only. Without the gate, two moving cars with overlapping
+    bboxes (e.g., trailing car at intersection) would merge."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [100, 100, 200, 200], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    # NOT marked idle — still moving.
+    assert not next(iter(m.tracked_vehicles.values())).idle_alerted
+
+    # Smaller bbox fully inside, IoM=1.0, area ratio 4× (still <... wait,
+    # we want to test the idle gate specifically). Use area ratio 1.5 so
+    # ONLY the idle gate gates it out.
+    result = m._try_idle_iom_match(bbox=[110, 110, 200, 200], class_name="car")
+    assert result is None, "IoM rescue must skip non-idle tracks"
+
+
+def test_idle_iom_rescue_respects_class_compatibility_for_4wheel(monkeypatch):
+    """Positive case for #41 interaction — YOLO flips class car↔truck on
+    the same physical parked vehicle AND outputs a jittered bbox.
+    Without _class_compatible(), the IoM rescue would reject the truck
+    detection against the car track even though it's the same car."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [735, 324, 810, 358], "class_name": "car",
+          "confidence": 0.8}],
+        timestamp=0.0,
+    )
+    parked = next(iter(m.tracked_vehicles.values()))
+    parked.idle_alerted = True
+
+    # Same parked vehicle, jittered bbox, YOLO flipped to truck.
+    m._process_vehicle_detections(
+        [{"bbox": [735, 317, 844, 362], "class_name": "truck",
+          "confidence": 0.7}],
+        timestamp=1.0,
+    )
+    assert len(m.tracked_vehicles) == 1, \
+        "car↔truck flip + jittered bbox on idle must still absorb"
+
+
 def test_idle_confirmed_track_survives_long_detector_gap(monkeypatch):
     """Contract: a parked car (idle_alerted=True) that the detector briefly
     misses for > VEHICLE_GHOST_TTL but < VEHICLE_IDLE_GHOST_TTL must NOT
