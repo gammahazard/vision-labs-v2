@@ -377,25 +377,40 @@ def run_classifier_and_vote(buf, event_kind: str) -> dict:
                      BODY_CONF)
     make_out = _vote(mh_probs['make'], buf.confidences, classes['make'],
                      MAKE_CONF)
-    if event_kind == 'idle':
-        model_out = (None, 0.0)
-    else:
-        model_out = _vote(mh_probs['model'], buf.confidences, classes['model'],
-                          MODEL_CONF)
+    # Run the model head on idle tracks too — the original spec deferred
+    # this to drive-by-only out of caution, but parked cars give a
+    # better-sampled view (multi-angle from the same lane) than a brief
+    # drive-by. We'd rather see weak model predictions and tune the
+    # threshold from data than not see them at all.
+    model_out = _vote(mh_probs['model'], buf.confidences, classes['model'],
+                      MODEL_CONF)
 
     make_out, model_out = _enforce_make_model_consistency(
         make_out, model_out, classes['make_to_models'],
     )
 
+    # Confidence-reporting convention (consistent across all 4 heads):
+    #   conf=None  → head was deliberately not run (IR-suppressed color,
+    #                idle-event model). Distinguishes "skipped" from
+    #                "ran but below threshold" when tuning thresholds.
+    #   conf=float → head ran. label is None when the winning class's
+    #                weighted confidence was below the threshold; the
+    #                conf value still reflects what the vote produced
+    #                so the threshold can be tuned from real data.
+    # Before this fix, color + model conf were also nulled out when
+    # label was None — that hid the losing-confidence info and made
+    # it impossible to see "color was 0.53, just under 0.55" vs
+    # "color was 0.18, way off".
+    color_skipped = is_ir_track
     return {
         'color': color_out[0],
-        'color_confidence': color_out[1] if color_out[0] is not None else None,
+        'color_confidence': None if color_skipped else color_out[1],
         'body_type': body_out[0],
         'body_type_confidence': body_out[1],
         'make': make_out[0],
         'make_confidence': make_out[1],
         'model': model_out[0],
-        'model_confidence': model_out[1] if model_out[0] is not None else None,
+        'model_confidence': model_out[1],
         'voting_samples': len(buf.crops),
         'classifier_version': MODEL_VERSION,
         'ir_track': is_ir_track,
