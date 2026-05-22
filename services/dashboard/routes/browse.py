@@ -176,6 +176,13 @@ async def list_day_tracks(date: str, camera: str = ""):
         return JSONResponse(status_code=400, content={"error": "invalid date"})
 
     base = ctx.VEHICLE_SNAPSHOT_DIR
+    # Realpath base for containment checks below. Even though `cam` is
+    # regex-stripped to alphanumerics+_- and `date` is regex-validated to
+    # YYYY-MM-DD, CodeQL needs the explicit realpath+startswith pattern to
+    # recognize the path as sanitized — same approach as
+    # routes/events.py:resolve_event_snapshot_path and the per-track file
+    # endpoint at line 253 below.
+    base_real = os.path.realpath(base) + os.sep
     # Enumerate camera subdirs (same logic as _is_camera_dir)
     if camera:
         cams_to_scan = [camera]
@@ -189,7 +196,11 @@ async def list_day_tracks(date: str, camera: str = ""):
     tracks = []
     for cam in cams_to_scan:
         cam_safe = re.sub(r"[^a-zA-Z0-9_-]", "", cam)
-        day_dir = os.path.join(base, cam_safe, date)
+        day_dir = os.path.realpath(os.path.join(base, cam_safe, date))
+        # Defense-in-depth: refuse anything that escaped the snapshot root
+        # via a symlink or a `..` segment that snuck past the regex.
+        if not day_dir.startswith(base_real):
+            continue
         if not os.path.isdir(day_dir):
             continue
         for entry in os.scandir(day_dir):

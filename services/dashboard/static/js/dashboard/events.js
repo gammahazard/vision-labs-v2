@@ -772,6 +772,15 @@ async function eventDetailSubmitName() {
 let _photoModal = null;
 
 function _openEventPhoto(url, name) {
+    // Refuse non-http(s) schemes — `url` flows in from `data-url` attributes
+    // populated in various places. Defense against an attacker-controlled
+    // `data:image/svg+xml,<svg onload=...>` (which can execute when set on
+    // <img>.src in some browsers) or `javascript:` URL. Closes the CodeQL
+    // js/xss-through-dom alert on the .src assignment below.
+    if (typeof url !== "string"
+        || /^\s*(javascript|data|vbscript|file):/i.test(url)) {
+        return;
+    }
     if (!_photoModal) {
         _photoModal = document.createElement("div");
         _photoModal.className = "event-photo-modal";
