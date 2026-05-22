@@ -49,6 +49,29 @@ from .state import TrackedPerson, TrackedVehicle
 EMIT_VEHICLE_SAMPLES = os.getenv("EMIT_VEHICLE_SAMPLES", "0") == "1"
 SAMPLE_INTERVAL_FRAMES = max(1, int(os.getenv("SAMPLE_INTERVAL_FRAMES", "3")))
 
+# YOLOv8 frequently flips a single vehicle between "car", "truck", and
+# "bus" across consecutive frames (especially trucks/SUVs at partial
+# occlusion, vans seen end-on, large sedans at angle). The fallback
+# match paths used to require strict class equality, which split one
+# physical drive-by into two tracks (observed live: a red pickup at
+# 11:35 became vehicle_0009 "car" + vehicle_0010 "truck" 2 s later,
+# neither got full per-track samples).
+#
+# 4-wheel motor vehicles (car, truck, bus) are treated as
+# interchangeable in the fallback paths. Bicycle + motorcycle stay
+# strict — they're visually distinct enough that YOLO almost never
+# confuses them with 4-wheel vehicles, and false-merging a passing
+# motorcycle into a car track would be a real data error.
+_VEHICLE_CLASS_EQUIV = {"car", "truck", "bus"}
+
+
+def _class_compatible(a: str, b: str) -> bool:
+    """True if two YOLO class labels can plausibly be the same physical
+    vehicle observed across frames (YOLO class flicker tolerance)."""
+    if a == b:
+        return True
+    return a in _VEHICLE_CLASS_EQUIV and b in _VEHICLE_CLASS_EQUIV
+
 
 class PersonTracker:
     """
@@ -294,7 +317,9 @@ class PersonTracker:
             # consecutive frames, IoU≈0.14). See test
             # test_drive_by_with_low_iou_consecutive_frames_does_not_double_track.
             if not best_match_id:
-                best_match_id = self._try_live_center_match(bbox, class_name)
+                best_match_id = self._try_live_center_match(
+                    bbox, class_name, current_ts=timestamp,
+                )
 
             # Try ghost re-association before treating as a brand-new vehicle.
             # A ghost is a recently-lost vehicle (within VEHICLE_GHOST_TTL).
@@ -418,7 +443,8 @@ class PersonTracker:
             if veh.idle_alerted:
                 self._emit_vehicle_left_event(veh, timestamp)
 
-    def _try_live_center_match(self, bbox: list, class_name: str) -> str | None:
+    def _try_live_center_match(self, bbox: list, class_name: str,
+                                current_ts: float = 0.0) -> str | None:
         """Fallback live-track match by center distance when IoU failed.
 
         When a vehicle drifts fast enough that consecutive-frame bboxes have
@@ -443,8 +469,17 @@ class PersonTracker:
         best_id = None
         best_dist = max_dist
         for vid, veh in self.tracked_vehicles.items():
-            if veh.class_name != class_name:
+            # A track already updated in THIS frame can't be the same
+            # physical vehicle as a different detection in the same frame.
+            # Two cars side-by-side at different positions both belong to
+            # the same `_process_vehicle_detections` call — each must get
+            # its own track id. Without this gate the relaxed class-
+            # compatibility check below would let the second detection's
+            # center-distance fallback merge into the first.
+            if current_ts and veh.last_seen >= current_ts:
                 continue
+            if not _class_compatible(veh.class_name, class_name):
+                continue  # bus vs car etc; car↔truck flicker is allowed
             # Idle-confirmed tracks must not be matched via the loose
             # center-distance fallback. This fallback exists for FAST cars
             # whose IoU drops between consecutive frames — parked cars
@@ -467,7 +502,9 @@ class PersonTracker:
 
     def _try_ghost_match(self, bbox: list, class_name: str, timestamp: float) -> str | None:
         """If a recently-departed vehicle is near this bbox, return its id.
-        Otherwise None. Same-class only — don't match a "car" to a "truck"."""
+        Otherwise None. Class compatibility uses _class_compatible — strict
+        equality is too tight because YOLOv8 frequently flickers a single
+        drive-by between 'car' and 'truck'."""
         if not self._ghost_vehicles:
             return None
         cx = (bbox[0] + bbox[2]) / 2
@@ -477,8 +514,8 @@ class PersonTracker:
         best_id = None
         best_dist = max_dist
         for vid, (veh, _ts) in self._ghost_vehicles.items():
-            if veh.class_name != class_name:
-                continue  # cars don't morph into trucks mid-occlusion
+            if not _class_compatible(veh.class_name, class_name):
+                continue  # bus/motorcycle/bicycle stay strict
             gx = (veh.bbox[0] + veh.bbox[2]) / 2
             gy = (veh.bbox[1] + veh.bbox[3]) / 2
             dist = ((cx - gx) ** 2 + (cy - gy) ** 2) ** 0.5
