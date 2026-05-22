@@ -332,6 +332,13 @@ Confirm the v0.2.0 vehicle-tracking improvements (position dedup, ghost TTL, is_
 - Outcome: per-track grouping live, multi-angle thumbnails available, no classification yet.
 
 ### Phase 2 — Labeling tool (parallel to Phase 1)
+
+> **Status (2026-05-22): DEFERRED.** Phase 3 shipped a v0 classifier
+> trained on public datasets (VeRi-776 + Stanford Cars-196) without any
+> hand-labeled data — see PR #26 + CONTEXT.md §4.6. The Labeler tab is
+> only revisited if real-world transfer quality on cam1 turns out to be
+> unusable.
+
 - New dashboard tab `Labeler`: scroll through crops, dropdowns, save labels.
 - Start labeling weekend 1. Goal: 500 crops labeled across color/body/make.
 
