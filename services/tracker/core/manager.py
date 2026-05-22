@@ -25,6 +25,8 @@ from .config import (
     MAX_EVENT_STREAM_LEN,
     VEHICLE_IDLE_TIMEOUT,
     VEHICLE_LOST_TIMEOUT,
+    VEHICLE_LOST_TIMEOUT_DRIVING,
+    VEHICLE_CENTER_MATCH_STALE_SECS,
     VEHICLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOM_THRESHOLD,
@@ -502,9 +504,20 @@ class PersonTracker:
         # we move it to _ghost_vehicles. If the same vehicle re-appears within
         # VEHICLE_GHOST_TTL seconds, we re-associate (no leave event ever fires).
         # If it doesn't, we emit vehicle_left at ghost expiry.
+        #
+        # Per-track timeout: idle/stationary tracks use VEHICLE_LOST_TIMEOUT
+        # (10 s — handles detector stutter on parked cars). Non-idle moving
+        # tracks use VEHICLE_LOST_TIMEOUT_DRIVING (3 s) so a brief detection
+        # of one vehicle can't sit in tracked_vehicles long enough to be
+        # grabbed by a totally different vehicle entering the same screen
+        # region later.
+        def _track_lost_timeout(veh) -> float:
+            return (VEHICLE_LOST_TIMEOUT
+                    if (veh.idle_alerted or veh.is_stationary)
+                    else VEHICLE_LOST_TIMEOUT_DRIVING)
         stale_ids = [
             vid for vid, veh in self.tracked_vehicles.items()
-            if timestamp - veh.last_seen > VEHICLE_LOST_TIMEOUT
+            if timestamp - veh.last_seen > _track_lost_timeout(veh)
         ]
         for vid in stale_ids:
             veh = self.tracked_vehicles.pop(vid)
@@ -700,6 +713,16 @@ class PersonTracker:
             # compatibility check below would let the second detection's
             # center-distance fallback merge into the first.
             if current_ts and veh.last_seen >= current_ts:
+                continue
+            # Stale-track skip: this fallback exists to recover the fast-
+            # mover IoU-jitter case (~200 ms drift between consecutive
+            # frames). For a stale track (>VEHICLE_CENTER_MATCH_STALE_SECS
+            # since last_seen), the 3.5×bbox_w radius is a vast region —
+            # easily grabbing a completely different physical vehicle that
+            # happens to enter the same screen area. Hard-skip rather than
+            # scale the radius: simpler, and stale tracks should naturally
+            # ghost out anyway.
+            if current_ts and (current_ts - veh.last_seen) > VEHICLE_CENTER_MATCH_STALE_SECS:
                 continue
             if not _class_compatible(veh.class_name, class_name):
                 continue  # bus vs car etc; car↔truck flicker is allowed
