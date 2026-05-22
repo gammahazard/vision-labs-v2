@@ -99,12 +99,24 @@ async def list_days(camera: str = ""):
     days = []
     for date_str in sorted(day_map.keys(), reverse=True):
         total = 0
+        track_count = 0
         for _cam, day_path in day_map[date_str]:
             try:
-                total += sum(1 for f in os.listdir(day_path) if f.lower().endswith(".jpg"))
+                for entry in os.listdir(day_path):
+                    full = os.path.join(day_path, entry)
+                    if entry.lower().endswith(".jpg"):
+                        total += 1
+                    elif os.path.isdir(full) and entry.startswith("vehicle_"):
+                        # Phase 1 per-track dir (hero.jpg + angle_NN.jpg + metadata.json)
+                        # — surfaced as the "Vehicle crops taken (N)" modal trigger.
+                        track_count += 1
             except Exception:
                 continue
-        days.append({"date": date_str, "count": total})
+        days.append({
+            "date": date_str,
+            "count": total,
+            "track_count": track_count,
+        })
     return days
 
 

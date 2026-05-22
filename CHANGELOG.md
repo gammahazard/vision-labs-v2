@@ -21,6 +21,9 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **IoU center-distance ratio too tight for wide-angle cams** — bumped `VEHICLE_GHOST_MAX_DIST_RATIO` 2.0 → 3.5 (catches 225-px shifts seen on cam1 fish-eye). *Requires tracker rebuild.*
 - **Vehicle-attributes per-track dirs invisible to Browse** — Phase 1 compose mounted `snapshot-data` but dashboard reads `qnap-snapshots`; the data was being written and read on two different volumes. All 20 vehicle-attributes-camN blocks now mount `qnap-snapshots`; orphan `snapshot-data:` volume removed. *Requires per-cam vehicle-attributes recreate.*
 
+### Changed
+- **Browse day view simplified** — dropped the confusing "Per-track view (N tracks)" section. Day view is now the legacy flat snapshot grid + a single `📸 Vehicle crops taken (N)` button at the top. Click → modal with grouped-by-track thumbnails. Click a thumbnail → existing fullscreen photo viewer. `/api/browse/days` now also returns `track_count` per day.
+
 ---
 
 ## [0.2.0] — 2026-05-21
