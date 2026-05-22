@@ -65,6 +65,11 @@ REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 DB_PATH = os.getenv("DB_PATH", "/data/faces.db")
 MATCH_THRESHOLD = float(os.getenv("MATCH_THRESHOLD", "0.45"))
+# IDENTITY_KEY TTL — refreshed on every successful identity write. Short
+# enough that an empty-scene clear feels live (≤ a few seconds), long enough
+# that tracker's 2 s identity poll has at least one shot at catching each
+# write. 5 s = ~2.5 tracker polls per write window.
+IDENTITY_KEY_TTL_SEC = int(os.getenv("IDENTITY_KEY_TTL_SEC", "5"))
 API_PORT = int(os.getenv("API_PORT", "8081"))
 CONSUMER_GROUP = os.getenv("CONSUMER_GROUP", "face_recognizers")
 CONSUMER_NAME = os.getenv("CONSUMER_NAME", "recognizer_1")
@@ -808,16 +813,17 @@ def run():
                 det_json = data.get(b"detections", b"[]").decode()
                 detections = json.loads(det_json)
 
-                # Skip if no detections — but FIRST clear identity_state so the
-                # dashboard doesn't keep showing the last known face after the
-                # scene has emptied. (Don't clear when there ARE people but no
-                # faces matched; that's a separate sticky-identity case the
-                # tracker handles.)
+                # No detections in this frame — just ack and wait for the
+                # next. Do NOT delete IDENTITY_KEY here: pose-detector flickers
+                # between "1 person" and "0 person" at the edges of detection
+                # confidence (especially on webcams) and explicit delete on
+                # every empty frame races the tracker's 2 s identity poll —
+                # the bbox briefly turns cyan in the live overlay (which polls
+                # identity_state at 10 fps) but tracker never catches the
+                # identity, so `person_identified` event + Telegram never
+                # fire. We rely on the SHORT TTL written below to clear stale
+                # names within a few seconds of a truly empty scene.
                 if not detections:
-                    try:
-                        r.delete(IDENTITY_KEY)
-                    except Exception:
-                        pass
                     r.xack(DETECTION_STREAM, CONSUMER_GROUP, message_id)
                     frames_processed += 1
                     continue
@@ -922,17 +928,18 @@ def run():
                         maxlen=MAX_IDENTITY_STREAM_LEN,
                     )
 
-                    # Update current identity state (for dashboard overlay).
-                    # TTL of 5 minutes so a crashed/down face-recognizer can't
-                    # keep a stale identity hash visible to the tracker
-                    # indefinitely — tracker reads this hash on a 2 s poll, so
-                    # 300 s is generous head-room while still self-cleaning if
-                    # this container dies.
+                    # Update current identity state (for dashboard overlay
+                    # + tracker's 2 s identity poll). Short TTL — every
+                    # successful detection refreshes it; an empty scene lets
+                    # it expire naturally within IDENTITY_KEY_TTL_SEC. Replaces
+                    # the old explicit-delete-on-empty path which raced the
+                    # tracker poll and prevented `person_identified` events
+                    # from firing.
                     r.hset(
                         IDENTITY_KEY,
                         mapping={k.encode(): v.encode() for k, v in identity_data.items()},
                     )
-                    r.expire(IDENTITY_KEY, 300)
+                    r.expire(IDENTITY_KEY, IDENTITY_KEY_TTL_SEC)
 
                 # Acknowledge
                 r.xack(DETECTION_STREAM, CONSUMER_GROUP, message_id)
