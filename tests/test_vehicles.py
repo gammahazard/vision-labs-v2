@@ -513,12 +513,15 @@ class TestTrackerVehicleEvent:
         The old global rate-limit dropped legitimate events when two
         vehicles arrived within VEHICLE_RATE_LIMIT_SEC of each other.
         IoU matching already prevents same-vehicle duplicates, so we
-        now emit per arrival.
+        now emit per arrival. Two-wheelers (motorcycle/bicycle) stay
+        class-strict in the fallback paths, so we use motorcycle here
+        to make sure the second detection mints its own track instead
+        of being absorbed via car↔truck flicker compatibility.
         """
         tracker, r = tracker_instance
 
         # Two different vehicles at different positions (won't IoU match)
-        det1 = [{"bbox": [100, 200, 300, 400], "class_name": "truck", "confidence": 0.85}]
+        det1 = [{"bbox": [100, 200, 300, 400], "class_name": "motorcycle", "confidence": 0.85}]
         det2 = [{"bbox": [500, 200, 700, 400], "class_name": "car", "confidence": 0.70}]
 
         tracker._process_vehicle_detections(det1, 1708000000.0)
@@ -656,9 +659,12 @@ class TestTrackerVehicleEvent:
         tracker, r = tracker_instance
 
         # Vehicle A (left side) and Vehicle B (right side) — no IoU overlap
+        # Use motorcycle as the second class so the fallback car↔truck
+        # flicker compatibility doesn't merge two physically distinct
+        # vehicles in the same frame.
         det_both = [
             {"bbox": [10, 100, 150, 250], "class_name": "car", "confidence": 0.9},
-            {"bbox": [400, 100, 550, 250], "class_name": "truck", "confidence": 0.85},
+            {"bbox": [400, 100, 550, 250], "class_name": "motorcycle", "confidence": 0.85},
         ]
 
         # Feed 6 frames to build center_history for both
@@ -682,14 +688,16 @@ class TestTrackerVehicleEvent:
         tracker._process_vehicle_detections(det, 1708000000.0)
         assert len(tracker.tracked_vehicles) == 1
 
-        # Different vehicle at t=15 (original is stale after 10s)
-        det2 = [{"bbox": [500, 200, 700, 400], "class_name": "bus", "confidence": 0.7}]
+        # Different vehicle at t=15 (original is stale after 10s). Use
+        # motorcycle so the car↔bus flicker compatibility doesn't let
+        # it inherit the original car track via ghost-match.
+        det2 = [{"bbox": [500, 200, 700, 400], "class_name": "motorcycle", "confidence": 0.7}]
         tracker._process_vehicle_detections(det2, 1708000015.0)
 
         # Original vehicle should be pruned, only new one remains
         assert len(tracker.tracked_vehicles) == 1
         remaining = list(tracker.tracked_vehicles.values())[0]
-        assert remaining.class_name == "bus"
+        assert remaining.class_name == "motorcycle"
 
 
 # ===========================================================================
@@ -881,12 +889,15 @@ class TestVehicleGhostBuffer:
         assert result == "v0001"
 
     def test_different_class_does_not_match(self, fake_redis):
-        """Class mismatch: a car ghost must NOT re-associate with a truck.
-        Comment in code: 'cars don't morph into trucks mid-occlusion'."""
+        """Strict class mismatch: a car ghost must NOT re-associate with
+        a motorcycle. The car↔truck flicker compatibility introduced in
+        a later fix does allow car↔truck/bus to ghost-match, but two-
+        wheelers (motorcycle/bicycle) stay strict because YOLO almost
+        never confuses those with 4-wheel vehicles."""
         tracker = self._new_tracker(fake_redis)
         self._seed_ghost(tracker, bbox=[100, 200, 300, 400], class_name="car")
-        # Truck detection at the same position
-        result = tracker._try_ghost_match([100, 200, 300, 400], "truck", 5.0)
+        # Motorcycle detection at the same position
+        result = tracker._try_ghost_match([100, 200, 300, 400], "motorcycle", 5.0)
         assert result is None
 
     def test_too_far_does_not_match(self, fake_redis):
@@ -1105,12 +1116,12 @@ def test_two_genuinely_different_cars_far_apart_dont_merge(monkeypatch):
 
 
 def test_center_fallback_respects_class_match(monkeypatch):
-    """A car and a truck with low IoU but close centers must NOT merge via
-    the new center-distance fallback. Class match is enforced ONLY in the
-    fallback (mirroring _try_ghost_match's behavior); the existing IoU
-    step is class-blind, which is intentional — handles the
-    car↔truck-class-flicker case where YOLO gives a different class on
-    consecutive frames for the same physical vehicle."""
+    """A car and a motorcycle with low IoU but close centers must NOT
+    merge via the center-distance fallback. The car↔truck/bus flicker
+    relaxation in _class_compatible doesn't extend to two-wheelers —
+    they're visually distinct enough that YOLO almost never confuses
+    them. The existing IoU step is class-blind for primary matching,
+    which handles the within-family flicker case."""
     monkeypatch.setenv("CAMERA_ID", "cam1")
     import importlib
     from services.tracker.core import manager as mgr
@@ -1130,7 +1141,7 @@ def test_center_fallback_respects_class_match(monkeypatch):
     )
     m._process_vehicle_detections(
         [{"bbox": [480, 300, 540, 340],
-          "class_name": "truck", "confidence": 0.8}],
+          "class_name": "motorcycle", "confidence": 0.8}],
         timestamp=0.1,
     )
     assert len(m.tracked_vehicles) == 2
@@ -1345,6 +1356,122 @@ def test_non_idle_track_still_uses_regular_ghost_ttl(monkeypatch):
     gone = [e for e in events if e.get("event_type") == "vehicle_gone"]
     assert len(gone) == 1
     assert gone[0]["was_idle"] == "False"
+
+
+def test_yolo_class_flicker_car_to_truck_keeps_single_track(monkeypatch):
+    """Contract: YOLOv8 frequently classifies a single physical vehicle
+    as 'car' in one frame and 'truck' in the next (esp. pickups at angle
+    change). The tracker's ghost-match + live-center-match fallbacks
+    used to require strict class equality, which produced two separate
+    tracks for one physical drive-by. Observed live on cam1: red pickup
+    at 11:35 → vehicle_0009 (car) + vehicle_0010 (truck) 2 s apart.
+
+    After this fix, _class_compatible treats car/truck/bus as
+    interchangeable; ghost-match + center-match re-associate across the
+    flicker so the same physical pickup keeps one track id."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import VEHICLE_LOST_TIMEOUT
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+
+    # Frame 1: pickup detected at left of frame, YOLO says "car"
+    m._process_vehicle_detections(
+        [{"bbox": [400, 300, 550, 380], "class_name": "car",
+          "confidence": 0.78}],
+        timestamp=0.0,
+    )
+    assert len(m.tracked_vehicles) == 1
+    original_vid = next(iter(m.tracked_vehicles))
+
+    # Pickup keeps moving but detector misses it for >LOST_TIMEOUT,
+    # so the track goes to ghost.
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    assert original_vid in m._ghost_vehicles
+
+    # Frame N: same pickup re-detected slightly to the right, but YOLO
+    # NOW classifies it as "truck" (the bug-trigger). Strict-class
+    # ghost-match would refuse to re-associate. With the relaxed
+    # compatibility, ghost-match accepts it and the SAME track id is
+    # reused.
+    m._process_vehicle_detections(
+        [{"bbox": [490, 295, 640, 380], "class_name": "truck",
+          "confidence": 0.81}],
+        timestamp=stale_t + 1.0,
+    )
+    assert original_vid in m.tracked_vehicles, \
+        "car↔truck flicker must keep the same track id"
+    assert len(m.tracked_vehicles) == 1
+
+
+def test_yolo_class_flicker_car_to_bus_also_keeps_single_track(monkeypatch):
+    """Same contract as the car↔truck case but for car↔bus. Long vans /
+    box trucks frequently flip between these classes."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import VEHICLE_LOST_TIMEOUT
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [400, 300, 550, 380], "class_name": "car",
+          "confidence": 0.7}],
+        timestamp=0.0,
+    )
+    original_vid = next(iter(m.tracked_vehicles))
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    m._process_vehicle_detections(
+        [{"bbox": [490, 295, 640, 380], "class_name": "bus",
+          "confidence": 0.7}],
+        timestamp=stale_t + 1.0,
+    )
+    assert original_vid in m.tracked_vehicles, \
+        "car↔bus flicker must keep the same track id"
+    assert len(m.tracked_vehicles) == 1
+
+
+def test_motorcycle_does_not_inherit_car_track(monkeypatch):
+    """Contract regression-guard: the class-compatibility relaxation
+    must NOT extend to motorcycle/bicycle. YOLO almost never confuses
+    those for 4-wheel vehicles, and a passing motorcycle inheriting a
+    car's track id would be a real data error. Strict class equality
+    still applies for these classes."""
+    monkeypatch.setenv("CAMERA_ID", "cam1")
+    import importlib
+    from services.tracker.core import manager as mgr
+    importlib.reload(mgr)
+    from services.tracker.core.config import VEHICLE_LOST_TIMEOUT
+
+    fake = FakeRedis()
+    m = mgr.Manager(fake)
+    m._process_vehicle_detections(
+        [{"bbox": [400, 300, 550, 380], "class_name": "car",
+          "confidence": 0.85}],
+        timestamp=0.0,
+    )
+    original_vid = next(iter(m.tracked_vehicles))
+    stale_t = VEHICLE_LOST_TIMEOUT + 1.0
+    m._process_vehicle_detections([], timestamp=stale_t)
+    # Motorcycle at almost the same spot — must mint a NEW track, not
+    # ghost-match into the car's id.
+    m._process_vehicle_detections(
+        [{"bbox": [490, 295, 640, 380], "class_name": "motorcycle",
+          "confidence": 0.85}],
+        timestamp=stale_t + 1.0,
+    )
+    moto_track = next(
+        (vid for vid in m.tracked_vehicles if vid != original_vid),
+        None,
+    )
+    assert moto_track is not None, \
+        "motorcycle must NOT inherit the car's track id"
 
 
 def test_brief_track_with_no_follow_up_traffic_still_expires(monkeypatch):
