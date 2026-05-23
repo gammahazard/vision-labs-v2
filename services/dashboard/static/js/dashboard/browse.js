@@ -152,6 +152,9 @@ function _renderLabelForm(t, classes) {
     const modelOpt = (m) => `<option value="${_escapeAttr(m)}"></option>`;
 
     return `<div class="track-label-form" data-track-key="${tDate}/${tCam}/${tDir}">
+        <div class="track-label-hint">
+            Fill what you can — blank fields stay unset. Use Skip only when the crop is unusable (blur, occluded, not a vehicle).
+        </div>
         <div class="track-label-grid">
             <label>Color:</label>
             <select class="track-label-color" ${ir ? "disabled title='IR-mode track — color not visible to camera'" : ""}>

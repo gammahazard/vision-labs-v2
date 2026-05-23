@@ -429,6 +429,13 @@
     flex-direction: column;
     gap: 0.6rem;
 }
+.track-label-hint {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    font-style: italic;
+    line-height: 1.35;
+    padding: 0.1rem 0.1rem 0;
+}
 .track-label-grid {
     display: grid;
     grid-template-columns: 60px 1fr;
