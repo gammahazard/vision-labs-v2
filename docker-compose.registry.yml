@@ -431,3 +431,70 @@ services:
   recorder-cam20:
     image: ghcr.io/gammahazard/vision-labs/recorder:${IMAGE_TAG:-latest}
     build: !reset null
+
+  # ---------------------------------------------------------------------
+  # vehicle-attributes per-cam slots (added 2026-05-22 with Phase 3).
+  # Listed as a separate section rather than threaded into each cam group
+  # above because the service was added after the original 6-services-per-
+  # cam pattern was laid down. Same profile-gated semantics as the others.
+  # ---------------------------------------------------------------------
+  vehicle-attributes-cam1:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam2:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam3:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam4:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam5:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam6:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam7:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam8:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam9:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam10:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam11:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam12:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam13:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam14:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam15:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam16:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam17:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam18:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam19:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
+  vehicle-attributes-cam20:
+    image: ghcr.io/gammahazard/vision-labs/vehicle-attributes:${IMAGE_TAG:-latest}
+    build: !reset null
