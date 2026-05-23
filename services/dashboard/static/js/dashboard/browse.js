@@ -55,6 +55,259 @@ function _formatAttrs(attrs) {
     return `${combined} <span class="track-attrs-beta">(beta)</span>`;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 labeling — UI for the per-track label form.
+//
+// The label-classes JSON (color/body/make/model dropdown contents) is
+// session-cached after the first GET — small payload, never changes
+// mid-session in normal use.
+// ---------------------------------------------------------------------------
+
+let _labelClassesCache = null;
+
+async function _fetchLabelClasses() {
+    if (_labelClassesCache) return _labelClassesCache;
+    try {
+        const r = await fetch("/api/browse/label-classes");
+        if (r.ok) _labelClassesCache = await r.json();
+    } catch (_) { /* fall through with cache=null */ }
+    if (!_labelClassesCache) {
+        _labelClassesCache = {
+            colors: [], body_types: [], makes: [], models: [], make_to_models: {},
+        };
+    }
+    return _labelClassesCache;
+}
+
+// Escape user-supplied / model-supplied strings before interpolating into
+// HTML attribute values. The wrap-with-_safeHtml at innerHTML assignment
+// time is a second line of defense; this prevents broken attribute
+// boundaries (e.g. a label containing a literal `"` mid-attribute).
+function _escapeAttr(s) {
+    return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+// HTML snippet shown for the labeling section of a single track row in
+// the cropsModal. Three states:
+//   1. No user_labels   → "📝 Label this track" button
+//   2. user_labels.skipped → "⊘ Skipped (reason)" + "Re-label" button
+//   3. Other user_labels  → "✓ Labeled: <values>" + "Edit" button
+// The expanded form (state-4) replaces this snippet when the button is
+// clicked — see _renderLabelForm.
+function _renderLabelSection(t) {
+    const ul = t.user_labels || {};
+    const has = ul.color || ul.body_type || ul.make || ul.model || ul.skipped;
+    const tDate = _escapeAttr(t.date || "");
+    const tCam = _escapeAttr(t.camera || "");
+    const tDir = _escapeAttr(t.dir_id || "");
+    if (!has) {
+        return `<div class="track-label-row" data-track-key="${tDate}/${tCam}/${tDir}">
+            <button type="button" class="track-label-btn"
+                data-action="label-open"
+                data-date="${tDate}" data-camera="${tCam}" data-track-dir="${tDir}">
+                📝 Label this track
+            </button>
+        </div>`;
+    }
+    let summary;
+    if (ul.skipped) {
+        const reason = _escapeAttr(ul.skip_reason || "no reason given");
+        summary = `<span class="track-label-summary track-label-skipped">⊘ Skipped — ${reason}</span>`;
+    } else {
+        const parts = [ul.color, ul.body_type, ul.make, ul.model]
+            .filter(Boolean).map(_escapeAttr).join(" · ");
+        summary = `<span class="track-label-summary">✓ Labeled: ${parts}</span>`;
+    }
+    return `<div class="track-label-row" data-track-key="${tDate}/${tCam}/${tDir}">
+        ${summary}
+        <button type="button" class="track-label-btn track-label-edit"
+            data-action="label-open"
+            data-date="${tDate}" data-camera="${tCam}" data-track-dir="${tDir}">
+            Edit
+        </button>
+    </div>`;
+}
+
+// HTML for the inline form expanded when the user clicks the Label button.
+// Wired by the modal's local click delegate (see _openCropsModal).
+// IR tracks: color dropdown is rendered disabled with a hint, because the
+// vehicle was captured monochrome and any color the user picks here would
+// be a guess. Server-side allows it anyway (the user might recognize the
+// vehicle from past daytime appearances).
+function _renderLabelForm(t, classes) {
+    const ul = t.user_labels || {};
+    const ir = !!(t.attributes && t.attributes.ir_track);
+    const tDate = _escapeAttr(t.date || "");
+    const tCam = _escapeAttr(t.camera || "");
+    const tDir = _escapeAttr(t.dir_id || "");
+
+    const colorOpt = (c) => `<option value="${_escapeAttr(c)}" ${ul.color === c ? "selected" : ""}>${_escapeAttr(c)}</option>`;
+    const bodyOpt = (b) => `<option value="${_escapeAttr(b)}" ${ul.body_type === b ? "selected" : ""}>${_escapeAttr(b)}</option>`;
+    const makeOpt = (m) => `<option value="${_escapeAttr(m)}"></option>`;
+    const modelOpt = (m) => `<option value="${_escapeAttr(m)}"></option>`;
+
+    return `<div class="track-label-form" data-track-key="${tDate}/${tCam}/${tDir}">
+        <div class="track-label-grid">
+            <label>Color:</label>
+            <select class="track-label-color" ${ir ? "disabled title='IR-mode track — color not visible to camera'" : ""}>
+                <option value="">— pick —</option>
+                ${(classes.colors || []).map(colorOpt).join("")}
+            </select>
+            <label>Body:</label>
+            <select class="track-label-body">
+                <option value="">— pick —</option>
+                ${(classes.body_types || []).map(bodyOpt).join("")}
+            </select>
+            <label>Make:</label>
+            <input type="text" class="track-label-make" list="track-label-makes-${tDir}"
+                value="${_escapeAttr(ul.make || "")}" placeholder="e.g. Toyota">
+            <datalist id="track-label-makes-${tDir}">
+                ${(classes.makes || []).map(makeOpt).join("")}
+            </datalist>
+            <label>Model:</label>
+            <input type="text" class="track-label-model" list="track-label-models-${tDir}"
+                value="${_escapeAttr(ul.model || "")}" placeholder="e.g. Sienna 2018">
+            <datalist id="track-label-models-${tDir}">
+                ${(classes.models || []).map(modelOpt).join("")}
+            </datalist>
+        </div>
+        <div class="track-label-actions">
+            <button type="button" class="track-label-action-save"
+                data-action="label-save"
+                data-date="${tDate}" data-camera="${tCam}" data-track-dir="${tDir}">Save</button>
+            <button type="button" class="track-label-action-skip"
+                data-action="label-skip"
+                data-date="${tDate}" data-camera="${tCam}" data-track-dir="${tDir}">Skip — can't tell</button>
+            <button type="button" class="track-label-action-cancel"
+                data-action="label-cancel"
+                data-date="${tDate}" data-camera="${tCam}" data-track-dir="${tDir}">Cancel</button>
+        </div>
+        <div class="track-label-error" hidden></div>
+    </div>`;
+}
+
+// POST to the label endpoint; updates the section in place on success.
+async function _saveTrackLabel(date, camera, trackDir, payload, section) {
+    const url = `/api/browse/label/${encodeURIComponent(date)}/${encodeURIComponent(camera)}/${encodeURIComponent(trackDir)}`;
+    let r;
+    try {
+        r = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+    } catch (e) {
+        _showLabelError(section, `Network error: ${e.message || e}`);
+        return null;
+    }
+    if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try {
+            const body = await r.json();
+            if (body.error) msg = body.error;
+        } catch (_) { /* ignore */ }
+        _showLabelError(section, msg);
+        return null;
+    }
+    const data = await r.json();
+    return data.user_labels || null;
+}
+
+function _showLabelError(section, msg) {
+    const errEl = section.querySelector(".track-label-error");
+    if (errEl) {
+        errEl.textContent = msg;
+        errEl.hidden = false;
+    }
+}
+
+// Replace the section's label-row / label-form with the rendered summary
+// reflecting the saved user_labels. Track object's user_labels is mutated
+// in-place so subsequent Edit clicks see the latest state.
+function _replaceLabelArea(section, track, userLabels) {
+    track.user_labels = userLabels || {};
+    const row = section.querySelector(".track-label-row, .track-label-form");
+    if (!row) return;
+    const replacement = document.createElement("div");
+    replacement.innerHTML = _safeHtml(_renderLabelSection(track));
+    const newRow = replacement.firstElementChild;
+    if (newRow) row.replaceWith(newRow);
+}
+
+// Click-dispatch for label-{open,save,skip,cancel} actions. Called by
+// _openCropsModal's stub-local listener. `target` is the [data-action]
+// element clicked; `tracks` is the closure-scoped array of tracks for
+// this modal session (mutated in-place when a label is saved).
+async function _handleLabelAction(action, target, tracks) {
+    const date = target.getAttribute("data-date") || "";
+    const camera = target.getAttribute("data-camera") || "";
+    const trackDir = target.getAttribute("data-track-dir") || "";
+    const trackKey = `${date}/${camera}/${trackDir}`;
+    const section = target.closest(".crops-modal-track");
+    if (!section) return;
+    // tracks is closure-captured by reference; find the matching entry so
+    // we can mutate user_labels in place + re-render from it.
+    const track = (tracks || []).find(
+        (t) => `${t.date}/${t.camera}/${t.dir_id}` === trackKey,
+    );
+    if (!track) return;
+
+    if (action === "label-open") {
+        const classes = await _fetchLabelClasses();
+        const row = section.querySelector(".track-label-row, .track-label-form");
+        if (!row) return;
+        const replacement = document.createElement("div");
+        replacement.innerHTML = _safeHtml(_renderLabelForm(track, classes));
+        const newForm = replacement.firstElementChild;
+        if (newForm) row.replaceWith(newForm);
+        return;
+    }
+    if (action === "label-cancel") {
+        // Re-render as summary using the latest user_labels (no save).
+        _replaceLabelArea(section, track, track.user_labels || {});
+        return;
+    }
+    if (action === "label-skip") {
+        const form = section.querySelector(".track-label-form");
+        const reasonEl = form ? form.querySelector(".track-label-skip-reason") : null;
+        const ul = await _saveTrackLabel(date, camera, trackDir,
+            { skipped: true, skip_reason: reasonEl ? reasonEl.value : "" },
+            section,
+        );
+        if (ul) _replaceLabelArea(section, track, ul);
+        return;
+    }
+    if (action === "label-save") {
+        const form = section.querySelector(".track-label-form");
+        if (!form) return;
+        const colorEl = form.querySelector(".track-label-color");
+        const bodyEl = form.querySelector(".track-label-body");
+        const makeEl = form.querySelector(".track-label-make");
+        const modelEl = form.querySelector(".track-label-model");
+        const payload = {
+            color: (colorEl && !colorEl.disabled) ? colorEl.value : "",
+            body_type: bodyEl ? bodyEl.value : "",
+            make: makeEl ? makeEl.value.trim() : "",
+            model: modelEl ? modelEl.value.trim() : "",
+            skipped: false,
+        };
+        // Reject empty client-side too — the server returns 400 but a
+        // fast feedback loop is nicer than a roundtrip for an obvious miss.
+        if (!payload.color && !payload.body_type && !payload.make && !payload.model) {
+            _showLabelError(section, "Set at least one field, or click Skip.");
+            return;
+        }
+        const ul = await _saveTrackLabel(date, camera, trackDir, payload, section);
+        if (ul) _replaceLabelArea(section, track, ul);
+        return;
+    }
+}
+
 // Delegated click handler on #browseContent. Bound once. Looks at the
 // closest [data-action] ancestor of the click target and dispatches.
 function _bindBrowseClickListener() {
@@ -279,30 +532,37 @@ async function _openCropsModal(date) {
     stub.innerHTML = _safeHtml(`<div class="crops-modal-panel">
         <div class="crops-modal-loading">Loading…</div>
     </div>`);
+    let tracks = [];
     // Click outside the panel closes the modal — backdrop catches the click
-    stub.addEventListener("click", (ev) => {
+    stub.addEventListener("click", async (ev) => {
         if (ev.target === stub) {
             _closeCropsModal();
             return;
         }
         // The X button + thumbnails use data-action attrs that the
         // delegated #browseContent handler would have caught — since the
-        // modal is now in body, dispatch them locally.
+        // modal is now in body, dispatch them locally. Phase 4 added
+        // label-* actions for the per-track labeling form.
         const target = ev.target.closest("[data-action]");
         if (!target) return;
         const action = target.getAttribute("data-action");
         if (action === "close-crops-modal") {
             _closeCropsModal();
-        } else if (action === "open") {
+            return;
+        }
+        if (action === "open") {
             _openEventPhoto(
                 target.getAttribute("data-url"),
                 target.getAttribute("data-label") || "",
             );
+            return;
+        }
+        if (action === "label-open" || action === "label-save"
+            || action === "label-skip" || action === "label-cancel") {
+            await _handleLabelAction(action, target, tracks);
         }
     });
     document.body.appendChild(stub);
-
-    let tracks = [];
     try {
         const res = await fetch(`/api/browse/tracks/${encodeURIComponent(date)}`);
         if (res.ok) tracks = await res.json();
@@ -339,7 +599,8 @@ async function _openCropsModal(date) {
         }).join("");
 
         const attrLine = _formatAttrs(t.attributes);
-        return `<section class="crops-modal-track">
+        const labelSection = _renderLabelSection(t);
+        return `<section class="crops-modal-track" data-track-key="${_escapeAttr((t.date || '') + '/' + (t.camera || '') + '/' + (t.dir_id || ''))}">
             <header class="crops-modal-track-header">
                 <span class="crops-modal-track-id">${t.track_id}</span>
                 <span class="crops-modal-track-meta">
@@ -349,6 +610,7 @@ async function _openCropsModal(date) {
                 </span>
             </header>
             ${attrLine ? `<div class="track-attrs">${attrLine}</div>` : ""}
+            ${labelSection}
             <div class="crops-modal-thumb-grid">${thumbs}</div>
         </section>`;
     }).join("");
