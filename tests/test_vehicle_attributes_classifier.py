@@ -148,13 +148,15 @@ def _mock_color_model(num_crops: int):
 
 
 def _mock_multihead(num_crops: int):
-    """Mimics the multi-head model's forward pass — returns 3 logit tensors."""
+    """Mimics the multi-head model's forward pass — returns 3 logit tensors
+    plus the 768-dim penultimate features (used for Phase C1 embeddings)."""
     import torch
     def fake_forward(_x):
         out = {
             'body':  torch.zeros(num_crops, 8),
             'make':  torch.zeros(num_crops, 50),
             'model': torch.zeros(num_crops, 196),
+            'features': torch.randn(num_crops, 768),
         }
         # Logit magnitude chosen so the 196-class softmax for model crosses
         # the 0.65 threshold from the spec. Smaller heads cross sooner.

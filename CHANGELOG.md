@@ -8,6 +8,9 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ## [Unreleased]
 
+### Changed
+- **Lowered classifier confidence thresholds for visibility** — color 0.55 → 0.35, body 0.55 → 0.40, make 0.55 → 0.40, model 0.65 → 0.45. Exposes more (occasionally wrong) labels rather than hiding everything as `null`. *Dashboard refresh; va restart only.*
+
 ### Added
 - **Per-track 768-dim embedding saved as `embedding.npy`** — foundation for same-vehicle grouping across encounters (Phase C of crop-quality plan). Mean-pooled L2-normalized ConvNeXt-Tiny backbone features. *Requires vehicle-attributes rebuild.*
 - **Edit pencil ✏ on camera rows** — modal to rename, edit lat/lon, toggle detectors without delete + re-add.
