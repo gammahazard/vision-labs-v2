@@ -9,6 +9,14 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ## [Unreleased]
 
 ### Added
+### Changed
+### Fixed
+
+---
+
+## [0.3.0] — 2026-05-23
+
+### Added
 - **Identity-bearing tracks survive bbox loss** — IoU 0.10 + 30 s lost-timeout for identified tracks; demote on > 6 s gap re-match. *Requires tracker rebuild.*
 - **New `walking` action** — derived from standing pose + non-stationary bbox direction (locomotion that single-frame pose can't catch). *Requires tracker rebuild.*
 - **Per-track 768-dim embedding saved as `embedding.npy`** — foundation for same-vehicle grouping across encounters. *Requires vehicle-attributes rebuild.*
@@ -183,7 +191,8 @@ First tagged release. Initial publish of 9 service images to GHCR.
 
 ---
 
-[Unreleased]: https://github.com/gammahazard/vision-labs-v2/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gammahazard/vision-labs-v2/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gammahazard/vision-labs-v2/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gammahazard/vision-labs-v2/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/gammahazard/vision-labs-v2/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gammahazard/vision-labs-v2/releases/tag/v0.1.0
