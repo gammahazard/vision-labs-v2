@@ -23,7 +23,7 @@ Emit a single JSON array. Each entry:
 {
   "node_name": "tracker",
   "type": "service",
-  "primary_files": ["services/tracker/core/main.py", "services/tracker/core/manager.py", "services/tracker/core/state.py", "services/tracker/core/iou.py", "services/tracker/core/config.py", "services/tracker/tracker.py"],
+  "primary_files": ["services/tracker/core/main.py", "services/tracker/core/manager.py", "services/tracker/core/state.py", "services/tracker/core/iou.py", "services/tracker/core/config.py", "services/tracker/core/_vehicle_matcher.py", "services/tracker/core/_vehicle_events.py", "services/tracker/core/_person_events.py", "services/tracker/core/_zones.py", "services/tracker/core/_identity.py", "services/tracker/core/_classes.py", "services/tracker/tracker.py"],
   "expected_relationships": ["imports", "streams"]
 }
 ```

@@ -28,7 +28,7 @@ A claim is falsifiable if a verifier reading actual code could conclude MATCH or
 | "AVAILABLE_SLOTS lives at services/dashboard/cameras.py:82" | Verifier opens that file, reads line 82, checks. |
 | "Test count is 302" | Verifier runs `grep -rc 'def test_' tests/`. |
 | "Pose detector uses YOLOv8s-pose by default" | Verifier opens `services/pose-detector/detector.py`, checks default. |
-| "docker-compose.yml is ~3200 lines" | Verifier runs `wc -l`. |
+| "docker-compose.yml is ~4400 lines" | Verifier runs `wc -l`. |
 
 Examples of NOT-claims you must skip:
 

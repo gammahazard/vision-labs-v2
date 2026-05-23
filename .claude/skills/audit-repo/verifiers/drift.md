@@ -127,16 +127,16 @@ For UNVERIFIED:
 - **Suggested action:** none (claim matches code)
 ```
 
-**DRIFT example** (hypothetical — illustrates the format when a count is stale; the actual current CONTEXT.md test count claim is "302 tests"):
+**DRIFT example** (hypothetical — illustrates the format when a count is stale):
 ```markdown
-### warning | DRIFT — test count off by 23
+### warning | DRIFT — test count off
 
 - **Claim source:** `CONTEXT.md:761`
-- **Claim:** - 279 tests, 0 quarantined as of 2026-05-20. Run via `source .venv-test/bin/activate && pytest -q`.
+- **Claim:** - ~440 tests, 0 quarantined as of 2026-05-22. Run via `source .venv-test/bin/activate && pytest -q`.
 - **Type:** structural
-- **Checked against:** `tests/` (grep -rc 'def test_' tests/ = 302)
-- **Evidence:** Actual test count is 302; claim says 279.
-- **Suggested action:** Update CONTEXT.md:761 to match `tests/` (302).
+- **Checked against:** `tests/` (pytest --collect-only -q | tail -3 = 489 collected)
+- **Evidence:** Actual test count is 489; claim says ~440.
+- **Suggested action:** Update CONTEXT.md:761 to match `tests/` (489).
 ```
 
 **UNVERIFIED example:**

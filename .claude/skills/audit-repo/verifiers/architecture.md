@@ -111,8 +111,8 @@ Omit a section entirely if it would be empty (e.g., a service with no HTTP route
 ```markdown
 ### tracker (service)
 
-- **Files:** services/tracker/tracker.py, services/tracker/core/main.py, services/tracker/core/manager.py, services/tracker/core/state.py, services/tracker/core/iou.py, services/tracker/core/config.py
-- **Lines:** 1247 total
+- **Files:** services/tracker/tracker.py, services/tracker/core/{main,manager,state,iou,config,_vehicle_matcher,_vehicle_events,_person_events,_zones,_identity,_classes}.py
+- **Lines:** ~2000 total (after the 2026-05-22 mixin split)
 - **Imports from:**
   - `contracts.streams` (`services/tracker/core/main.py:12`)
   - `contracts.actions` (`services/tracker/core/manager.py:8`)
@@ -126,5 +126,5 @@ Omit a section entirely if it would be empty (e.g., a service with no HTTP route
   - `detections:vehicle:{cam}` (vehicles, frame_bytes) (`services/tracker/core/main.py:78`)
 - **HTTP routes:** none.
 - **Notes:**
-  - [info: size_too_large — 1247 lines total across core/ package, near CLAUDE.md §6 1000-line threshold per file (no single file exceeds it).]
+  - [info: size_distribution — total ~2000 lines split across 12 files in core/ after the 2026-05-22 mixin refactor; manager.py is the largest at ~660 lines, well under CLAUDE.md §6 1000-line threshold per file.]
 ```
