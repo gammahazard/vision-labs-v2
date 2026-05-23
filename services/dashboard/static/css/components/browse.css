@@ -1,0 +1,255 @@
+/* ---------------------------------------------------------------------------
+ * Browse — snapshot browser + enrolled faces gallery
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Browse Panel — Snapshot browser + enrolled faces gallery
+ * --------------------------------------------------------------------------- */
+.browse-section-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.browse-loading,
+.browse-empty {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 16px 8px;
+}
+
+/* Day folder cards */
+.browse-day-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.browse-day-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.browse-day-card:hover {
+    border-color: var(--accent-dim);
+    background: var(--bg-panel-hover);
+}
+
+.browse-day-date {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.browse-day-count {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* Navigation bar (inside day / faces view) */
+.browse-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.browse-back-btn {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.browse-back-btn:hover {
+    border-color: var(--accent-dim);
+    color: var(--text-primary);
+}
+
+.browse-nav-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Thumbnail grid (vehicle snapshots) */
+.browse-thumb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 6px;
+}
+
+.browse-thumb-card {
+    position: relative;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    aspect-ratio: 4/3;
+}
+
+.browse-thumb-card:hover {
+    border-color: var(--accent-dim);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.browse-thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.browse-thumb-label {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+    padding: 16px 6px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.browse-thumb-time {
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.browse-thumb-class {
+    font-size: 9px;
+    color: rgba(255, 255, 255, 0.7);
+    text-transform: capitalize;
+}
+
+/* Enrolled faces gallery */
+.browse-face-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 8px;
+}
+
+.browse-face-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.browse-face-card:hover {
+    border-color: var(--accent-dim);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.browse-face-img {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--border);
+}
+
+.browse-face-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.browse-face-sightings {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* Faces link button */
+.browse-faces-link {
+    margin-bottom: 8px;
+}
+
+.browse-faces-btn {
+    width: 100%;
+}
+
+/* Angle thumbnails row inside person card */
+.browse-face-angles {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+.browse-face-angle-thumb {
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: transform 0.15s;
+}
+
+.browse-face-angle-thumb:hover {
+    transform: scale(1.2);
+    border-color: var(--primary);
+}
+
+/* HD/SD Stream Toggle */
+.stream-toggle-btn {
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--card-bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.stream-toggle-btn:hover {
+    border-color: var(--primary);
+    color: var(--text-primary);
+}
+
+.stream-toggle-btn.hd-active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+
+

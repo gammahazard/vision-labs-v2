@@ -1,0 +1,201 @@
+/* ---------------------------------------------------------------------------
+ * Responsive — @media breakpoints (must import last so it overrides earlier component rules)
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Mobile Responsive — Stack layout vertically on small screens
+ * --------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    body {
+        overflow: auto;
+    }
+
+    /* Navbar: stack vertically — brand on row 1, links on row 2 (scrollable
+       horizontally so nothing ever gets cut off), stats on row 3. */
+    .navbar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 8px 12px;
+        gap: 4px;
+    }
+
+    .navbar-left {
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        width: 100%;
+        min-width: 0;
+    }
+
+    /* Hide status badge on mobile to save space */
+    .navbar-left>.status-badge {
+        display: none;
+    }
+
+    .navbar-brand {
+        flex-shrink: 0;
+    }
+
+    /* Event-filter pills wrap on a fresh row at mobile width and get a
+       slightly tighter touch target. The pill base styles live inline in
+       the bar's innerHTML for portability; this just tunes mobile. */
+    .event-filter-bar { gap: 4px !important; }
+    .event-filter-pill { font-size: 11px !important; padding: 5px 9px !important; }
+
+    /* Nav links get their own full-width row, scroll horizontally if
+       the link count outgrows the viewport. Prevents any link (like
+       Monitoring) from being clipped at narrow widths. */
+    .navbar-links {
+        flex: 1 1 100%;
+        gap: 4px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x proximity;
+        scrollbar-width: none;          /* Firefox */
+        padding-bottom: 2px;
+    }
+    .navbar-links::-webkit-scrollbar {
+        display: none;                  /* Chrome/Safari */
+    }
+
+    .nav-link {
+        padding: 0.4rem 0.7rem;
+        font-size: 0.82rem;
+        /* Larger touch target */
+        min-height: 36px;
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;                 /* never let a link compress */
+        scroll-snap-align: start;
+    }
+
+    /* Stats bar: full width second row */
+    .navbar-stats {
+        width: 100%;
+        justify-content: space-around;
+        padding: 4px 0 2px;
+        border-top: 1px solid var(--border);
+        gap: 0;
+    }
+
+    .stat-label {
+        font-size: 8px;
+    }
+
+    .stat-value {
+        font-size: 13px;
+    }
+
+    main {
+        grid-template-columns: 1fr;
+        height: auto;
+        overflow: visible;
+    }
+
+    .live-view-panel {
+        min-height: 300px;
+    }
+
+    .video-container {
+        min-height: 250px;
+    }
+
+    .sidebar {
+        overflow: visible;
+    }
+
+    .panel-body {
+        max-height: 400px;
+    }
+
+    .zone-toolbar {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .zone-name-input {
+        width: 100px;
+    }
+
+    /* Touch-friendly: prevent accidental zoom on double-tap */
+    .panel-header {
+        min-height: 44px;
+    }
+
+    /* Smoother touch scrolling */
+    .panel-body,
+    .sidebar,
+    .event-list {
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Sidebar must be allowed to shrink — without an explicit min-width: 0,
+       a flex/grid child defaults to min-content which is the widest
+       UNBREAKABLE word in its descendants. That's enough to push the
+       sidebar (and therefore main) wider than the viewport on phones. */
+    .sidebar {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    /* Panels must not refuse to shrink. `flex-shrink: 0` on .panel was
+       fine on desktop where they live inside an explicit grid track,
+       but on mobile (single-column grid) it means a wide child can
+       balloon the panel past the viewport. */
+    .panel {
+        flex-shrink: 1;
+        max-width: 100%;
+    }
+
+    /* Live-view header buttons get cramped when the camera name is long
+       ("📹 Live View — basement"). Allow the controls row to wrap below
+       the title rather than force everything onto one line. */
+    .panel-header {
+        flex-wrap: wrap;
+    }
+    .live-view-controls {
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    /* iOS auto-zooms on focus when input font-size < 16px. Force ≥16px on
+       all text-entry controls so the viewport stays put when the keyboard
+       opens. (Smaller visual sizing can be done via padding/width instead.) */
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    input[type="search"],
+    input[type="email"],
+    select,
+    textarea {
+        font-size: 16px;
+    }
+
+    /* Settings + setup wizard 3-column retention grid stacks on narrow phones.
+       Three side-by-side number inputs on a 360px-wide screen makes the
+       labels overlap and is hard to tap. Stack them. */
+    .settings-panel .panel-body > div > div[style*="grid-template-columns:1fr 1fr 1fr"],
+    .wizard-step div[style*="grid-template-columns:1fr 1fr 1fr"] {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* Very narrow phones (<= 400 px wide). At this size the live-view header
+   becomes the tightest squeeze — kill the "LIVE" badge text (the red dot
+   already conveys live state via animation in app.js if we want it). */
+@media (max-width: 400px) {
+    .live-badge {
+        font-size: 9px;
+    }
+    .panel-header {
+        padding: 10px 12px;
+    }
+    main {
+        padding: 8px;
+    }
+}
+
+

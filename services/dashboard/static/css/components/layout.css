@@ -1,0 +1,107 @@
+/* ---------------------------------------------------------------------------
+ * Layout — main grid, shared panel chrome, sidebar container
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Main Layout — Live view + sidebar
+ * --------------------------------------------------------------------------- */
+main {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: var(--gap);
+    padding: var(--gap);
+    height: calc(100vh - 60px);
+    overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+ * Panel (shared)
+ * --------------------------------------------------------------------------- */
+.panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s ease;
+    gap: 8px;
+}
+
+.panel-header:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.panel-header h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+/* Collapsible toggle chevron */
+.panel-toggle {
+    font-size: 12px;
+    color: var(--text-muted);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    margin-left: 8px;
+    flex-shrink: 0;
+}
+
+.panel.collapsed .panel-toggle {
+    transform: rotate(-90deg);
+}
+
+/* Smooth collapsible body */
+.panel-body {
+    padding: 16px;
+    overflow-y: auto;
+    flex: 1;
+    max-height: 300px;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+        padding 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.25s ease;
+    opacity: 1;
+}
+
+.panel.collapsed .panel-body {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    overflow: hidden;
+}
+
+.panel.collapsed .panel-header {
+    border-bottom-color: transparent;
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Sidebar
+ * --------------------------------------------------------------------------- */
+.sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    min-height: 0;
+    overflow-y: auto;
+}
+
+
