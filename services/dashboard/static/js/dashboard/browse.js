@@ -359,6 +359,95 @@ async function _handleRemoveCrop(target, tracks) {
     }
 }
 
+// Click-dispatch for the per-track "Delete track" button. Sends a
+// DELETE to /api/browse/tracks/{date}/{camera}/{track_dir} which nukes
+// the entire vehicle_*/ folder (crops + embedding + metadata + labels).
+// Use only when a track is unsalvageable — the per-crop ✕ preserves
+// labels and is preferred for "one bad crop" cases.
+async function _handleDeleteTrack(target, tracks) {
+    const date = target.getAttribute("data-date") || "";
+    const camera = target.getAttribute("data-camera") || "";
+    const trackDir = target.getAttribute("data-track-dir") || "";
+    const trackId = target.getAttribute("data-track-id") || trackDir;
+    if (!date || !camera || !trackDir) return;
+
+    // Hard-confirm — this destroys the user's labels too, and there's
+    // no undo. Make sure they read the message.
+    if (!confirm(
+        `Delete the ENTIRE track ${trackId}?\n\n`
+        + `This removes all crops, the embedding, the metadata, AND any `
+        + `labels you've added for this track. It can't be undone.`,
+    )) {
+        return;
+    }
+
+    const url = `/api/browse/tracks/${encodeURIComponent(date)}`
+        + `/${encodeURIComponent(camera)}/${encodeURIComponent(trackDir)}`;
+    let r;
+    try {
+        r = await fetch(url, { method: "DELETE" });
+    } catch (e) {
+        alert(`Couldn't delete track: ${e.message || e}`);
+        return;
+    }
+    if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try {
+            const body = await r.json();
+            if (body.error) msg = body.error;
+        } catch (_) {}
+        alert(`Couldn't delete track: ${msg}`);
+        return;
+    }
+    const data = await r.json();
+
+    // Drop the section from the DOM + the tracks array.
+    const section = target.closest(".crops-modal-track");
+    const removedCrops = section
+        ? section.querySelectorAll(".crops-modal-thumb-wrap").length
+        : 0;
+    if (section) section.remove();
+
+    const trackKey = `${date}/${camera}/${trackDir}`;
+    const idx = (tracks || []).findIndex(
+        (t) => `${t.date}/${t.camera}/${t.dir_id}` === trackKey,
+    );
+    if (idx >= 0) tracks.splice(idx, 1);
+
+    // Update the modal-header "N tracks, M crops" line.
+    const header = document.querySelector(".crops-modal-header > span");
+    if (header) {
+        header.textContent = header.textContent
+            .replace(/\((\d+) track/, (_m, n) => {
+                const v = Math.max(0, parseInt(n, 10) - 1);
+                return `(${v} track`;
+            })
+            .replace(/(\d+) tracks?,/, (_m, n) => {
+                const v = parseInt(n, 10);
+                return `${v} track${v === 1 ? "" : "s"},`;
+            })
+            .replace(/(\d+) crops?\)/, (_m, n) => {
+                const v = Math.max(0, parseInt(n, 10) - removedCrops);
+                return `${v} crop${v === 1 ? "" : "s"})`;
+            });
+    }
+
+    // If we just removed the last track in the modal, swap in an
+    // empty-state message so the user knows the action took effect.
+    const body = document.querySelector(".crops-modal-body");
+    if (body && body.querySelectorAll(".crops-modal-track").length === 0) {
+        body.innerHTML = _safeHtml(
+            `<div class="crops-modal-empty">All tracks for this day have been deleted.</div>`,
+        );
+    }
+
+    if (typeof data.files_removed === "number") {
+        // Brief non-blocking confirmation. console rather than alert so
+        // we don't interrupt rapid pruning.
+        console.info(`Deleted track ${trackId} (${data.files_removed} files)`);
+    }
+}
+
 // Click-dispatch for label-{open,save,skip,cancel} actions. Called by
 // _openCropsModal's stub-local listener. `target` is the [data-action]
 // element clicked; `tracks` is the closure-scoped array of tracks for
@@ -687,6 +776,11 @@ async function _openCropsModal(date) {
             // "open" action (which would launch the photo viewer).
             ev.stopPropagation();
             await _handleRemoveCrop(target, tracks);
+            return;
+        }
+        if (action === "delete-track") {
+            ev.stopPropagation();
+            await _handleDeleteTrack(target, tracks);
         }
     });
     document.body.appendChild(stub);
@@ -760,6 +854,13 @@ async function _openCropsModal(date) {
                     · ${t.duration_seconds.toFixed(1)}s
                     · ${allUrls.length} crop${allUrls.length === 1 ? "" : "s"}
                 </span>
+                <button type="button" class="crops-modal-track-delete"
+                    title="Delete this entire track (crops, embedding, labels — all gone)"
+                    data-action="delete-track"
+                    data-date="${tDate}"
+                    data-camera="${tCam}"
+                    data-track-dir="${tDir}"
+                    data-track-id="${_escapeAttr(t.track_id || '')}">Delete track</button>
             </header>
             ${attrLine ? `<div class="track-attrs">${attrLine}</div>` : ""}
             ${labelSection}

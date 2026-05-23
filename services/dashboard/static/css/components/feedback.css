@@ -349,6 +349,33 @@
 .crops-modal-track-meta {
     color: #94a3b8;
     font-size: 0.75rem;
+    flex: 1;
+}
+/* Destructive "Delete track" button — sits at the right end of each
+ * track header. Tomato-red text on dark, fills red on hover. Quieter
+ * than a full solid-red button so it doesn't dominate the header, but
+ * the hover state makes the destructive intent unmistakable. */
+.crops-modal-track-delete {
+    margin-left: auto;
+    padding: 0.2rem 0.5rem;
+    background: transparent;
+    border: 1px solid #7f1d1d;
+    border-radius: 4px;
+    color: #fca5a5;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.crops-modal-track-delete:hover {
+    background: #b91c1c;
+    color: #fff;
+}
+.crops-modal-empty {
+    padding: 2rem;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 0.9rem;
+    font-style: italic;
 }
 .crops-modal-thumb-grid {
     display: grid;

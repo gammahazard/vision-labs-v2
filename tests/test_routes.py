@@ -1018,3 +1018,93 @@ class TestDeleteTrackImage:
             "/api/browse/tracks/2026-05-23/cam1/vehicle_9999_1779500000/hero.jpg"
         )
         assert r.status_code == 404
+
+
+class TestDeleteWholeTrack:
+    """The crops modal's per-track "Delete track" button — nukes the
+    entire vehicle_*/ folder when the track is unsalvageable.
+
+    Same browse_client fixture; we add crops on a per-test basis so we
+    can verify the full file-removal count.
+    """
+
+    BASE_URL = "/api/browse/tracks/2026-05-23/cam1/vehicle_0042_1779500000"
+    TRACK_DIR_REL = ("snapshots", "vehicles", "cam1",
+                     "2026-05-23", "vehicle_0042_1779500000")
+
+    def _track_dir(self, tmp_path):
+        return tmp_path.joinpath(*self.TRACK_DIR_REL)
+
+    def _seed_crops(self, tmp_path, names):
+        d = self._track_dir(tmp_path)
+        for name in names:
+            (d / name).write_bytes(b"fake-jpeg")
+
+    def test_delete_track_with_crops(self, browse_client, tmp_path):
+        """Common case — track has crops + metadata + embedding; all gone."""
+        self._seed_crops(tmp_path, ["hero.jpg", "angle_01.jpg", "angle_02.jpg"])
+        td = self._track_dir(tmp_path)
+        (td / "embedding.npy").write_bytes(b"fake-npy")
+        r = browse_client.delete(self.BASE_URL)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["ok"] is True
+        assert d["removed"] == "vehicle_0042_1779500000"
+        # 3 crops + metadata.json + embedding.npy = 5 files
+        assert d["files_removed"] == 5
+        assert not td.exists()
+        # Parent day-dir should still exist
+        assert td.parent.exists()
+
+    def test_delete_track_with_only_metadata(self, browse_client, tmp_path):
+        """Edge case — track folder exists with just metadata.json (no
+        crops were ever flushed). Should still succeed."""
+        r = browse_client.delete(self.BASE_URL)
+        assert r.status_code == 200, r.text
+        assert r.json()["files_removed"] == 1
+        assert not self._track_dir(tmp_path).exists()
+
+    def test_delete_unknown_track_404s(self, browse_client, tmp_path):
+        r = browse_client.delete(
+            "/api/browse/tracks/2026-05-23/cam1/vehicle_9999_1779500000"
+        )
+        assert r.status_code == 404
+
+    def test_delete_invalid_date_400s(self, browse_client):
+        r = browse_client.delete(
+            "/api/browse/tracks/abcd-ef-gh/cam1/vehicle_0042_1779500000"
+        )
+        assert r.status_code == 400
+
+    def test_delete_invalid_camera_400s(self, browse_client):
+        # ".." doesn't match the camera regex (no dots allowed)
+        r = browse_client.delete(
+            "/api/browse/tracks/2026-05-23/.../vehicle_0042_1779500000"
+        )
+        assert r.status_code == 400
+
+    def test_delete_invalid_track_id_400s(self, browse_client):
+        # Leading-dot in the track_id fails the regex (no dots allowed).
+        r = browse_client.delete(
+            "/api/browse/tracks/2026-05-23/cam1/.hidden-folder"
+        )
+        assert r.status_code == 400
+
+    def test_delete_track_does_not_touch_siblings(self, browse_client, tmp_path):
+        """Deleting one track must NOT affect other tracks under the same
+        camera/date folder."""
+        # Seed our target
+        self._seed_crops(tmp_path, ["hero.jpg"])
+        # Seed a sibling track under the same day
+        day_dir = self._track_dir(tmp_path).parent
+        sibling = day_dir / "vehicle_0099_1779600000"
+        sibling.mkdir()
+        (sibling / "hero.jpg").write_bytes(b"sibling")
+        (sibling / "metadata.json").write_bytes(b"{}")
+
+        r = browse_client.delete(self.BASE_URL)
+        assert r.status_code == 200
+
+        assert not self._track_dir(tmp_path).exists()
+        assert sibling.exists()
+        assert (sibling / "hero.jpg").exists()

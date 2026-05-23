@@ -14,6 +14,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Inline labeling UI in cropsModal (Phase 4 PR1b)** — per-track Label/Edit/Skip button + form with color/body dropdowns + make/model autocomplete. IR-mode tracks render color disabled with a tooltip.
 - **Color head retrain CLI (Phase 4 PR2)** — `scripts/vehicle_attributes/retrain_attributes.py` walks user-labeled tracks, fine-tunes the color head (warm-start from current weights, low LR, held-out 20% val gate, refuses deploy on regression), saves to `/models/color_head_v1.safetensors`. Body retrain deferred to PR2b (multihead merge logic).
 - **Remove bad crops from a track** — per-thumb ✕ button in the Browse crops modal deletes a single crop file; if the hero is removed, the next angle is promoted. Refuses the last remaining crop (preserves labels). *Requires dashboard restart.*
+- **Delete an entire track** — per-track "Delete track" button in the Browse crops modal nukes the whole `vehicle_*/` folder (crops + embedding + metadata + labels) for unsalvageable tracks. *Requires dashboard restart.*
 ### Changed
 - **Classifier thresholds re-tuned again** — `COLOR_CONF_THRESHOLD` 0.55→0.45 (was firing only 33%); `MAKE_CONF_THRESHOLD` 0.50→0.65 (kills wrong-confident Lamborghini/Ferrari calls while preserving 0.86+ Chevy/Ford/Dodge). Body + model keep their thresholds. *Requires va recreate.*
 ### Fixed
