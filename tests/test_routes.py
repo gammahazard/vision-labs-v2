@@ -924,3 +924,97 @@ class TestSaveTrackLabel:
         r = browse_client.post(self.URL, json={"color": "red"})
         assert r.status_code == 200, r.text
         assert r.json()["user_labels"]["color"] == "red"
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/browse/tracks/{date}/{camera}/{track_id}/{filename}
+# Remove one crop (with hero promotion if needed).
+# ---------------------------------------------------------------------------
+class TestDeleteTrackImage:
+    """The crops modal's per-thumbnail ✕ button — lets the user prune
+    blurry/occluded crops without losing the track's labels.
+
+    The browse_client fixture seeds ONE track with just a metadata.json.
+    For these tests we add hero/angle files ourselves on a per-test
+    basis since the deletion behavior depends on what crops exist.
+    """
+
+    BASE_URL = "/api/browse/tracks/2026-05-23/cam1/vehicle_0042_1779500000"
+    TRACK_DIR_REL = ("snapshots", "vehicles", "cam1",
+                     "2026-05-23", "vehicle_0042_1779500000")
+
+    def _track_dir(self, tmp_path):
+        return tmp_path.joinpath(*self.TRACK_DIR_REL)
+
+    def _seed_crops(self, tmp_path, names):
+        d = self._track_dir(tmp_path)
+        for name in names:
+            (d / name).write_bytes(b"fake-jpeg")
+
+    def test_delete_angle_when_hero_exists(self, browse_client, tmp_path):
+        """Most common case — delete an angle, hero stays."""
+        self._seed_crops(tmp_path, ["hero.jpg", "angle_01.jpg", "angle_02.jpg"])
+        r = browse_client.delete(f"{self.BASE_URL}/angle_01.jpg")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["ok"] is True
+        assert d["removed"] == "angle_01.jpg"
+        assert d["promoted"] is None
+        # File gone
+        td = self._track_dir(tmp_path)
+        assert not (td / "angle_01.jpg").exists()
+        # Others survive
+        assert (td / "hero.jpg").exists()
+        assert (td / "angle_02.jpg").exists()
+        # metadata.json untouched
+        assert (td / "metadata.json").exists()
+
+    def test_delete_hero_promotes_first_angle(self, browse_client, tmp_path):
+        """Deleting hero with angles available — first angle gets renamed."""
+        self._seed_crops(tmp_path, ["hero.jpg", "angle_01.jpg", "angle_03.jpg"])
+        r = browse_client.delete(f"{self.BASE_URL}/hero.jpg")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["ok"] is True
+        assert d["removed"] == "hero.jpg"
+        assert d["promoted"] == "angle_01.jpg"
+        td = self._track_dir(tmp_path)
+        # angle_01 should now BE hero
+        assert (td / "hero.jpg").exists()
+        assert not (td / "angle_01.jpg").exists()
+        assert (td / "angle_03.jpg").exists()
+
+    def test_delete_last_crop_refused(self, browse_client, tmp_path):
+        """Refuse to delete the LAST crop — would orphan the track."""
+        self._seed_crops(tmp_path, ["hero.jpg"])
+        r = browse_client.delete(f"{self.BASE_URL}/hero.jpg")
+        assert r.status_code == 409, r.text
+        assert "last crop" in r.json()["error"].lower()
+        # File still there
+        assert self._track_dir(tmp_path).joinpath("hero.jpg").exists()
+
+    def test_delete_nonexistent_file_404s(self, browse_client, tmp_path):
+        self._seed_crops(tmp_path, ["hero.jpg", "angle_01.jpg"])
+        r = browse_client.delete(f"{self.BASE_URL}/angle_99.jpg")
+        assert r.status_code == 404
+
+    def test_delete_invalid_filename_400s(self, browse_client, tmp_path):
+        self._seed_crops(tmp_path, ["hero.jpg", "angle_01.jpg"])
+        # "metadata.json" doesn't match the valid-filename regex
+        r = browse_client.delete(f"{self.BASE_URL}/metadata.json")
+        assert r.status_code == 400
+
+    def test_delete_path_traversal_400s(self, browse_client, tmp_path):
+        self._seed_crops(tmp_path, ["hero.jpg", "angle_01.jpg"])
+        r = browse_client.delete(
+            "/api/browse/tracks/2026-05-23/cam1/..%2Fother/angle_01.jpg"
+        )
+        # The path components fail regex (camera "..", or the resolved
+        # path falls outside the snapshot root)
+        assert r.status_code in (400, 404)
+
+    def test_delete_unknown_track_404s(self, browse_client, tmp_path):
+        r = browse_client.delete(
+            "/api/browse/tracks/2026-05-23/cam1/vehicle_9999_1779500000/hero.jpg"
+        )
+        assert r.status_code == 404

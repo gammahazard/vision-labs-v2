@@ -297,6 +297,103 @@ async def serve_track_image(date: str, camera: str, track_id: str,
     return FileResponse(candidate, media_type="image/jpeg")
 
 
+@router.delete("/tracks/{date}/{camera}/{track_id}/{filename}")
+async def delete_track_image(date: str, camera: str, track_id: str,
+                              filename: str):
+    """Delete one crop (hero.jpg or angle_NN.jpg) from a track directory.
+
+    Used when a particular crop is too blurry/occluded to be useful
+    training data, but the rest of the track's crops + the user_labels
+    are still good.
+
+    Behavior:
+      - If `filename` is an angle and other crops remain → just unlink it
+      - If `filename` is hero.jpg AND at least one angle remains →
+        unlink hero AND rename the lowest-numbered angle to hero.jpg
+        so the track stays viewable (Browse expects hero.jpg to exist)
+      - If this is the LAST remaining crop in the track → refuse with
+        409 (deleting it would orphan metadata.json + user_labels). The
+        UI is expected to grey out the ✕ button in this case; the server
+        check is the defense.
+
+    Returns: { ok: bool, removed: str, promoted: str | None, error: str | None }
+    where `promoted` is the angle filename that was renamed to hero, if any.
+
+    Same path-containment defense as serve_track_image — all four
+    components regex-validated + realpath + startswith(root).
+    """
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid date"})
+    if not re.match(r"^[a-zA-Z0-9_-]+$", camera):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid camera"})
+    if not re.match(r"^[a-zA-Z0-9_-]+$", track_id):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid track_id"})
+    if not re.match(r"^(hero\.jpg|angle_\d{2}\.jpg)$", filename):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid filename"})
+
+    root_real = os.path.realpath(ctx.VEHICLE_SNAPSHOT_DIR)
+    track_dir = os.path.realpath(os.path.join(
+        ctx.VEHICLE_SNAPSHOT_DIR, camera, date, track_id))
+    if not track_dir.startswith(root_real + os.sep):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "out of range"})
+    if not os.path.isdir(track_dir):
+        return JSONResponse(status_code=404, content={"ok": False, "error": "track not found"})
+
+    target = os.path.join(track_dir, filename)
+    if not os.path.isfile(target):
+        return JSONResponse(status_code=404, content={"ok": False, "error": "crop not found"})
+
+    # Enumerate remaining crops in the track (excluding the target).
+    other_crops = sorted([
+        f for f in os.listdir(track_dir)
+        if f != filename
+        and (f == "hero.jpg" or re.match(r"^angle_\d{2}\.jpg$", f))
+    ])
+    if not other_crops:
+        return JSONResponse(
+            status_code=409,
+            content={"ok": False,
+                     "error": "this is the last crop in the track — refused "
+                              "(deleting it would orphan the track + labels). "
+                              "Use the per-track skip option instead."},
+        )
+
+    promoted = None
+    try:
+        os.unlink(target)
+        # If we removed hero.jpg, promote the lowest-numbered remaining
+        # angle to hero. The Browse modal + tracks endpoint both assume
+        # hero.jpg exists; without this rename, the next /tracks fetch
+        # would return broken hero_url.
+        if filename == "hero.jpg":
+            angle_remaining = [f for f in other_crops if f.startswith("angle_")]
+            if angle_remaining:
+                promote_src = os.path.join(track_dir, angle_remaining[0])
+                promote_dst = os.path.join(track_dir, "hero.jpg")
+                os.rename(promote_src, promote_dst)
+                promoted = angle_remaining[0]
+                ctx.logger.info(
+                    f"Browse remove-crop: deleted hero from {track_dir}, "
+                    f"promoted {promoted} → hero.jpg"
+                )
+            else:
+                ctx.logger.info(
+                    f"Browse remove-crop: deleted hero from {track_dir} "
+                    f"(no angles to promote — track will be unviewable until "
+                    f"reflushed; this shouldn't happen because we counted "
+                    f"other_crops > 0 above)"
+                )
+        else:
+            ctx.logger.info(f"Browse remove-crop: deleted {filename} from {track_dir}")
+    except OSError as e:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"couldn't remove crop: {e}"},
+        )
+
+    return {"ok": True, "removed": filename, "promoted": promoted, "error": None}
+
+
 @router.get("/snapshot/{camera_or_legacy}/{date}/{filename}")
 async def serve_snapshot(camera_or_legacy: str, date: str, filename: str):
     """

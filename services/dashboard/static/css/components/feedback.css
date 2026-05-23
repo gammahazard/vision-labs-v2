@@ -370,6 +370,52 @@
     transform: translateY(-1px);
 }
 
+/* Remove-crop ✕ button — overlays the top-right of each thumb. Hidden by
+ * default on desktop and revealed on wrap-hover; always visible on touch
+ * (no hover state). Disabled when only one crop remains in the track. */
+.crops-modal-thumb-wrap {
+    position: relative;
+}
+.crops-modal-thumb-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.85);
+    color: #f8fafc;
+    font-size: 16px;
+    line-height: 24px;
+    text-align: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+.crops-modal-thumb-wrap:hover .crops-modal-thumb-remove,
+.crops-modal-thumb-remove:focus-visible {
+    opacity: 1;
+}
+.crops-modal-thumb-remove:hover {
+    background: #ef4444;
+}
+.crops-modal-thumb-remove[disabled] {
+    cursor: not-allowed;
+    background: rgba(15, 23, 42, 0.5);
+    color: #64748b;
+}
+.crops-modal-thumb-wrap:hover .crops-modal-thumb-remove[disabled]:hover {
+    background: rgba(15, 23, 42, 0.5);
+}
+@media (hover: none) {
+    /* Touch devices have no hover — keep the button visible always. */
+    .crops-modal-thumb-remove {
+        opacity: 1;
+    }
+}
+
 /* Phase 3 vehicle-attributes — attribute row shown inside each modal track section */
 .track-attrs {
     color: #cbd5e1;
