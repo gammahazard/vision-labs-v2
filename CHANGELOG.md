@@ -8,32 +8,42 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ## [Unreleased]
 
-### Changed
-- **Lowered classifier confidence thresholds for visibility** — color 0.55 → 0.35, body 0.55 → 0.40, make 0.55 → 0.40, model 0.65 → 0.45. Exposes more (occasionally wrong) labels rather than hiding everything as `null`. *Dashboard refresh; va restart only.*
-
 ### Added
-- **Per-track 768-dim embedding saved as `embedding.npy`** — foundation for same-vehicle grouping across encounters (Phase C of crop-quality plan). Mean-pooled L2-normalized ConvNeXt-Tiny backbone features. *Requires vehicle-attributes rebuild.*
+- **Identity-bearing tracks survive bbox loss** — IoU 0.10 + 30 s lost-timeout for identified tracks; demote on > 6 s gap re-match. *Requires tracker rebuild.*
+- **New `walking` action** — derived from standing pose + non-stationary bbox direction (locomotion that single-frame pose can't catch). *Requires tracker rebuild.*
+- **Per-track 768-dim embedding saved as `embedding.npy`** — foundation for same-vehicle grouping across encounters. *Requires vehicle-attributes rebuild.*
 - **Edit pencil ✏ on camera rows** — modal to rename, edit lat/lon, toggle detectors without delete + re-add.
 - **Vehicle attributes Phase 1** — per-cam `vehicle-attributes-cam{N}` flushes per-track HD crops + `metadata.json` on track end. *Requires new service build + tracker rebuild.*
 - **Vehicle attributes Phase 3 v0 classifier** — fills `metadata.json.attributes` with color/body/make/model, gated by `ENABLE_CLASSIFIER`. *Requires vehicle-attributes rebuild + HF weights.*
 
+### Changed
+- **Classifier confidence thresholds re-tuned** — color 0.55, body 0.50, make 0.50, model 0.55 (was 0.55 / 0.55 / 0.55 / 0.65). *va restart only.*
+- **Action classifier hardened** — `MIN_KEYPOINTS_FOR_ACTION=10` gates partial detections; `ACTION_STICKY_MULTIPLIER` 1 → 2 reduces flip noise. *Requires tracker rebuild.*
+- **Browse day view simplified** — flat snapshot grid + single `📸 Vehicle crops taken (N)` button opening a per-track modal.
+- **Classifier split into two ConvNeXt-Tiny models** — frozen-backbone color + Cars-fine-tuned body/make/model; adds IR-frame skip-color path. *Requires vehicle-attributes rebuild.*
+
 ### Fixed
-- **Crop padding too tight for fast-mover bbox drift + sub-threshold bboxes still sampled** — `CROP_PADDING_PCT` default 0.20 → 0.35 + new `MIN_SAMPLE_BBOX_AREA_SUB_PX` (1500) gate skips tiny edge-of-frame bboxes. *Requires tracker + vehicle-attributes rebuild.*
-- **Stale non-idle tracks lingered 10 s before ghosting + live_center_match accepted 269-px center jumps after long gaps** — driving tracks now ghost at 3 s (`VEHICLE_LOST_TIMEOUT_DRIVING`); `_try_live_center_match` skips tracks silent > 2 s (`VEHICLE_CENTER_MATCH_STALE_SECS`). *Requires tracker rebuild.*
-- **Stale track absorbed an unrelated vehicle of very different size** — primary IoU + `_try_live_center_match` now reject matches against tracks idle > `VEHICLE_MATCH_STALE_SECS` (1 s) when bbox-area ratio > `VEHICLE_MATCH_AREA_RATIO_MAX` (2.5×). *Requires tracker rebuild.*
-- **Browse vehicle-crops modal showed times in UTC instead of `LOCATION_TIMEZONE`** — `routes/browse.py` missed the `tz=TZ_LOCAL` kwarg. *Dashboard restart only.*
-- **Vehicle-crops modal closed itself every 30 s while open** — Browse panel auto-refresh skipped when `#cropsModal` is mounted. *Dashboard hard-refresh.*
-- **va service merged crops across tracker restarts when track IDs got re-used** — `vehicle_detected` now drops any buffer whose `first_seen` doesn't match. *Requires vehicle-attributes rebuild.*
+- **Redis client hung indefinitely on silently-dead TCP sockets (WSL2 host-bridge drops)** — added `health_check_interval=30` + `socket_keepalive=True`. *Restart any service.*
+- **Mobile vehicle-crops modal didn't scroll on iOS + inputs auto-zoomed** — switched to `dvh` viewport units, added momentum scroll + `overscroll-behavior: contain`, set `font-size: 16px` on all form fields. *Dashboard hard-refresh.*
+- **vehicle-attributes wrote per-track dirs under UTC date** — `storage.py` now uses `tz=TZ_LOCAL`; added `tzdata` to requirements + `LOCATION_TIMEZONE` to compose env. *Requires vehicle-attributes rebuild.*
+- **`person_identified` events missed brief face appearances** — identity-poll interval 2 s → 0.5 s. *Requires tracker rebuild.*
+- **`LOCATION_TIMEZONE` not propagated to vehicle-attributes containers** — added to all 20 va compose blocks. *Requires va recreate.*
+- **Crop padding too tight for fast-mover bbox drift + sub-threshold bboxes still sampled** — `CROP_PADDING_PCT` 0.20 → 0.35 + new `MIN_SAMPLE_BBOX_AREA_SUB_PX` (1500). *Requires tracker + vehicle-attributes rebuild.*
+- **Stale non-idle tracks lingered 10 s + live-center match accepted 269 px jumps** — `VEHICLE_LOST_TIMEOUT_DRIVING=3 s`; live-center skips tracks silent > 2 s. *Requires tracker rebuild.*
+- **Stale track absorbed an unrelated vehicle of very different size** — size-ratio gate on stale IoU + center matches (2.5× area cap). *Requires tracker rebuild.*
+- **Browse vehicle-crops modal showed times in UTC** — `routes/browse.py` now passes `tz=TZ_LOCAL`. *Dashboard restart only.*
+- **Vehicle-crops modal closed itself every 30 s** — Browse panel auto-refresh skipped while `#cropsModal` is mounted. *Dashboard hard-refresh.*
+- **va service merged crops across tracker restarts when track IDs got re-used** — `vehicle_detected` drops any buffer whose `first_seen` doesn't match. *Requires vehicle-attributes rebuild.*
 - **Phantom idle alert when a passing vehicle inherited a ghosted parked car's identity** — IoM rescue now also revives idle ghosts before primary IoU. *Requires tracker rebuild.*
 - **Parked-car crops captured the passing vehicle occluding them** — skip `vehicle_sample` when another moving track's bbox overlaps by IoU > 0.15. *Requires tracker rebuild.*
 - **Non-idle live tracks stole idle cars' bbox-jittered detections** — IoM rescue now runs before the primary IoU loop. *Requires tracker rebuild.*
-- **Duplicate `vehicle_idle` from YOLO bbox-jitter on parked cars** — added IoM rescue (≥0.9, area ratio ≤2.0) to absorb jittered detections into idle tracks. *Requires tracker rebuild.*
-- **Brief drive-bys produced ≤1 crop** — spawn frame now samples + first 8 matched frames before the every-Nth throttle. *Requires tracker rebuild.*
-- **Parked-car tracks absorbed drive-by crops in their first 150 s** — tight-IoU gate now triggers on `is_stationary or idle_alerted` (was idle_alerted-only, fires at +150 s). *Requires tracker rebuild.*
-- **YOLO car↔truck↔bus flicker was splitting one vehicle into multiple tracks** — fallback IoU paths required strict class equality; YOLOv8 flips a single physical vehicle between car/truck/bus across frames (pickup at 11:35 became vehicle_0009 'car' + vehicle_0010 'truck' 2 s later). 4-wheel classes are now interchangeable in `_try_ghost_match` + `_try_live_center_match`; bicycle/motorcycle stay strict. Same-frame guard prevents two distinct detections in one batch from merging. *Requires tracker rebuild.*
-- **Per-track dir names now include first-seen timestamp** — `vehicle_0001_<epoch>` instead of just `vehicle_0001`, so a new tracker session that re-mints `vehicle_0001` can't silently overwrite a previous physical vehicle's `hero.jpg` + `metadata.json` on the same day. *Requires vehicle-attributes rebuild.*
-- **Classifier confidence now visible when a head votes below threshold** — `color_confidence` + `model_confidence` were nulled out when their label fell under the cutoff, hiding 'was 0.53, just under 0.55' vs 'was 0.18, way off'. Now `conf=None` strictly means 'head not run' (IR-suppressed color); below-threshold votes report the actual conf. *Dashboard restart only.*
-- **Model head now runs on idle tracks too** — original spec deferred it to drive-by-only out of caution, but parked cars give well-sampled multi-angle views that should be easier to classify, not harder. Worth seeing weak predictions and tuning the threshold from data. *Requires vehicle-attributes rebuild.*
+- **Duplicate `vehicle_idle` from YOLO bbox-jitter on parked cars** — IoM rescue (≥0.9, area ratio ≤2.0) absorbs jittered detections. *Requires tracker rebuild.*
+- **Brief drive-bys produced ≤ 1 crop** — spawn frame samples + first 8 matched frames before the every-Nth throttle. *Requires tracker rebuild.*
+- **Parked-car tracks absorbed drive-by crops in their first 150 s** — tight-IoU gate triggers on `is_stationary or idle_alerted`. *Requires tracker rebuild.*
+- **YOLO car↔truck↔bus flicker split one vehicle into multiple tracks** — 4-wheel classes interchangeable in fallback IoU paths; bicycle/motorcycle stay strict. *Requires tracker rebuild.*
+- **Per-track dir names now include `first_seen` timestamp** — `vehicle_0001_<epoch>` so a tracker session restart can't overwrite an earlier physical vehicle. *Requires vehicle-attributes rebuild.*
+- **Classifier confidence now visible when a head votes below threshold** — `conf=None` means 'head not run'; below-threshold votes report actual conf. *Dashboard restart only.*
+- **Model head now runs on idle tracks too** — was drive-by-only; parked cars give richer multi-angle views. *Requires vehicle-attributes rebuild.*
 - **Drive-by polluted an idle parked car's crops at IoU ~0.3** — `VEHICLE_IDLE_IOU_THRESHOLD` (default 0.65) for idle tracks; loose center-distance fallbacks skip idle tracks. *Requires tracker rebuild.*
 - **Events panel returned 0 for cam1** — internal `vehicle_sample` writes saturated the tail; reader now overscans (`MAX_REDIS_SCAN`, default 2000) until N user events surface. *Dashboard restart only.*
 - **`ModuleNotFoundError: torch` in vehicle-attributes** — Dockerfile `pip install` landed in python3.10; service runs python3.11. Switched to `python -m pip install`. *Requires vehicle-attributes rebuild.*
@@ -49,10 +59,6 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Vehicle-attribute crops misaligned with bbox** — vehicle-detector ships HD bytes inline with detection; tracker writes per-sample `vehicle_hd_sample:*`. *Requires 3 service rebuilds.*
 - **`person_identified` events never fired despite cyan bbox** — replaced delete-on-empty with TTL refresh (`IDENTITY_KEY_TTL_SEC=5`). *Requires face-recognizer rebuild.*
 - **Brief drive-bys never produced a per-track dir** — `main.py` gated the ghost sweep on non-empty detections; single-frame cars sat in `tracked_vehicles` forever. Now sweeps every poll. *Requires tracker rebuild.*
-
-### Changed
-- **Browse day view simplified** — flat snapshot grid + single `📸 Vehicle crops taken (N)` button opening a per-track modal.
-- **Classifier split into two ConvNeXt-Tiny models** — frozen-backbone color + Cars-fine-tuned body/make/model; adds IR-frame skip-color path. *Requires vehicle-attributes rebuild.*
 
 ---
 
