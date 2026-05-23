@@ -262,9 +262,9 @@ Vision Labs is an **event-driven microservice system** running on a single host 
 
 ## Dashboard Backend
 
-### `server.py` (353 lines — post May 2026 refactor)
+### `server.py` (~460 lines)
 
-The main FastAPI app is now a **thin wiring file**. The 1300-line original was split into 6 modules:
+The main FastAPI app is a **thin wiring file**. The 1300-line original (May 2026 refactor) was split into 6 modules:
 
 | Component | Lives in | Purpose |
 |-----------|----------|---------|
@@ -330,23 +330,23 @@ camera (where it makes semantic sense — events, system status).
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `app.js` | 362 | WebSocket connection, settings sliders, module init |
-| `ai.js` | 962 | AI chat, vision tab, DVR tab, onboarding wizard |
-| `events.js` | 715 | Event feed polling + cursor pagination + journal fallback, type-filter pills, name search, Face Matched detail modal (thumbnail grid + similarity scores), photo lightbox |
-| `zones.js` | 500+ | Zone drawing canvas, CRUD operations, alert level config |
-| `faces.js` | 430+ | Face enrollment wizard, multi-angle capture |
-| `browse.js` | 260+ | Vehicle snapshot browser, face gallery |
-| `conditions.js` | 200+ | Time period display, weather fetch |
-| `unknowns.js` | 190+ | Unknown face grid, label/delete operations |
-| `monitoring.js` | 180 | Health cards, Grafana iframe, fullscreen toggle |
-| `telegram_access.js` | 240+ | User approval/revoke, access log viewer |
-| `auth.js` | 110+ | Login form, session management |
+| `app.js` | ~410 | WebSocket connection, settings sliders, module init |
+| `ai.js` + `pages/ai/_*.js` | 167 entry + 6 siblings (state, utils, wizard, chat, vision-tab, dvr-tab; ~1290 total) | AI chat, vision tab, DVR tab, onboarding wizard. Split 2026-05-22 — see §13. |
+| `events.js` | ~820 | Event feed polling + cursor pagination + journal fallback, type-filter pills, name search, Face Matched detail modal (thumbnail grid + similarity scores), photo lightbox |
+| `zones.js` | ~530 | Zone drawing canvas, CRUD operations, alert level config |
+| `faces.js` | ~570 | Face enrollment wizard, multi-angle capture |
+| `browse.js` | ~460 | Vehicle snapshot browser, face gallery, per-track crops modal |
+| `conditions.js` | ~200 | Time period display, weather fetch |
+| `unknowns.js` | ~190 | Unknown face grid, label/delete operations |
+| `monitoring.js` | ~280 | Health cards, Grafana iframe, fullscreen toggle |
+| `telegram_access.js` | ~240 | User approval/revoke, access log viewer |
+| `auth.js` | ~110 | Login form, session management |
 
 ### CSS
 
 | File | Purpose |
 |------|---------|
-| `style.css` | Main dashboard styles (live view, events, settings, zones) |
+| `style.css` + `css/components/*.css` | Main dashboard styles. 2026-05-22: the original 2747-line `style.css` became a 32-line `@import` entry-point plus 13 focused component files under `css/components/` (navbar, layout, live-view, settings, events, faces, zones, conditions, account, browse, feedback, responsive, _base). |
 | `ai.css` | AI chat interface, DVR player |
 | `monitoring.css` | System monitor cards, Grafana embed |
 
@@ -354,12 +354,27 @@ camera (where it makes semantic sense — events, system status).
 
 ## Tracker Service
 
+The `PersonTracker` class (despite the name, owns both person and vehicle tracking) lives in `services/tracker/core/manager.py`. The 1365-line monolith was split via **mixin classes** on 2026-05-22:
+
+| File | Lines | Owns |
+|---|---|---|
+| `manager.py` | ~660 | PersonTracker class + `__init__`/`_generate_id`/`_process_vehicle_detections`/`_update_state`/`update`. Keeps env-driven sample-throttle constants here so `importlib.reload(manager)` still picks them up in tests. |
+| `_vehicle_matcher.py` | ~290 | `VehicleMatcherMixin` — fallback strategies (idle-IoM rescue, ghost rescue, live center-distance, ghost center-distance) + sample-quality gates (`_bbox_area`, `_sample_occluded_by_moving_vehicle`) |
+| `_vehicle_events.py` | ~210 | `VehicleEventsMixin` — five emit_vehicle_* event writers + per-sample HD-snapshot writes |
+| `_person_events.py` | ~125 | `PersonEventsMixin` — person event emit + snapshot pairing |
+| `_zones.py` | ~80 | `ZonesMixin` — zone polygon load + lookup + dead-zone gate |
+| `_identity.py` | ~115 | `IdentityMixin` — face-recognizer → track identity sync with N-cycle flip guard |
+| `_classes.py` | 28 | `_class_compatible` helper for YOLO car↔truck↔bus flicker tolerance |
+
+`PersonTracker(VehicleMatcherMixin, VehicleEventsMixin, PersonEventsMixin, ZonesMixin, IdentityMixin)` — mixins keep `self.r` / `self.tracked_vehicles` / `self._ghost_vehicles` etc. accessible without threading them through call signatures.
+
 ### Person Tracking
 - **IoU matching**: for each new detection, compute overlap with every tracked person's last bbox
-- **Threshold**: if IoU > 0.3, same person → update state
+- **Threshold**: if IoU > 0.3, same person → update state. Identified tracks use a looser `IDENTITY_TRACK_IOU_THRESHOLD` (default 0.10) so a known person walking far away keeps their track id + identity instead of getting destroyed and re-spawned as Unknown.
 - **Debounce**: new person must persist 15 frames (~1s) before `person_appeared` event
-- **Lost timeout**: if person not seen for `lost_timeout` seconds → `person_left` event
-- **Action classification**: keypoint geometry → standing, sitting, crouching, lying (from `contracts/actions.py`)
+- **Lost timeout**: if person not seen for `lost_timeout` seconds → `person_left` event. Identified tracks use `IDENTITY_LOST_TIMEOUT` (default 30 s) so an identified person walking off + back within ~30 s keeps their track id.
+- **Identity demotion**: on a > `IDENTITY_PERSIST_GAP_SECS` (default 6 s) silent gap with no face-recognizer confirmation, identity_name is cleared on the next re-match — prevents a stranger inheriting an identified track's bbox spot.
+- **Action classification**: keypoint geometry → standing, walking, sitting, crouching, lying, arms_raised (from `contracts/actions.py`). `MIN_KEYPOINTS_FOR_ACTION` gates partial detections.
 - **Direction estimation**: bbox center history → left, right, stationary
 - **Snapshot at detection**: tracker grabs the frame at event emission time (stored with 2h TTL)
 
@@ -687,7 +702,7 @@ services/
 ├── face-recognizer/     # InsightFace → face identities. Checks `detect_faces`.
 │                        # Shares the face DB across all cameras (Docker volume face-data).
 ├── dashboard/           # FastAPI backend + web frontend (refactored May 2026)
-│   ├── server.py        # 353 lines — wiring only: imports, app, middleware, startup, static mount
+│   ├── server.py        # ~460 lines — wiring only: imports, app, middleware, startup, static mount
 │   ├── constants.py     # Ollama models — env-overridable
 │   ├── websocket.py     # /ws/live; accepts ?camera=<id> query param for multi-cam
 │   ├── cameras.py       # CameraRegistry (Redis-backed) + slot allocation
