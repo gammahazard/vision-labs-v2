@@ -3,6 +3,7 @@
 > **Real hardware. Real-time inference. Fully self-hosted.**
 
 [![Tests](https://github.com/gammahazard/vision-labs-v2/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/gammahazard/vision-labs-v2/actions/workflows/tests.yml)
+[![Publish images](https://github.com/gammahazard/vision-labs-v2/actions/workflows/publish-images.yml/badge.svg)](https://github.com/gammahazard/vision-labs-v2/actions/workflows/publish-images.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)

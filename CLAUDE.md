@@ -196,7 +196,7 @@ Refactors that don't change behavior do NOT need a CHANGELOG entry. The git log 
 3. Update the link-references at the bottom (the `[vX.Y.Z]: …compare/…` lines).
 4. Commit the CHANGELOG update with a subject like `release: vX.Y.Z`.
 5. Tag with an annotation that mirrors the CHANGELOG section, then `git push origin vX.Y.Z`.
-6. The tag push triggers `.github/workflows/publish-images.yml`, which builds + pushes 9 images to `ghcr.io/gammahazard/vision-labs/*` (both `:vX.Y.Z` and `:latest`).
+6. The tag push triggers `.github/workflows/publish-images.yml`, which builds + pushes 10 images to `ghcr.io/gammahazard/vision-labs/*` — base + 9 services (camera-ingester, pose-detector, vehicle-detector, vehicle-attributes, tracker, face-recognizer, dashboard, recorder, orchestrator). Both `:vX.Y.Z` and `:latest` per image. The images contain only code + public ML weights — never user data, which lives in Docker volumes.
 7. **Only on first publish**, each new GHCR package defaults to private — flip to public via Packages → ⚙️ → "Change package visibility". Per-package, one time.
 
 Versioning is SemVer:

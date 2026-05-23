@@ -130,7 +130,7 @@ docker compose -f docker-compose.yml -f docker-compose.registry.yml pull
 docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
 #    Pin a release for reproducibility:
 #       IMAGE_TAG=v0.1.0 docker compose -f docker-compose.yml -f docker-compose.registry.yml up -d
-#    OPTION B: build locally (~10-15 min, builds base + 7 service images — needed if you've forked + modified code)
+#    OPTION B: build locally (~10-15 min, builds base + 9 service images — needed if you've forked + modified code)
 #    bash scripts/build.sh              # builds base image first, then everything else
 #    docker compose up -d
 #    With NAS (overlay stacks with either option above):
@@ -179,7 +179,7 @@ Two paths from cloned repo to running stack:
 | Path | Time | When to use |
 |---|---|---|
 | `docker compose -f docker-compose.yml -f docker-compose.registry.yml pull && up -d` | ~3-5 min (pull bandwidth) | **Default.** Pulls finished images from `ghcr.io/gammahazard/vision-labs/*`. Tags are cut by the `publish-images.yml` workflow on every `v*` git tag — both `:vX.Y.Z` and `:latest` are pushed. Pin a release with `IMAGE_TAG=v0.1.0 docker compose -f ... up -d` |
-| `bash scripts/build.sh` then `docker compose up -d` | ~10-15 min first time | Build base + 7 service images locally. Use this if you've forked and modified the code, or want to inspect each build layer |
+| `bash scripts/build.sh` then `docker compose up -d` | ~10-15 min first time | Build base + 9 service images locally. Use this if you've forked and modified the code, or want to inspect each build layer |
 
 **Cutting a new release** (maintainer workflow):
 ```bash
