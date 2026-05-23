@@ -28,5 +28,5 @@
 @import url('components/conditions.css');
 @import url('components/account.css');
 @import url('components/browse.css');
-@import url('components/feedback.css');
+@import url('components/feedback.css?v=2');
 @import url('components/responsive.css');

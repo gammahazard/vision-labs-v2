@@ -223,16 +223,54 @@ async function _browseDayClick(date) {
 // classifier disabled.
 // ---------------------------------------------------------------------------
 
+// Body-scroll lock helpers. iOS Safari ignores `overflow: hidden` on body,
+// so we also pin it with `position: fixed; top: -<scrollY>` and restore the
+// scroll offset on close. Without this, the page underneath scrolls when the
+// user drags inside the modal's backdrop region (and on iOS the modal's
+// `position: fixed` panel can visually drift during that page scroll).
+function _lockBodyForCropsModal() {
+    if (document.body.dataset.cropsModalLockedY !== undefined) return;
+    const y = window.scrollY;
+    document.body.dataset.cropsModalLockedY = String(y);
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${y}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.width = '100%';
+}
+
+function _unlockBodyForCropsModal() {
+    if (document.body.dataset.cropsModalLockedY === undefined) return;
+    const y = parseInt(document.body.dataset.cropsModalLockedY || '0', 10);
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.left = '';
+    document.body.style.right = '';
+    document.body.style.width = '';
+    delete document.body.dataset.cropsModalLockedY;
+    window.scrollTo(0, y);
+}
+
 function _closeCropsModal() {
     const m = document.getElementById("cropsModal");
     if (m) m.remove();
+    _unlockBodyForCropsModal();
 }
 
 async function _openCropsModal(date) {
     _closeCropsModal();  // idempotent — avoid stacking
 
-    const container = document.getElementById("browseContent");
-    if (!container) return;
+    // Mount the modal under <body> rather than the (scrollable) panel-body's
+    // #browseContent. The backdrop is `position: fixed`, which is supposed
+    // to anchor to the viewport regardless of ancestors, but iOS Safari is
+    // unreliable about that when the modal sits inside an `overflow: auto`
+    // container that's been scrolled — the panel can visually drift during
+    // momentum scrolls, and the "top cut off when opening" symptom comes
+    // from the modal rendering relative to the scrolled #browseContent
+    // instead of the viewport. Body-mounting eliminates that whole class.
+    // Click events on the modal are now handled by a stub-local listener
+    // because the delegated #browseContent handler can't see body children.
+    _lockBodyForCropsModal();
 
     // Stub modal while we fetch
     const stub = document.createElement("div");
@@ -243,9 +281,26 @@ async function _openCropsModal(date) {
     </div>`);
     // Click outside the panel closes the modal — backdrop catches the click
     stub.addEventListener("click", (ev) => {
-        if (ev.target === stub) _closeCropsModal();
+        if (ev.target === stub) {
+            _closeCropsModal();
+            return;
+        }
+        // The X button + thumbnails use data-action attrs that the
+        // delegated #browseContent handler would have caught — since the
+        // modal is now in body, dispatch them locally.
+        const target = ev.target.closest("[data-action]");
+        if (!target) return;
+        const action = target.getAttribute("data-action");
+        if (action === "close-crops-modal") {
+            _closeCropsModal();
+        } else if (action === "open") {
+            _openEventPhoto(
+                target.getAttribute("data-url"),
+                target.getAttribute("data-label") || "",
+            );
+        }
     });
-    container.appendChild(stub);
+    document.body.appendChild(stub);
 
     let tracks = [];
     try {
