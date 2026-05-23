@@ -155,7 +155,7 @@ Line-numbered trace of the path from RTSP frame to per-track HD crop on disk. Th
 5. **tracker pulls detection-stream messages** — `services/tracker/core/main.py:103-106`. `r.xreadgroup({VEHICLE_STREAM: ">"}, ...)`. Consumer group `vehicle_trackers` so multi-replica safe.
 6. **tracker decodes HD bytes** — `main.py:189`. `hd_frame_bytes = data.get(b"hd_frame_bytes", None)` — None when vehicle-detector couldn't fetch HD (TTL miss).
 7. **tracker dispatches to detection-handler** — `main.py:202-205`. `tracker._process_vehicle_detections(detections, timestamp, frame_bytes, hd_frame_bytes=hd_frame_bytes)`.
-8. **IoU match against tracked vehicles** — `services/tracker/core/manager.py:256-260`. Threshold `VEHICLE_IOU_THRESHOLD` (default 0.3). Loop through `self.tracked_vehicles` picking the highest IoU above threshold.
+8. **IoU match against tracked vehicles** — `services/tracker/core/manager.py` `_process_vehicle_detections`. Threshold `VEHICLE_IOU_THRESHOLD` (default 0.2). Loop through `self.tracked_vehicles` picking the highest IoU above threshold.
 9. **Fallback: live-center match** — `manager.py:271-272`. When IoU fails (fast cars shifting >50 % of width frame-to-frame produce IoU≈0.14), `_try_live_center_match` rescues — same class, center-distance ≤ `bbox_w × VEHICLE_GHOST_MAX_DIST_RATIO` (default 3.5).
 10. **Fallback: ghost re-association** — `manager.py:280-290`. Recently-lost tracks live in `_ghost_vehicles` for `VEHICLE_GHOST_TTL`; if a new detection matches by center distance + class, revive the original ID and SUPPRESS a new `vehicle_detected` (same car re-emerging from a dead zone).
 11. **Existing track: stash HD frame** — `manager.py:299-300`. `if hd_frame_bytes: veh.last_hd_frame_bytes = hd_frame_bytes`. **This is the critical pairing:** the bbox in `veh.bbox` and the bytes in `veh.last_hd_frame_bytes` are from the same frame.
@@ -316,7 +316,7 @@ This is the biggest service. Read this section when working on UI, routes, or ba
 8. **auth_middleware** (line 204) validates `vl_session` cookie via `validate_session`. Redirects to `/login.html` (HTML routes) or returns 401 (API routes).
 9. **`_setup_exempt()`** gate (line 250) — if setup.json missing, only `/setup.html`, `/js/pages/setup.js`, `/css/setup.css`, `/api/setup/*`, `/api/auth/*`, `/static/*`, `/api/cameras*` are accessible. (After the 2026-05-19 static-folder reorg, JS/CSS now live under `/js/<group>/` and `/css/` subdirs respectively.)
 
-### 6.2 `routes/` — 18 router modules + 3 split packages
+### 6.2 `routes/` — 14 router modules + 3 split packages + 2 utility modules (ai_state, ai_prompts)
 
 The packages (`ai_tools/`, `bot_commands/`, `notifications/`) are former monoliths refactored on 2026-05-19; their public surface (router object, function names) is unchanged.
 
