@@ -189,6 +189,25 @@ IDENTITY_GRACE_SECONDS = float(os.getenv("IDENTITY_GRACE_SECONDS", "4.0"))
 # lingers ≥ 500 ms, which is the typical face-visible window for a
 # walking pedestrian. Cost: ≈2 extra HGETALL/sec/cam — negligible.
 IDENTITY_POLL_INTERVAL = float(os.getenv("IDENTITY_POLL_INTERVAL", "0.5"))
+# Identity-persistence tuning. Once a tracked person has an identity_name
+# assigned by the face-recognizer, the face-recognizer's been right on
+# every committed identification (high InsightFace embedding threshold
+# + quality gate). We can be much looser about KEEPING the same track ID
+# for that person across frames where their bbox shifts a lot (walking
+# far away, briefly occluded, face turned). Two looser numbers apply
+# ONLY to tracks with identity_name set; unidentified tracks keep the
+# stricter defaults so a random pose blob doesn't sit around forever.
+IDENTITY_TRACK_IOU_THRESHOLD = float(os.getenv("IDENTITY_TRACK_IOU_THRESHOLD", "0.10"))
+IDENTITY_LOST_TIMEOUT = float(os.getenv("IDENTITY_LOST_TIMEOUT", "30.0"))
+# Identity-expiry guard. If a track was SILENT (no IoU match) for more
+# than this many seconds and then gets re-matched, demote identity_name
+# to "" until the face-recognizer re-confirms it. Prevents the bug
+# where a stranger walks into a recently-identified person's last bbox
+# spot and inherits the wrong name. Must be STRICTLY GREATER than
+# IDENTITY_KEY_TTL_SEC (face-recognizer's identity_state hash TTL, 5s)
+# so a stale identity_state entry can't refresh the name onto the
+# stranger's track in the gap. 6s default.
+IDENTITY_PERSIST_GAP_SECS = float(os.getenv("IDENTITY_PERSIST_GAP_SECS", "6.0"))
 
 # Re-exported snapshot key templates. The underscore aliases preserve the
 # names the legacy monolithic tracker.py used internally so manager.py can

@@ -315,3 +315,208 @@ class TestTrackedPersonSerialization:
                      keypoints=kps_standing)
         assert p.action == "standing", \
             f"stationary standing person must stay 'standing', got {p.action}"
+
+
+class TestIdentityPersistence:
+    """Identified tracks must survive scale changes + brief gaps; the
+    track ID + identity_name should NOT get destroyed and re-spawned as
+    Unknown when an identified person walks far away or briefly drops
+    out of detection. But: when a stranger walks into an identified
+    person's recently-vacated bbox spot, the identity must NOT
+    incorrectly inherit."""
+
+    def _make_tracker(self):
+        """Build a PersonTracker with a fake redis. Mirrors the
+        FakeRedis pattern used in test_vehicles.py."""
+        import importlib
+        from services.tracker.core import manager as mgr
+
+        importlib.reload(mgr)
+
+        class FakeRedis:
+            def __init__(self):
+                self._h = {}
+                self._streams = {}
+            def hget(self, k, f):
+                return self._h.get(k, {}).get(f)
+            def hset(self, k, *args, **kw):
+                self._h.setdefault(k, {})
+                if "mapping" in kw:
+                    self._h[k].update(kw["mapping"])
+                return 1
+            def hgetall(self, k):
+                return {}
+            def xadd(self, k, fields, **kw):
+                self._streams.setdefault(k, []).append(('0-0', fields))
+                return '0-0'
+            def setex(self, *a, **kw):
+                pass
+            def get(self, k):
+                return None
+
+        return mgr.PersonTracker(FakeRedis())
+
+    def test_identified_track_uses_looser_iou_threshold(self):
+        """An identified track should match a much-smaller, much-shifted
+        bbox (IoU well below the default 0.3 but above 0.10). Without
+        the looser threshold, walking-away triggers track loss + identity
+        wipe."""
+        from services.tracker.core.config import IDENTITY_TRACK_IOU_THRESHOLD
+
+        m = self._make_tracker()
+        # Spawn + accumulate enough frames to commit the identity.
+        big_bbox = [100, 100, 300, 600]  # 200x500
+        m.update(
+            [{"bbox": big_bbox, "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        track_id = next(iter(m.tracked))
+        m.tracked[track_id].identity_name = "Dad"
+
+        # Far-away bbox: shifted + much smaller. IoU well under 0.3
+        # but above 0.10. Without the per-track lower threshold this
+        # would NOT match.
+        far_bbox = [340, 220, 380, 320]  # 40x100, shifted right + down
+        from services.tracker.core.config import IDENTITY_TRACK_IOU_THRESHOLD as _ITHR
+        m.update(
+            [{"bbox": far_bbox, "confidence": 0.8, "keypoints": []}],
+            timestamp=1000.5,
+        )
+        # Identified track must still be there with the same ID.
+        assert track_id in m.tracked, \
+            "identified track must survive low-IoU re-match"
+        assert m.tracked[track_id].identity_name == "Dad", \
+            "identity should be preserved on low-IoU match"
+
+    def test_unidentified_track_keeps_strict_iou_threshold(self):
+        """Negative case: an unidentified track must NOT inherit a
+        wildly-shifted small bbox via the looser threshold. Only
+        identified tracks get the looser matching."""
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 300, 600], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        original_track_id = next(iter(m.tracked))
+        # NO identity_name set — track is unidentified.
+
+        # Same far-shifted small bbox as before. With the strict 0.3
+        # threshold, this should NOT match the original track → it
+        # spawns a new one.
+        m.update(
+            [{"bbox": [340, 220, 380, 320], "confidence": 0.8, "keypoints": []}],
+            timestamp=1000.5,
+        )
+        # Either the small far-shifted bbox spawned a new track, OR
+        # the original track is still at its original bbox (unchanged).
+        # The key invariant: small-far-bbox didn't take over the
+        # original track via the looser threshold.
+        original = m.tracked.get(original_track_id)
+        if original is not None:
+            assert original.bbox == [100, 100, 300, 600], \
+                "unidentified track must keep its original bbox; did not match the far one"
+
+    def test_identified_track_survives_long_silent_gap(self):
+        """Identified track stays in self.tracked through a 25-second
+        silent gap — longer than self.lost_timeout (8 s) but under
+        IDENTITY_LOST_TIMEOUT (30 s)."""
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 300, 600], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        track_id = next(iter(m.tracked))
+        m.tracked[track_id].identity_name = "Dad"
+
+        # Empty detection list at t=25 → stale-prune step runs but
+        # IDENTITY_LOST_TIMEOUT=30 keeps identified tracks alive.
+        m.update([], timestamp=1025.0)
+        assert track_id in m.tracked, \
+            "identified track must survive a 25 s silent gap"
+
+    def test_unidentified_track_pruned_at_normal_lost_timeout(self):
+        """Negative: unidentified track must STILL be pruned at the
+        default 8 s threshold — the longer IDENTITY_LOST_TIMEOUT only
+        applies when identity_name is set."""
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 300, 600], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        track_id = next(iter(m.tracked))
+        # NO identity_name set
+
+        m.update([], timestamp=1012.0)
+        assert track_id not in m.tracked, \
+            "unidentified track must be pruned at the 8 s lost_timeout"
+
+    def test_identity_demoted_on_re_match_after_long_silent_gap(self):
+        """Live-regression target: a stranger walking into an
+        identified person's recently-vacated bbox spot must NOT
+        inherit the original name. After IDENTITY_PERSIST_GAP_SECS
+        of silence, the next re-match demotes identity_name to ''
+        (face-recognizer will re-evaluate)."""
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 300, 600], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        track_id = next(iter(m.tracked))
+        m.tracked[track_id].identity_name = "Dad"
+        m.tracked[track_id].last_identity_confirmation_ts = 1000.0
+
+        # 10 s gap (above the 6 s persist gap, below the 30 s lost
+        # timeout for identified). Then a new detection at the same
+        # spot — could be Dad returning, could be a stranger.
+        m.update(
+            [{"bbox": [105, 100, 305, 600], "confidence": 0.85, "keypoints": []}],
+            timestamp=1010.0,
+        )
+        # Track ID preserved (still the same one).
+        assert track_id in m.tracked, "track ID must be preserved"
+        # Identity demoted to empty — face-recognizer will re-confirm.
+        assert m.tracked[track_id].identity_name == "", \
+            f"identity must be demoted after 10 s silent gap, got '{m.tracked[track_id].identity_name}'"
+
+    def test_identity_NOT_demoted_when_face_confirmed_during_gap(self):
+        """If face-recognizer continued confirming the identity during
+        a pose-detection gap (face visible while body wasn't),
+        last_identity_confirmation_ts is fresh → no demotion on
+        re-match."""
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 300, 600], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        track_id = next(iter(m.tracked))
+        m.tracked[track_id].identity_name = "Dad"
+        # Pose lost at t=0, but face-recognizer confirmed at t=5 (during gap).
+        m.tracked[track_id].last_identity_confirmation_ts = 1005.0
+
+        m.update(
+            [{"bbox": [105, 100, 305, 600], "confidence": 0.85, "keypoints": []}],
+            timestamp=1010.0,
+        )
+        assert m.tracked[track_id].identity_name == "Dad", \
+            "identity must NOT be demoted when face-recognizer confirmed during the gap"
+
+    def test_identity_not_demoted_for_short_gap(self):
+        """A brief occlusion (≤ IDENTITY_PERSIST_GAP_SECS) must NOT
+        trigger identity demotion — don't break normal walk-behind-tree
+        scenarios."""
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 300, 600], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        track_id = next(iter(m.tracked))
+        m.tracked[track_id].identity_name = "Dad"
+        m.tracked[track_id].last_identity_confirmation_ts = 1000.0
+
+        # 4 s gap — under the 6 s threshold
+        m.update(
+            [{"bbox": [105, 100, 305, 600], "confidence": 0.85, "keypoints": []}],
+            timestamp=1004.0,
+        )
+        assert m.tracked[track_id].identity_name == "Dad", \
+            "brief gap (< IDENTITY_PERSIST_GAP_SECS) must preserve identity"

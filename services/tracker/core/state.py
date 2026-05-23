@@ -165,6 +165,13 @@ class TrackedPerson:
         self._pending_count = 0            # Consecutive frames with pending action
         self._last_action_event_ts = 0.0   # Last action_changed emit time (cooldown)
         self.identity_name = ""            # Name from face recognition (sticky)
+        # Timestamp of the last time _update_identities matched a known
+        # name to this track. Used by the identity-expiry guard: if a
+        # track goes silent for > IDENTITY_PERSIST_GAP_SECS and gets
+        # re-matched, identity_name is demoted unless this timestamp
+        # falls within the silence window (i.e., face-recognizer
+        # continued seeing the face during the pose-detection gap).
+        self.last_identity_confirmation_ts = 0.0
         # Identity-flip debounce state. _pending_identity is the candidate
         # name we're observing; _pending_identity_count is how many
         # consecutive cycles it has appeared. The current sticky identity
