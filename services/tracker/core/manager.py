@@ -48,6 +48,8 @@ from .config import (
     IDENTITY_TRACK_IOU_THRESHOLD,
     IDENTITY_LOST_TIMEOUT,
     IDENTITY_PERSIST_GAP_SECS,
+    PERSON_MATCH_DIST_RATIO,
+    PERSON_CENTER_MATCH_STALE_SECS,
     stream_key,
 )
 from .iou import compute_iou
@@ -152,6 +154,54 @@ class PersonTracker(
         pid = f"person_{self.next_id:04d}"
         self.next_id += 1
         return pid
+
+    def _try_live_person_center_match(
+        self, bbox: list, current_ts: float, matched_track_ids: set,
+    ) -> str | None:
+        """Fallback person-match by center distance when primary IoU failed.
+
+        Mirrors `_try_live_center_match` (vehicles) but tighter — persons
+        are smaller targets and walk slower per-frame, so the radius is
+        `bbox_w * PERSON_MATCH_DIST_RATIO` (default 1.0×, vs 3.5× for
+        vehicles). Without this fallback, a person whose YOLO-pose bbox
+        jitters between frames (turning sideways, brief occlusion) drops
+        below the 0.3 IoU threshold and spawns a new track — observed
+        2026-05-23 producing 12 track IDs for 3 physical people.
+
+        SKIPS:
+          - identified tracks (they have their own looser path via
+            IDENTITY_TRACK_IOU_THRESHOLD=0.10; we don't want an
+            identity_name to absorb a stranger walking nearby)
+          - tracks already matched in THIS frame (matched_track_ids) so
+            two persons side-by-side both get their own track id
+          - stale tracks (last_seen > PERSON_CENTER_MATCH_STALE_SECS) —
+            the bbox_w radius grows large after a few seconds and could
+            grab an unrelated person; normal lost-timeout handles those
+
+        Returns the matched track_id or None. Does not modify state.
+        """
+        if not self.tracked:
+            return None
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        bbox_w = max(1.0, bbox[2] - bbox[0])
+        max_dist = bbox_w * PERSON_MATCH_DIST_RATIO
+        best_id = None
+        best_dist = max_dist
+        for track_id, person in self.tracked.items():
+            if track_id in matched_track_ids:
+                continue
+            if person.identity_name:
+                continue
+            if (current_ts - person.last_seen) > PERSON_CENTER_MATCH_STALE_SECS:
+                continue
+            px = (person.bbox[0] + person.bbox[2]) / 2
+            py = (person.bbox[1] + person.bbox[3]) / 2
+            dist = ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_id = track_id
+        return best_id
 
     def _process_vehicle_detections(
         self, detections: list, timestamp: float,
@@ -524,6 +574,23 @@ class PersonTracker(
             if (best_track_id is not None
                     and self.tracked[best_track_id].identity_name):
                 match_threshold = min(match_threshold, IDENTITY_TRACK_IOU_THRESHOLD)
+
+            # Plain-track center-distance fallback (mirror of vehicle
+            # `_try_live_center_match` but tighter). Catches the case
+            # where YOLO-pose's bbox jitter between frames drops the
+            # IoU below 0.3 even though it's clearly the same person —
+            # the most common cause of track fragmentation (observed
+            # 2026-05-23: 3 humans walking out → 12 track IDs because
+            # bbox shape jittered as they turned sideways). Skips
+            # identified tracks (those use IDENTITY_TRACK_IOU_THRESHOLD)
+            # and tracks already matched in this frame.
+            if best_iou < match_threshold or best_track_id is None:
+                fallback_id = self._try_live_person_center_match(
+                    bbox, current_time, matched_track_ids,
+                )
+                if fallback_id is not None:
+                    best_track_id = fallback_id
+                    best_iou = match_threshold  # force the gate to accept
 
             if best_iou >= match_threshold and best_track_id not in matched_track_ids:
                 # Identity-expiry guard. If this track was silent for

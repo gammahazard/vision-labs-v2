@@ -209,6 +209,30 @@ IDENTITY_LOST_TIMEOUT = float(os.getenv("IDENTITY_LOST_TIMEOUT", "30.0"))
 # stranger's track in the gap. 6s default.
 IDENTITY_PERSIST_GAP_SECS = float(os.getenv("IDENTITY_PERSIST_GAP_SECS", "6.0"))
 
+# --- Person center-distance fallback (mirrors `_try_live_center_match` for
+# vehicles, but much tighter because persons are smaller targets and walk
+# slower per-frame than cars). When the primary IoU match against a tracked
+# person fails (because YOLOv8-pose jittered the bbox > 0.3 IoU between
+# consecutive frames — common when a person turns sideways, briefly
+# occludes, or YOLO renders a slightly different bbox shape), this fallback
+# accepts the match if the new detection's bbox center is within
+# `bbox_w * PERSON_MATCH_DIST_RATIO` of the tracked person's center AND
+# the track has been seen recently (within PERSON_CENTER_MATCH_STALE_SECS).
+# Without this fallback, 3 people walking out of a house can fragment into
+# 12+ track IDs and inflate `num_people` to 11 (observed 2026-05-23 cam1).
+#
+# DELIBERATELY SKIPPED FOR IDENTIFIED TRACKS — they already have the looser
+# `IDENTITY_TRACK_IOU_THRESHOLD` (0.10) for that purpose, and we don't want
+# an identity_name to absorb a stranger who happens to walk within a
+# bbox-width of the identified person's last spot.
+PERSON_MATCH_DIST_RATIO = float(os.getenv("PERSON_MATCH_DIST_RATIO", "1.0"))
+# Stale-track skip for the center-distance fallback. If a track hasn't been
+# seen for longer than this, don't let center-distance rescue it — the
+# bbox-w radius becomes a huge region after a few seconds and could grab
+# an unrelated person. After this window, normal lost-timeout pruning
+# handles the track anyway.
+PERSON_CENTER_MATCH_STALE_SECS = float(os.getenv("PERSON_CENTER_MATCH_STALE_SECS", "1.5"))
+
 # Re-exported snapshot key templates. The underscore aliases preserve the
 # names the legacy monolithic tracker.py used internally so manager.py can
 # import them under either name.

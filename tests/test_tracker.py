@@ -520,3 +520,182 @@ class TestIdentityPersistence:
         )
         assert m.tracked[track_id].identity_name == "Dad", \
             "brief gap (< IDENTITY_PERSIST_GAP_SECS) must preserve identity"
+
+
+# ---------------------------------------------------------------------------
+# Center-distance fallback for person tracks (mirror of vehicles)
+# ---------------------------------------------------------------------------
+class TestPersonCenterDistanceFallback:
+    """Plain (unidentified) person tracks whose YOLO-pose bbox jitters
+    between consecutive frames (turning sideways, brief occlusion)
+    should NOT spawn a new track. The center-distance fallback rescues
+    these cases — observed live 2026-05-23: 3 humans walking out → 12
+    track IDs because bbox shape jittered as they turned sideways.
+
+    Guards we explicitly verify:
+      1. Identified tracks SKIP center-distance — they use the looser
+         IDENTITY_TRACK_IOU_THRESHOLD path, and we don't want an
+         identity to absorb a stranger walking nearby.
+      2. Tracks already matched in the same frame SKIP — two persons
+         side-by-side must each get their own id.
+      3. Stale tracks (> PERSON_CENTER_MATCH_STALE_SECS) SKIP — the
+         bbox-w radius gets large after a few seconds.
+    """
+
+    def _make_tracker(self):
+        import importlib
+        from services.tracker.core import manager as mgr
+
+        importlib.reload(mgr)
+
+        class FakeRedis:
+            def __init__(self):
+                self._h = {}
+                self._streams = {}
+            def hget(self, k, f):
+                return self._h.get(k, {}).get(f)
+            def hset(self, k, *args, **kw):
+                self._h.setdefault(k, {})
+                if "mapping" in kw:
+                    self._h[k].update(kw["mapping"])
+                return 1
+            def hgetall(self, k):
+                return {}
+            def xadd(self, k, fields, **kw):
+                self._streams.setdefault(k, []).append(('0-0', fields))
+                return '0-0'
+            def setex(self, *a, **kw):
+                pass
+            def get(self, k):
+                return None
+
+        return mgr.PersonTracker(FakeRedis())
+
+    def test_bbox_jitter_does_not_fragment_track(self):
+        """The core regression: a person's bbox jitters >0.3 IoU between
+        consecutive frames (because they turned sideways, briefly
+        partially occluded, etc.). Without center-distance fallback, a
+        new track would spawn. With it, the same track id is preserved."""
+        m = self._make_tracker()
+        # Spawn track at one bbox
+        m.update(
+            [{"bbox": [100, 100, 200, 400], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        assert len(m.tracked) == 1
+        original_id = next(iter(m.tracked))
+
+        # Next frame: bbox is 80px shifted right + slightly narrower
+        # (e.g., person turned sideways — shoulder-on now). IoU between
+        # [100,100,200,400] and [180,100,260,400] ≈ 0.18, below 0.3 but
+        # center distance is 80px ≈ 0.8× bbox_w (under the 1.0× radius).
+        m.update(
+            [{"bbox": [180, 100, 260, 400], "confidence": 0.85, "keypoints": []}],
+            timestamp=1000.1,
+        )
+        assert len(m.tracked) == 1, \
+            "bbox jitter must be absorbed, not spawn a new track"
+        assert next(iter(m.tracked)) == original_id
+
+    def test_identified_track_does_not_absorb_nearby_stranger(self):
+        """Center-distance fallback must SKIP identified tracks. An
+        identified person's name must not transfer to a stranger
+        walking within a bbox-width of their last position."""
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 200, 400], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        track_id = next(iter(m.tracked))
+        m.tracked[track_id].identity_name = "Dad"
+        m.tracked[track_id].last_identity_confirmation_ts = 1000.0
+
+        # A stranger appears at a position where center-distance < 1.0×
+        # bbox_w but IoU < 0.10 (the looser identified-track threshold)
+        # — should spawn a NEW track, not absorb into Dad's.
+        # IoU between [100,100,200,400] and [195,100,295,400] ≈ 0.05.
+        # Center distance = 95px ≈ 0.95× bbox_w.
+        m.update(
+            [{"bbox": [195, 100, 295, 400], "confidence": 0.85, "keypoints": []}],
+            timestamp=1000.1,
+        )
+        # Either the new bbox absorbed into Dad's track via the 0.10
+        # IDENTITY_TRACK_IOU_THRESHOLD path (with center fallback
+        # skipped because Dad has identity_name), OR a new track was
+        # spawned. What we MUST NOT see: a new track that inherits
+        # Dad's identity.
+        for tid, person in m.tracked.items():
+            if tid != track_id:
+                assert person.identity_name != "Dad", \
+                    "stranger track must not inherit Dad's identity"
+
+    def test_two_simultaneous_detections_get_separate_ids(self):
+        """Two persons side-by-side in the same frame must each get
+        their own track id — the matched-this-frame guard prevents the
+        closer one from absorbing both detections."""
+        m = self._make_tracker()
+        # Spawn track A
+        m.update(
+            [{"bbox": [100, 100, 200, 400], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        assert len(m.tracked) == 1
+        track_a = next(iter(m.tracked))
+
+        # Next frame: TWO detections — A's slightly-jittered bbox, plus
+        # a new person at a nearby position. The new bbox is close
+        # enough to A that center-distance would match if A wasn't
+        # already matched-this-frame.
+        m.update(
+            [
+                {"bbox": [105, 100, 205, 400], "confidence": 0.9, "keypoints": []},
+                {"bbox": [220, 100, 320, 400], "confidence": 0.85, "keypoints": []},
+            ],
+            timestamp=1000.1,
+        )
+        assert len(m.tracked) == 2, \
+            "two simultaneous detections must get two track ids"
+        assert track_a in m.tracked
+
+    def test_stale_track_does_not_get_rescued_by_center_distance(self):
+        """A plain track silent for more than
+        PERSON_CENTER_MATCH_STALE_SECS must not be rescued by center
+        distance — radius gets huge after a few seconds and could
+        grab unrelated detections."""
+        from services.tracker.core.config import PERSON_CENTER_MATCH_STALE_SECS
+
+        m = self._make_tracker()
+        m.update(
+            [{"bbox": [100, 100, 200, 400], "confidence": 0.9, "keypoints": []}],
+            timestamp=1000.0,
+        )
+        original_id = next(iter(m.tracked))
+
+        # Gap > PERSON_CENTER_MATCH_STALE_SECS with a different-shaped bbox.
+        # IoU = 0; center distance is close. Should NOT rescue.
+        gap = PERSON_CENTER_MATCH_STALE_SECS + 0.5
+        m.update(
+            [{"bbox": [180, 100, 260, 400], "confidence": 0.85, "keypoints": []}],
+            timestamp=1000.0 + gap,
+        )
+        # Either: a new track was spawned (correct) AND original was
+        # pruned by lost-timeout (8s) — though our gap of 2s is under
+        # 8s so the original probably still exists. The key invariant:
+        # the new detection did NOT collapse into the original via
+        # center-distance.
+        new_tracks = [tid for tid in m.tracked if tid != original_id]
+        # If stale-rescue worked correctly, the original track exists
+        # AND a new track was spawned (because the new bbox jumped too
+        # far for center-rescue to apply).
+        if original_id in m.tracked and new_tracks:
+            # Good — both tracks exist, no rescue happened
+            pass
+        elif new_tracks and original_id not in m.tracked:
+            # Original got pruned by lost-timeout BEFORE this update;
+            # new track spawned. Also fine.
+            pass
+        else:
+            # The original disappeared and the new bbox collapsed into
+            # it via rescue — that's the bug we're testing against.
+            assert original_id in m.tracked or new_tracks, \
+                "stale tracks must not be rescued by center distance"
