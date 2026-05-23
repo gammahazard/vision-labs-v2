@@ -118,7 +118,7 @@ For services that COPY a single `.py` into their image (tracker, orchestrator), 
 
 ## 7. Test conventions
 
-- ~440 tests in `/tests/` and growing — run `pytest -q` for the live count. Activate via `source .venv-test/bin/activate`.
+- ~490 tests in `/tests/` and growing — run `pytest -q` for the live count. Activate via `source .venv-test/bin/activate`.
 - `FakeRedis` in `tests/test_vehicles.py` is the standard stub for Redis interactions.
 - Tests that monkeypatch `routes.cameras.list_enabled_cameras` etc. — do it on the **module**, not the package facade (e.g. `routes.notifications._shared.TELEGRAM_BOT_TOKEN`, not `routes.notifications.TELEGRAM_BOT_TOKEN`). The package facade re-exports immutable references; patching it doesn't propagate.
 - When a refactor invalidates a test, **prefer fixing the test** over `@pytest.mark.stale`. Stale tests rot. Fix or delete.
@@ -239,7 +239,7 @@ The repo has a layered defense setup configured both at the GitHub level (repo S
 | **Dependabot version updates** | Weekly grouped PRs to bump deps proactively. Patch + minor only — ignores semver-major (manual review for those). | `.github/dependabot.yml` |
 | **Secret scanning alerts + push protection** | Detects committed secrets; push protection BLOCKS pushes containing detected secrets at git push time. | Repo Settings toggle |
 | **Branch protection on main** | Blocks force-push + deletion; requires `pytest` status check on PR merges. Admin can bypass for direct pushes; force/delete is hard-no for everyone including admins. | `gh api repos/.../branches/main/protection` |
-| **`tests.yml` (pytest)** | Runs the 377-test pytest suite on every push to main + every PR. Required check before PR merge. Includes 64 orchestrator tests covering the profile allowlist gate, config-apply allowlist + per-cam expansion, cred scrubbing on the audit stream, and the `desired_profiles → None`-on-Redis-error sentinel (regression here would tear down every camera on a transient Redis hiccup). | `.github/workflows/tests.yml` |
+| **`tests.yml` (pytest)** | Runs the ~490-test pytest suite on every push to main + every PR. Required check before PR merge. Includes 73 orchestrator tests covering the profile allowlist gate, config-apply allowlist + per-cam expansion, cred scrubbing on the audit stream, and the `desired_profiles → None`-on-Redis-error sentinel (regression here would tear down every camera on a transient Redis hiccup). | `.github/workflows/tests.yml` |
 | **`tests.yml` (lint)** | `ruff check .` with the Pyflakes `F` ruleset. Catches the NameError-class regressions (`F821`) and unused/redefined imports at PR time. Config in `ruff.toml`. Required check for PR merges (alongside `pytest`). See §7 for the rule scope rationale. | `.github/workflows/tests.yml` + `ruff.toml` |
 | **`/audit-repo` skill** | Project-specific audit (docs drift, code quality, architecture, schema-drift between services). See §12. | `.claude/skills/audit-repo/` |
 | **DOMPurify at innerHTML sinks** | Runtime XSS hardening in the dashboard's JS. Every dashboard JS file that writes to `innerHTML` uses a `_safeHtml(html)` helper that wraps `DOMPurify.sanitize(html, {ADD_TAGS: [...], ADD_ATTR: [...]})`. | `services/dashboard/static/js/lib/dompurify.min.js` + `_safeHtml()` defined at the top of `ai.js`, `monitoring.js`, `events.js`, `browse.js` |

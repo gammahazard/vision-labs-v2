@@ -300,7 +300,8 @@ camera (where it makes semantic sense — events, system status).
 | `faces.py` | `/api/faces` | Face enrollment proxy to face-recognizer service (port 8081 not host-exposed) | shared DB |
 | `unknowns.py` | `/api/unknowns` | Unknown face management (list, label, delete) | shared DB |
 | `browse.py` | `/api/browse` | Vehicle snapshot browser; `/days`, `/days/{date}`, `/snapshot/{camera}/{date}/{filename}` (also `/{date}/{filename}` legacy form) | ✅ |
-| `clips.py` | `/api/clips` | Video clip listing, serving, deletion | n/a |
+| `containers.py` | `/api/containers` | Docker container state + uptime listing (read-only; the orchestrator owns the socket, dashboard just reads names + Up/Exited via `orchestrator:audit`) | n/a |
+| `setup.py` | `/api/setup` | First-run wizard endpoints — GPU probe, ONVIF camera discovery, config-apply | n/a |
 | `conditions.py` | `/api/conditions` | Time period, sunrise/sunset, weather (global) | n/a (global) |
 | `metrics.py` | `/api/metrics` | Prometheus metrics endpoint | per-camera (planned) |
 | `auth.py` | `/api/auth` | Login, logout, session, password rotation | n/a |
@@ -324,6 +325,7 @@ camera (where it makes semantic sense — events, system status).
 | `ai.html` | `/ai.html` | AI chat + vision + DVR + image generation |
 | `monitoring.html` | `/monitoring.html` | System health + embedded Grafana |
 | `telegram.html` | `/telegram.html` | Telegram user management + access log |
+| `setup.html` | `/setup.html` | First-run wizard: hardware probe → tier recommendation → location/retention → ONVIF camera discovery → Telegram pairing. Auto-shown until `/data/setup-state/setup.json` exists (middleware gate in `server.py`). |
 | `login.html` | `/login.html` | Authentication page |
 
 ### JavaScript Modules
@@ -495,7 +497,7 @@ All alerts are sent to **every approved Telegram user** (multi-user support).
 3. Route to command handler
 4. Log to `telegram:access_log` stream + per-user audit files on NAS
 
-### Commands (17 total, one file per command under `routes/bot_commands/`)
+### Commands (16 total, one file per command under `routes/bot_commands/`)
 **User:** `/snapshot [cam]`, `/clip [Ns] [cam]`, `/status [cam]`, `/who [cam]`, `/events [N] [cam]`, `/zones [cam]`, `/timelapse [YYYY-MM-DD] [cam]`, `/analyze [cam] [prompt]`, `/ask <question>`, `/rules`, `/night`, `/faces`, `/cameras`, `/start`, `/help`.
 
 **Admin only (role=admin in `telegram:users`):** `/arm`, `/disarm`.
