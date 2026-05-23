@@ -10,14 +10,18 @@ ENDPOINTS:
     GET  /api/browse/days/{date}     — List snapshot files for a date (YYYY-MM-DD)
     GET  /api/browse/snapshot/{path} — Serve a snapshot JPEG from disk
     GET  /api/browse/faces           — List enrolled faces with photo URLs
+    GET  /api/browse/tracks/{date}   — Per-track HD-crop groups (Phase 1 vehicle-attributes)
+    POST /api/browse/label/{date}/{camera}/{track_dir} — Save user labels for a track (Phase 4 labeling)
+    GET  /api/browse/label-classes   — Class lists for the label-form dropdowns
 """
 
 import json
 import os
 import re
+import tempfile
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 import httpx
 
@@ -25,6 +29,12 @@ import routes as ctx
 from contracts.tz import TZ_LOCAL  # validated single source of truth
 
 router = APIRouter(prefix="/api/browse", tags=["browse"])
+
+# Where the vehicle-attributes class JSONs are bind-mounted in the
+# dashboard container. See docker-compose.yml's dashboard.volumes block.
+# Files: color_classes.json (10), body_classes.json (9), make_classes.json
+# (49), model_classes.json (196), make_to_models.json (49-key dict).
+_VA_CLASSES_DIR = "/app/vehicle_attributes_classes"
 
 
 # Vehicle snapshots are stored per-camera at:
@@ -246,6 +256,12 @@ async def list_day_tracks(date: str, camera: str = ""):
                 "duration_seconds": meta.get("duration_seconds", 0),
                 "voting_samples": meta.get("voting_samples", 1),
                 "attributes": meta.get("attributes", {}),
+                # Phase 4 labeling: surfaced so the UI knows what's
+                # already labeled vs needs labeling. Empty dict (not
+                # null) when unset so the frontend doesn't have to
+                # null-guard. metadata.json may not have this key at
+                # all on tracks flushed before Phase 4 shipped.
+                "user_labels": meta.get("user_labels", {}),
             })
 
     tracks.sort(key=lambda t: t.get("first_seen") or 0, reverse=True)
@@ -380,3 +396,238 @@ async def list_faces_for_browse():
     except Exception as e:
         ctx.logger.warning(f"Browse faces error: {e}")
         return JSONResponse(status_code=503, content={"error": "Face recognizer not available"})
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 labeling — user-supplied ground-truth labels for the multi-head
+# classifier's predictions. Saved into metadata.json's `user_labels` block;
+# never overwritten by the vehicle-attributes service (which only writes
+# the `attributes` block on flush). Two endpoints:
+#   GET  /api/browse/label-classes — dropdown contents for the UI form
+#   POST /api/browse/label/{date}/{camera}/{track_dir} — save a label
+# A future PR adds k-NN-based make/model prediction backed by these labels.
+# ---------------------------------------------------------------------------
+
+# In-memory cache of the class JSONs. Loaded on first request, refreshed
+# whenever the file mtime changes (so a rebuild of vehicle-attributes
+# that updates the class lists doesn't require a dashboard restart).
+_class_cache = {"mtime": 0, "data": None}
+
+
+def _load_label_classes() -> dict:
+    """Return all class lists from /app/vehicle_attributes_classes/.
+
+    Refreshes on mtime change. If the dir doesn't exist (older docker-
+    compose.yml without the bind mount), returns empty lists — the UI
+    falls back to free-text inputs for everything.
+    """
+    files = [
+        "color_classes.json", "body_classes.json",
+        "make_classes.json", "model_classes.json",
+        "make_to_models.json",
+    ]
+    # Compute the max mtime across all files; if newer than cache, reload.
+    try:
+        latest = max(
+            os.path.getmtime(os.path.join(_VA_CLASSES_DIR, f))
+            for f in files
+            if os.path.exists(os.path.join(_VA_CLASSES_DIR, f))
+        )
+    except ValueError:
+        latest = 0  # dir empty or missing
+
+    if _class_cache["data"] is not None and latest <= _class_cache["mtime"]:
+        return _class_cache["data"]
+
+    out = {
+        "colors": [],
+        "body_types": [],
+        "makes": [],
+        "models": [],
+        "make_to_models": {},
+    }
+    name_map = {
+        "color_classes.json": "colors",
+        "body_classes.json": "body_types",
+        "make_classes.json": "makes",
+        "model_classes.json": "models",
+        "make_to_models.json": "make_to_models",
+    }
+    for fname, key in name_map.items():
+        path = os.path.join(_VA_CLASSES_DIR, fname)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path) as fh:
+                out[key] = json.load(fh)
+        except (OSError, ValueError) as e:
+            ctx.logger.warning(f"Failed to load {fname}: {e}")
+
+    _class_cache["mtime"] = latest
+    _class_cache["data"] = out
+    return out
+
+
+@router.get("/label-classes")
+async def get_label_classes():
+    """Class lists for the label-form dropdowns in the Browse → crops modal.
+
+    Returns:
+      {
+        "colors":         ["yellow", "orange", ...],     # 10 entries
+        "body_types":     ["convertible", "coupe", ...],  # 9 entries
+        "makes":          ["AM General", "Acura", ...],   # 49 entries
+        "models":         ["AM General Hummer SUV 2000", ...], # 196 entries
+        "make_to_models": {"AM General": [...], "Acura": [...], ...}
+      }
+    """
+    return _load_label_classes()
+
+
+def _resolve_track_meta_path(date: str, camera: str, track_dir: str) -> str | None:
+    """Resolve a track's metadata.json path with the same realpath +
+    containment check used by serve_track_image. Returns None if any
+    component is malformed or if the resolved path escapes the snapshot
+    root (path-traversal defense)."""
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return None
+    cam_safe = re.sub(r"[^a-zA-Z0-9_-]", "", camera)
+    if cam_safe != camera or not cam_safe:
+        return None
+    # track_dir is the on-disk dir name like "vehicle_0050_1779561457".
+    # Allow only the same characters that storage.py emits.
+    if not re.match(r"^vehicle_[0-9]+_[0-9]+$", track_dir):
+        return None
+
+    base = ctx.VEHICLE_SNAPSHOT_DIR
+    base_real = os.path.realpath(base) + os.sep
+    candidate = os.path.realpath(
+        os.path.join(base, cam_safe, date, track_dir, "metadata.json")
+    )
+    if not candidate.startswith(base_real):
+        return None
+    return candidate
+
+
+@router.post("/label/{date}/{camera}/{track_dir}")
+async def save_track_label(date: str, camera: str, track_dir: str,
+                            request: Request):
+    """Save user labels for a track. Body keys (all optional except either
+    skipped=true OR at least one non-empty class label):
+
+      {
+        "color":      "blue",     # must be in colors class list
+        "body_type":  "sedan",    # must be in body_types class list
+        "make":       "Toyota",   # FREE TEXT — k-NN doesn't need a class
+        "model":      "Sienna 2018",  # FREE TEXT
+        "skipped":    false,
+        "skip_reason": "occluded"  # optional
+      }
+
+    Writes to metadata.json's `user_labels` block atomically (tempfile
+    + os.replace). Re-labeling overwrites the previous user_labels.
+
+    Returns: { ok: bool, user_labels: {...}, error: str | None }
+    """
+    meta_path = _resolve_track_meta_path(date, camera, track_dir)
+    if not meta_path:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "invalid date/camera/track_dir"},
+        )
+    if not os.path.exists(meta_path):
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": "track not found"},
+        )
+
+    try:
+        body = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "invalid JSON body"},
+        )
+
+    skipped = bool(body.get("skipped", False))
+    color = (body.get("color") or "").strip()
+    body_type = (body.get("body_type") or "").strip()
+    make = (body.get("make") or "").strip()
+    model = (body.get("model") or "").strip()
+
+    # Must have at least ONE field set, OR be marked skipped. An
+    # otherwise-empty label is rejected — empty saves would just churn
+    # the metadata.json mtime without recording anything.
+    if not skipped and not (color or body_type or make or model):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "label is empty (set at least one field or pass skipped=true)"},
+        )
+
+    # Validate color/body against the class lists (these heads have
+    # fixed class sets in the multihead model; labels outside the set
+    # can't be used by the retrain script even if we accept them).
+    # Make/model are intentionally free text — k-NN doesn't care about
+    # the class set, and the UI will autocomplete known values.
+    classes = _load_label_classes()
+    if color and classes.get("colors") and color not in classes["colors"]:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": f"unknown color '{color}'; must be one of {classes['colors']}"},
+        )
+    if body_type and classes.get("body_types") and body_type not in classes["body_types"]:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": f"unknown body_type '{body_type}'; must be one of {classes['body_types']}"},
+        )
+
+    # Load existing metadata.json, merge user_labels, write atomically.
+    try:
+        with open(meta_path) as fh:
+            meta = json.load(fh)
+    except (OSError, ValueError) as e:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"couldn't read metadata.json: {e}"},
+        )
+
+    user_labels = {
+        "color": color or None,
+        "body_type": body_type or None,
+        "make": make or None,
+        "model": model or None,
+        "skipped": skipped,
+        "skip_reason": body.get("skip_reason") if skipped else None,
+        "labeled_at": datetime.now(tz=TZ_LOCAL).isoformat(timespec="seconds"),
+        # Future: read from session for multi-user deployments. For now,
+        # single-user home setup → "admin" is the only labeler.
+        "labeler": "admin",
+    }
+    meta["user_labels"] = user_labels
+
+    # Atomic write: tempfile in the same dir + os.replace. Same pattern
+    # as helpers/env_writer.py — survives a mid-write crash and avoids
+    # the partial-file truncation case that a bare open(meta_path, 'w')
+    # would expose.
+    try:
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix=".metadata.json.tmp.",
+            dir=os.path.dirname(meta_path),
+        )
+        try:
+            with os.fdopen(tmp_fd, "w") as fh:
+                json.dump(meta, fh, indent=2)
+            os.replace(tmp_path, meta_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except OSError as e:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"couldn't write metadata.json: {e}"},
+        )
+
+    return {"ok": True, "user_labels": user_labels, "error": None}
