@@ -58,4 +58,15 @@ def make_redis_client(
         db=db,
         password=password,
         decode_responses=decode_responses,
+        # redis-py issues a PING every health_check_interval seconds on
+        # next command and reconnects if the socket has died. Without
+        # this, a long-running blocking call (xread block=2000 in a
+        # loop, XREADGROUP, BLPOP) on a dead TCP socket would silently
+        # hang forever. Live regression: at 23:20 UTC the va service
+        # was restarted and lost ~50 min of cam1 events (truck drive-by
+        # at 00:13 produced 9 vehicle_sample writes the va service
+        # never saw). Common on WSL2 where the host-bridge can drop
+        # idle connections without sending RST.
+        health_check_interval=int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL", "30")),
+        socket_keepalive=True,
     )
