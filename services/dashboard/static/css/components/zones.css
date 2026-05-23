@@ -1,0 +1,227 @@
+/* ---------------------------------------------------------------------------
+ * Zones — canvas overlay, controls, toolbar, sidebar list
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Zone Canvas Overlay
+ * --------------------------------------------------------------------------- */
+#zoneCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* ---------------------------------------------------------------------------
+ * Zone Controls
+ * --------------------------------------------------------------------------- */
+.live-view-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.zone-toggle-btn {
+    background: var(--bg-panel-hover);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.zone-toggle-btn:hover {
+    background: var(--border);
+    color: var(--text-primary);
+}
+
+.zone-toggle-btn.active {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border-color: rgba(59, 130, 246, 0.4);
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.2);
+}
+
+/* ---------------------------------------------------------------------------
+ * Zone Toolbar
+ * --------------------------------------------------------------------------- */
+.zone-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.zone-name-input {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 13px;
+    width: 140px;
+}
+
+.zone-name-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.zone-select {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.zone-select:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.zone-save-btn {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.zone-save-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #60a5fa, #3b82f6);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.zone-save-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.zone-cancel-btn {
+    background: var(--border);
+    color: var(--text-secondary);
+    border: none;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.zone-cancel-btn:hover {
+    background: var(--bg-panel-hover);
+    color: var(--danger);
+}
+
+.zone-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    flex: 1;
+    min-width: 200px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Zone List Panel (Sidebar)
+ * --------------------------------------------------------------------------- */
+.zone-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    border: 1px solid var(--border);
+    transition: border-color 0.2s ease;
+}
+
+.zone-card:hover {
+    border-color: var(--text-muted);
+}
+
+.zone-card-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.zone-card-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.zone-card-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.zone-card-level {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.zone-card-actions {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+}
+
+.zone-card-edit,
+.zone-card-delete {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    opacity: 0.5;
+    transition: all 0.2s ease;
+}
+
+.zone-card-edit:hover {
+    opacity: 1;
+    background: rgba(59, 130, 246, 0.15);
+}
+
+.zone-card-delete:hover {
+    opacity: 1;
+    background: var(--danger-bg);
+}
+
+.zone-count {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+

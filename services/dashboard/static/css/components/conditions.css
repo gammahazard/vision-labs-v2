@@ -1,0 +1,178 @@
+/* ---------------------------------------------------------------------------
+ * Conditions Panel — time-of-day and weather rules
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Conditions Panel — Time periods + weather
+ * --------------------------------------------------------------------------- */
+.conditions-period {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.conditions-period.period-daytime {
+    background: rgba(250, 204, 21, 0.15);
+    color: #facc15;
+}
+
+.conditions-period.period-twilight {
+    background: rgba(251, 146, 60, 0.15);
+    color: #fb923c;
+}
+
+.conditions-period.period-night {
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+}
+
+.conditions-period.period-late_night {
+    background: rgba(147, 130, 220, 0.15);
+    color: #9382dc;
+}
+
+/* Night Watch Icon — animated eye shown during night/late_night */
+.night-watch-icon {
+    display: none;
+    position: relative;
+    font-size: 0.85rem;
+    cursor: help;
+    animation: nightWatchPulse 2s ease-in-out infinite;
+    filter: drop-shadow(0 0 4px rgba(96, 165, 250, 0.6));
+}
+
+.night-watch-icon.visible {
+    display: inline-flex;
+    align-items: center;
+}
+
+@keyframes nightWatchPulse {
+
+    0%,
+    100% {
+        filter: drop-shadow(0 0 4px rgba(96, 165, 250, 0.4));
+        opacity: 0.85;
+    }
+
+    50% {
+        filter: drop-shadow(0 0 10px rgba(96, 165, 250, 0.9));
+        opacity: 1;
+    }
+}
+
+/* Tooltip */
+.night-watch-icon::after {
+    content: "Suppression disabled — all detections alert during night hours";
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    border: 1px solid rgba(96, 165, 250, 0.4);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    font-weight: 500;
+    width: max-content;
+    max-width: 220px;
+    white-space: normal;
+    line-height: 1.4;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    z-index: 100;
+}
+
+.night-watch-icon:hover::after,
+.night-watch-icon:focus::after,
+.night-watch-icon:active::after {
+    opacity: 1;
+}
+
+.conditions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.condition-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 4px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.condition-icon {
+    font-size: 1.2rem;
+}
+
+.condition-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.condition-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.conditions-schedule {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.schedule-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.schedule-row.active {
+    background: rgba(74, 222, 128, 0.08);
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.schedule-row.active .schedule-name {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.schedule-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.schedule-time {
+    font-family: 'Inter', monospace;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.schedule-row.active .schedule-time {
+    color: var(--text-secondary);
+}
+
+

@@ -1,0 +1,142 @@
+/* ---------------------------------------------------------------------------
+ * Account — notifications block, account panel, notification-pref toggles
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Notification panel
+ * --------------------------------------------------------------------------- */
+.notification-status {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.notification-result {
+    font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+ * Account Panel
+ * --------------------------------------------------------------------------- */
+.auth-username {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.setting-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+
+.setting-input {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.setting-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.setting-input::placeholder {
+    color: var(--text-muted);
+}
+
+.auth-msg {
+    font-size: 12px;
+    font-weight: 500;
+    margin-top: 8px;
+    min-height: 16px;
+}
+
+.auth-msg.success {
+    color: var(--accent);
+}
+
+.auth-msg.error {
+    color: var(--danger);
+}
+
+.btn-danger {
+    background: var(--danger-bg);
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: var(--danger);
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Toggle Row (notification preferences)
+ * --------------------------------------------------------------------------- */
+.toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    gap: 12px;
+}
+
+.toggle-row span {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Checkbox toggle switch */
+.toggle-row input[type="checkbox"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 40px;
+    height: 22px;
+    background: var(--border);
+    border-radius: 11px;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.3s ease;
+    flex-shrink: 0;
+}
+
+.toggle-row input[type="checkbox"]::before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    top: 3px;
+    left: 3px;
+    transition: all 0.3s ease;
+}
+
+.toggle-row input[type="checkbox"]:checked {
+    background: var(--accent);
+}
+
+.toggle-row input[type="checkbox"]:checked::before {
+    transform: translateX(18px);
+    background: white;
+}
+
+.notification-pref {
+    margin-bottom: 12px;
+}
+
+

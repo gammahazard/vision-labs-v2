@@ -1,0 +1,156 @@
+/* ---------------------------------------------------------------------------
+ * Events — event feed list and photo lightbox modal
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Events Panel
+ * --------------------------------------------------------------------------- */
+.events-panel {
+    min-height: 0;
+}
+
+.event-count {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.event-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+}
+
+.event-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid transparent;
+    border: 1px solid var(--border);
+    border-left: 3px solid transparent;
+    transition: background 0.2s ease;
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.event-item.appeared {
+    border-left-color: var(--accent);
+}
+
+.event-item.left {
+    border-left-color: var(--warning);
+}
+
+.event-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.event-photo {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid #06b6d4;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.event-photo:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 8px rgba(6, 182, 212, 0.5);
+}
+
+/* ---------------------------------------------------------------------------
+ * Event Photo Lightbox Modal
+ * --------------------------------------------------------------------------- */
+.event-photo-modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.event-photo-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+}
+
+.event-photo-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    animation: captureFlash 0.3s ease;
+}
+
+.event-photo-content img {
+    max-width: 90vw;
+    max-height: 75vh;
+    border-radius: var(--radius);
+    border: 2px solid var(--border);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    object-fit: contain;
+}
+
+.event-photo-caption {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-panel);
+    padding: 6px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+}
+
+.event-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.event-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.event-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 24px 0;
+}
+
+

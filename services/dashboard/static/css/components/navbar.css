@@ -1,0 +1,169 @@
+/* ---------------------------------------------------------------------------
+ * Navbar — top navigation bar with logo, links, and live stats
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Navbar — Top navigation bar with logo, links, and live stats
+ * --------------------------------------------------------------------------- */
+.navbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 1.5rem;
+    height: 52px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    /* Stay pinned to the top as the page scrolls. Without this, long pages
+       like Cameras and Monitoring scroll the navbar away on mobile. */
+    position: sticky;
+    top: 0;
+    z-index: 30;
+}
+
+.navbar-left {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    min-width: 0;
+}
+
+.navbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    color: var(--text-primary);
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.navbar-logo {
+    color: var(--accent);
+    font-size: 1.2rem;
+}
+
+.navbar-links {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.nav-link {
+    padding: 0.4rem 0.9rem;
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: color 0.15s ease, background 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.nav-link:hover,
+.nav-link:active {
+    color: var(--text-primary);
+    background: #1a2235;
+}
+
+.nav-link--active {
+    color: var(--accent);
+    background: var(--accent-bg);
+}
+
+.navbar-stats {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-shrink: 0;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+/* Event filter pills — minor desktop hover affordance. Base look is set
+   inline in events.js so the bar renders with no FOUC. */
+.event-filter-pill:hover:not(.active) {
+    background: rgba(96, 165, 250, 0.18) !important;
+    color: #cbd5e1 !important;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.logo-icon {
+    font-size: 24px;
+    color: var(--accent);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.logo h1 {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.status-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.status-badge.disconnected {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.header-right {
+    display: flex;
+    gap: 24px;
+}
+
+.stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+}
+
+.stat-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+

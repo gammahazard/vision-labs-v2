@@ -1,0 +1,81 @@
+/* ---------------------------------------------------------------------------
+ * Live View — main camera preview panel
+ *
+ * Extracted from style.css during the 2026-05-22 modularity split.
+ * --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * Live View Panel
+ * --------------------------------------------------------------------------- */
+.live-view-panel {
+    min-height: 0;
+}
+
+.live-badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--danger);
+    animation: blink 1.5s ease-in-out infinite;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
+}
+
+.video-container {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.video-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+#zoneCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.no-signal {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-muted);
+}
+
+.no-signal-icon {
+    font-size: 48px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.no-signal p {
+    font-size: 14px;
+}
+
+.no-signal.hidden {
+    display: none;
+}
+
+
