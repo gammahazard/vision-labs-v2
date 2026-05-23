@@ -261,7 +261,12 @@
     align-items: center;
     justify-content: center;
     z-index: 1500;
-    padding: 1.5rem;
+    padding: 0.75rem;
+    /* Stop touch drags on the backdrop region from scrolling whatever's
+       underneath (browse panel + main page). Modal-internal scroll still
+       works because .crops-modal-body has its own overflow: auto. */
+    touch-action: none;
+    overscroll-behavior: contain;
 }
 .crops-modal-panel {
     background: #1a2235;
@@ -271,13 +276,19 @@
     width: 100%;
     /* `dvh` resolves to the dynamic viewport (excludes mobile URL bar
        when visible). Older browsers fall back to the 85vh static value
-       via the first declaration. Without this, the modal extended below
-       Safari's URL bar and the bottom of the scroll body was invisible. */
+       via the first declaration. Match the backdrop's 0.75rem padding on
+       BOTH sides (= 1.5rem total vertical) so the panel always fits
+       inside the centered flex region; previously the panel was 1rem
+       taller than the available space, which under `align-items: center`
+       got clipped equally at the top and bottom (live regression: the
+       modal header's close button hung above the viewport on iPhone). */
     max-height: 85vh;
-    max-height: calc(100dvh - 2rem);
+    max-height: calc(100dvh - 1.5rem);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* Re-enable touches on the panel itself (backdrop sets touch-action:none). */
+    touch-action: auto;
 }
 .crops-modal-header {
     display: flex;
