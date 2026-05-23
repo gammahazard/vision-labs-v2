@@ -41,6 +41,9 @@ from .config import (
     MIN_BBOX_AREA,
     IDENTITY_GRACE_SECONDS,
     IDENTITY_POLL_INTERVAL,
+    IDENTITY_TRACK_IOU_THRESHOLD,
+    IDENTITY_LOST_TIMEOUT,
+    IDENTITY_PERSIST_GAP_SECS,
     VEHICLE_SAMPLE_EVENT,
     VEHICLE_GONE_EVENT,
     stream_key,
@@ -1095,6 +1098,11 @@ class PersonTracker:
                     best_iou = iou
                     best_person = person
             if best_iou > 0.2 and best_person:
+                # Identity-expiry guard reads this. Refreshed on every
+                # face-recognizer match — first identification, same-
+                # name re-confirmation, and identity flip — so a track
+                # that's continuously confirmed is never demoted.
+                best_person.last_identity_confirmation_ts = now
                 if not best_person.identity_name:
                     # First identification — emit event
                     best_person.identity_name = id_name
@@ -1210,7 +1218,43 @@ class PersonTracker:
                     best_iou = iou
                     best_track_id = track_id
 
-            if best_iou >= self.iou_threshold and best_track_id not in matched_track_ids:
+            # Per-track IoU threshold: identified tracks use the looser
+            # IDENTITY_TRACK_IOU_THRESHOLD (default 0.10) so an
+            # identified person walking far away — bbox shrinks and
+            # shifts rapidly — keeps their track ID + identity instead
+            # of getting destroyed and re-spawned as Unknown. Plain
+            # tracks keep the stricter self.iou_threshold so noise blobs
+            # don't latch onto unrelated detections.
+            match_threshold = self.iou_threshold
+            if (best_track_id is not None
+                    and self.tracked[best_track_id].identity_name):
+                match_threshold = min(match_threshold, IDENTITY_TRACK_IOU_THRESHOLD)
+
+            if best_iou >= match_threshold and best_track_id not in matched_track_ids:
+                # Identity-expiry guard. If this track was silent for
+                # > IDENTITY_PERSIST_GAP_SECS and the gap had no face-
+                # recognizer confirmation, demote identity_name before
+                # the update — face-recognizer's next cycle will
+                # restore it (correct name) or leave it blank (if a
+                # stranger took the spot). Prevents the bug where a
+                # stranger inheriting a 20 s-stale bbox keeps the
+                # original person's name.
+                person_for_check = self.tracked[best_track_id]
+                gap = current_time - person_for_check.last_seen
+                if (gap > IDENTITY_PERSIST_GAP_SECS
+                        and person_for_check.identity_name
+                        and person_for_check.last_identity_confirmation_ts
+                        <= person_for_check.last_seen):
+                    logger.info(
+                        f"identity '{person_for_check.identity_name}' "
+                        f"demoted on re-match (gap={gap:.1f}s > "
+                        f"{IDENTITY_PERSIST_GAP_SECS}s; "
+                        f"awaiting face-recognizer re-confirmation)"
+                    )
+                    person_for_check.identity_name = ""
+                    person_for_check._pending_identity = ""
+                    person_for_check._pending_identity_count = 0
+
                 # Match found — update existing track (pass keypoints for action detection)
                 prev_action = self.tracked[best_track_id].update(
                     bbox, current_time, keypoints=det.get("keypoints")
@@ -1271,10 +1315,18 @@ class PersonTracker:
             self.tracked[person_id] = person
 
         # --- Step 3: Check for lost people ---
+        # Per-track lost timeout: identified tracks survive longer
+        # silent gaps (IDENTITY_LOST_TIMEOUT, default 30 s) so a
+        # known person walking off + back within ~30 s keeps their
+        # track ID + identity. Plain tracks keep the stricter
+        # self.lost_timeout (8 s default) so noise tracks expire fast.
         lost_ids = []
         for track_id, person in self.tracked.items():
             time_since_seen = current_time - person.last_seen
-            if time_since_seen > self.lost_timeout:
+            lost_threshold = (IDENTITY_LOST_TIMEOUT
+                              if person.identity_name
+                              else self.lost_timeout)
+            if time_since_seen > lost_threshold:
                 # Person has left the frame
                 if person.announced:
                     self._emit_event("person_left", person, current_time)
