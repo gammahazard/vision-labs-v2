@@ -383,3 +383,115 @@
     margin-left: 0.4rem;
 
 }
+
+/* ---------------------------------------------------------------------------
+ * Phase 4 labeling — per-track Label / Skip / Edit form in the cropsModal.
+ * Lives inside .crops-modal-track between .track-attrs and .crops-modal-thumb-grid.
+ * --------------------------------------------------------------------------- */
+.track-label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.25rem 0.75rem 0.5rem;
+    flex-wrap: wrap;
+}
+.track-label-summary {
+    color: #94a3b8;
+    font-size: 0.78rem;
+}
+.track-label-skipped {
+    color: #64748b;
+    font-style: italic;
+}
+.track-label-btn {
+    background: transparent;
+    border: 1px solid #2d3748;
+    color: #cbd5e1;
+    border-radius: 6px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.track-label-btn:hover {
+    background: rgba(74, 222, 128, 0.08);
+    border-color: #4ade80;
+    color: #f1f5f9;
+}
+.track-label-edit { color: #94a3b8; }
+.track-label-form {
+    background: #0f172a;
+    border: 1px solid #2d3748;
+    border-radius: 8px;
+    padding: 0.65rem 0.85rem;
+    margin: 0.25rem 0.5rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.track-label-hint {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    font-style: italic;
+    line-height: 1.35;
+    padding: 0.1rem 0.1rem 0;
+}
+.track-label-grid {
+    display: grid;
+    grid-template-columns: 60px 1fr;
+    gap: 0.35rem 0.6rem;
+    align-items: center;
+}
+.track-label-grid label {
+    color: #94a3b8;
+    font-size: 0.75rem;
+}
+.track-label-form select,
+.track-label-form input[type="text"] {
+    background: #1a2235;
+    color: #e2e8f0;
+    border: 1px solid #2d3748;
+    border-radius: 5px;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+    font-family: inherit;
+}
+.track-label-form select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.track-label-form select:focus,
+.track-label-form input[type="text"]:focus {
+    outline: none;
+    border-color: #4ade80;
+}
+.track-label-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+.track-label-actions button {
+    background: transparent;
+    color: #cbd5e1;
+    border: 1px solid #2d3748;
+    border-radius: 5px;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    font-family: inherit;
+}
+.track-label-action-save {
+    background: rgba(74, 222, 128, 0.12);
+    border-color: #22c55e;
+    color: #4ade80;
+}
+.track-label-action-save:hover { background: rgba(74, 222, 128, 0.25); }
+.track-label-action-cancel:hover { background: rgba(148, 163, 184, 0.12); }
+.track-label-action-skip:hover { background: rgba(234, 179, 8, 0.12); border-color: #facc15; color: #facc15; }
+.track-label-error {
+    color: #f87171;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.4rem;
+    background: rgba(248, 113, 113, 0.08);
+    border-radius: 4px;
+}
