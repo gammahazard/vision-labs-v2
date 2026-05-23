@@ -24,6 +24,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ### Fixed
 - **Redis client hung indefinitely on silently-dead TCP sockets (WSL2 host-bridge drops)** — added `health_check_interval=30` + `socket_keepalive=True`. *Restart any service.*
+- **Crops modal still clipped + scrolled background on iOS** — body-mount + body-scroll lock + tighter max-height. *Dashboard hard-refresh.*
 - **Mobile vehicle-crops modal didn't scroll on iOS + inputs auto-zoomed** — switched to `dvh` viewport units, added momentum scroll + `overscroll-behavior: contain`, set `font-size: 16px` on all form fields. *Dashboard hard-refresh.*
 - **vehicle-attributes wrote per-track dirs under UTC date** — `storage.py` now uses `tz=TZ_LOCAL`; added `tzdata` to requirements + `LOCATION_TIMEZONE` to compose env. *Requires vehicle-attributes rebuild.*
 - **`person_identified` events missed brief face appearances** — identity-poll interval 2 s → 0.5 s. *Requires tracker rebuild.*
