@@ -10,6 +10,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ### Added
 ### Changed
+- **Classifier thresholds re-tuned again** — `COLOR_CONF_THRESHOLD` 0.55→0.45 (was firing only 33%); `MAKE_CONF_THRESHOLD` 0.50→0.65 (kills wrong-confident Lamborghini/Ferrari calls while preserving 0.86+ Chevy/Ford/Dodge). Body + model keep their thresholds. *Requires va recreate.*
 ### Fixed
 - **3 people walking out → tracker spawned 12 IDs + `num_people` peaked at 11** — added center-distance fallback (`_try_live_person_center_match`) for plain person tracks; mirrors the vehicle path but tighter (1.0× bbox_w, vs 3.5× for vehicles). Skips identified tracks (they use IDENTITY_TRACK_IOU_THRESHOLD), same-frame tracks, and stale tracks. *Requires tracker rebuild.*
 
