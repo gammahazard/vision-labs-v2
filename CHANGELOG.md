@@ -11,6 +11,8 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ### Added
 - **Auto-enable classifier on per-cam toggle** — Cameras edit modal's `detect_vehicle_attributes=true` now also writes `ENABLE_CLASSIFIER=1` to `.env` + recreates all `vehicle-attributes-camN` containers. Was: toggle ran the container but classification silently stayed off. *Requires dashboard restart.*
 - **Per-track labeling backend (Phase 4 PR1)** — `POST /api/browse/label/{date}/{camera}/{track_dir}` writes user_labels block to metadata.json (atomic). `GET /api/browse/label-classes` returns color/body/make/model class lists. Foundation for upcoming k-NN make/model fix + UI follow-up. *Requires dashboard recreate (new bind mount).*
+- **Inline labeling UI in cropsModal (Phase 4 PR1b)** — per-track Label/Edit/Skip button + form with color/body dropdowns + make/model autocomplete. IR-mode tracks render color disabled with a tooltip.
+- **Color head retrain CLI (Phase 4 PR2)** — `scripts/vehicle_attributes/retrain_attributes.py` walks user-labeled tracks, fine-tunes the color head (warm-start from current weights, low LR, held-out 20% val gate, refuses deploy on regression), saves to `/models/color_head_v1.safetensors`. Body retrain deferred to PR2b (multihead merge logic).
 ### Changed
 - **Classifier thresholds re-tuned again** — `COLOR_CONF_THRESHOLD` 0.55→0.45 (was firing only 33%); `MAKE_CONF_THRESHOLD` 0.50→0.65 (kills wrong-confident Lamborghini/Ferrari calls while preserving 0.86+ Chevy/Ford/Dodge). Body + model keep their thresholds. *Requires va recreate.*
 ### Fixed
