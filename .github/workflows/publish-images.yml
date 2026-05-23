@@ -14,6 +14,7 @@
 #   ghcr.io/<owner>/vision-labs/base:<tag>             (shared CUDA layer)
 #   ghcr.io/<owner>/vision-labs/pose-detector:<tag>
 #   ghcr.io/<owner>/vision-labs/vehicle-detector:<tag>
+#   ghcr.io/<owner>/vision-labs/vehicle-attributes:<tag>
 #   ghcr.io/<owner>/vision-labs/face-recognizer:<tag>
 #   ghcr.io/<owner>/vision-labs/dashboard:<tag>
 #   ghcr.io/<owner>/vision-labs/camera-ingester:<tag>
@@ -111,6 +112,7 @@ jobs:
           - camera-ingester
           - pose-detector
           - vehicle-detector
+          - vehicle-attributes
           - tracker
           - face-recognizer
           - dashboard

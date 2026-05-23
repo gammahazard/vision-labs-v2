@@ -65,6 +65,7 @@ The embedded Grafana panel pulls from a Prometheus scrape of every service in th
 ## What you get
 
 - **Person + face + vehicle detection** on every camera in real time (YOLOv8s-pose, InsightFace, YOLOv8s)
+- **Vehicle attribute crops** — per-track HD reservoir of color/body/make/model crops, browseable per-drive-by. Optional ConvNeXt-Tiny classifier head can fill the attributes block at flush time (off by default until weights ship)
 - **AI scene descriptions** on every Telegram alert (MiniCPM-V vision LLM)
 - **19-tool AI assistant** (Qwen 3 14B) — query events, capture live snapshots (with auto vision-model description), set reminders, find DVR segments — all multi-camera aware
 - **DVR recording** — 1-hour MPEG-TS segments, browseable through the dashboard with date + camera filters
@@ -87,6 +88,8 @@ flowchart LR
     Pose & Veh & Face -->|detections| R
     R --> Track[tracker]
     Track -->|events| R
+    Track -.vehicle_sample.-> VA["vehicle-attributes<br/>per-track HD crops + classifier"]
+    VA --> R
 
     R --> Dash["dashboard<br/>FastAPI + WebSocket"]
     Dash <-->|chat + 19 tools| Oll["Ollama<br/>Qwen 3 14B + MiniCPM-V"]
