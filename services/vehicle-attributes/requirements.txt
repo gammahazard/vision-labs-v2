@@ -5,3 +5,9 @@ numpy>=1.26.4
 timm==1.0.11
 huggingface_hub>=0.26
 safetensors>=0.4
+# Pure-Python timezone database — without this, zoneinfo.ZoneInfo() fails
+# inside the slim base image (no /usr/share/zoneinfo). contracts/tz.py
+# imports ZoneInfo and was crashing storage.py's date-string fallback into
+# UTC, so per-track dirs were being filed under tomorrow's date during the
+# user's evening hours.
+tzdata>=2024.1
