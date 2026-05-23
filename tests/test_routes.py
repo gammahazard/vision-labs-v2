@@ -733,3 +733,194 @@ class TestBboxIou:
 
     def test_zero_area_box(self):
         assert _bbox_iou([0, 0, 0, 0], [0, 0, 100, 100]) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 labeling — /api/browse/label/{date}/{camera}/{track_dir} +
+# /api/browse/label-classes endpoints.
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def browse_client(setup_routes, tmp_path, monkeypatch):
+    """FastAPI TestClient for browse routes with VEHICLE_SNAPSHOT_DIR pointed
+    at a tmp dir + a fake class-JSON dir.
+
+    Layout we create:
+      tmp/snapshots/vehicles/cam1/2026-05-23/vehicle_0042_1779500000/metadata.json
+      tmp/classes/{color,body,make,model}_classes.json
+    """
+    import json
+    import routes as ctx
+    from routes import browse as browse_mod
+
+    snap_root = tmp_path / "snapshots" / "vehicles"
+    snap_root.mkdir(parents=True)
+    ctx.VEHICLE_SNAPSHOT_DIR = str(snap_root)
+
+    # Seed one track's metadata.json
+    track_dir = snap_root / "cam1" / "2026-05-23" / "vehicle_0042_1779500000"
+    track_dir.mkdir(parents=True)
+    (track_dir / "metadata.json").write_text(json.dumps({
+        "track_id": "vehicle_0042",
+        "camera_id": "cam1",
+        "first_seen": 1779500000.0,
+        "vehicle_class": "car",
+        "attributes": {
+            "color": "blue", "color_confidence": 0.78,
+            "body_type": None, "body_type_confidence": 0.42,
+            "make": None, "make_confidence": 0.36,
+            "model": None, "model_confidence": 0.21,
+            "ir_track": False,
+        },
+    }, indent=2))
+
+    # Seed minimal class lists
+    classes_dir = tmp_path / "classes"
+    classes_dir.mkdir()
+    (classes_dir / "color_classes.json").write_text('["blue","red","white"]')
+    (classes_dir / "body_classes.json").write_text('["sedan","pickup","suv"]')
+    (classes_dir / "make_classes.json").write_text('["Chevrolet","Toyota"]')
+    (classes_dir / "model_classes.json").write_text('["Toyota Sienna 2018"]')
+    (classes_dir / "make_to_models.json").write_text('{"Toyota":["Toyota Sienna 2018"]}')
+    monkeypatch.setattr(browse_mod, "_VA_CLASSES_DIR", str(classes_dir))
+    # Reset the class cache so each test starts clean
+    monkeypatch.setattr(browse_mod, "_class_cache", {"mtime": 0, "data": None})
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    app = FastAPI()
+    app.include_router(browse_mod.router)
+    return TestClient(app)
+
+
+class TestLabelClasses:
+    def test_get_classes_returns_all_lists(self, browse_client):
+        r = browse_client.get("/api/browse/label-classes")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["colors"] == ["blue", "red", "white"]
+        assert d["body_types"] == ["sedan", "pickup", "suv"]
+        assert d["makes"] == ["Chevrolet", "Toyota"]
+        assert d["models"] == ["Toyota Sienna 2018"]
+        assert d["make_to_models"] == {"Toyota": ["Toyota Sienna 2018"]}
+
+
+class TestSaveTrackLabel:
+    URL = "/api/browse/label/2026-05-23/cam1/vehicle_0042_1779500000"
+
+    def test_save_full_label_writes_to_metadata(self, browse_client, tmp_path):
+        r = browse_client.post(self.URL, json={
+            "color": "blue", "body_type": "sedan",
+            "make": "Toyota", "model": "Sienna 2018",
+        })
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["ok"]
+        assert d["user_labels"]["color"] == "blue"
+        assert d["user_labels"]["body_type"] == "sedan"
+        assert d["user_labels"]["make"] == "Toyota"
+        assert d["user_labels"]["model"] == "Sienna 2018"
+        assert d["user_labels"]["skipped"] is False
+        assert d["user_labels"]["labeler"] == "admin"
+        assert d["user_labels"]["labeled_at"]  # ISO timestamp set
+
+        # Verify it actually landed on disk
+        import json, os
+        meta_path = os.path.join(
+            tmp_path, "snapshots", "vehicles", "cam1",
+            "2026-05-23", "vehicle_0042_1779500000", "metadata.json",
+        )
+        meta = json.loads(open(meta_path).read())
+        assert meta["user_labels"]["color"] == "blue"
+        # Existing attributes block preserved
+        assert meta["attributes"]["color"] == "blue"
+        assert meta["track_id"] == "vehicle_0042"
+
+    def test_save_partial_label_ok(self, browse_client):
+        """Only model field — make/body/color stay null."""
+        r = browse_client.post(self.URL, json={"model": "Sienna 2018"})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["user_labels"]["model"] == "Sienna 2018"
+        assert d["user_labels"]["color"] is None
+        assert d["user_labels"]["make"] is None
+
+    def test_save_skipped_label(self, browse_client):
+        r = browse_client.post(self.URL, json={
+            "skipped": True, "skip_reason": "too occluded",
+        })
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["user_labels"]["skipped"] is True
+        assert d["user_labels"]["skip_reason"] == "too occluded"
+
+    def test_save_empty_payload_rejected(self, browse_client):
+        r = browse_client.post(self.URL, json={})
+        assert r.status_code == 400
+        assert "empty" in r.json()["error"].lower()
+
+    def test_save_unknown_color_rejected(self, browse_client):
+        r = browse_client.post(self.URL, json={"color": "purple"})
+        assert r.status_code == 400
+        assert "purple" in r.json()["error"]
+
+    def test_skipped_clears_other_fields(self, browse_client):
+        """skipped=true is authoritative — any color/body/make/model
+        sent alongside is discarded so downstream code never sees a
+        contradictory `{skipped: true, color: 'blue'}` user_labels."""
+        r = browse_client.post(self.URL, json={
+            "skipped": True, "skip_reason": "blur",
+            "color": "blue", "body_type": "sedan",
+            "make": "Toyota", "model": "Sienna 2018",
+        })
+        assert r.status_code == 200, r.text
+        ul = r.json()["user_labels"]
+        assert ul["skipped"] is True
+        assert ul["color"] is None
+        assert ul["body_type"] is None
+        assert ul["make"] is None
+        assert ul["model"] is None
+
+    def test_save_unknown_body_rejected(self, browse_client):
+        r = browse_client.post(self.URL, json={"body_type": "spaceship"})
+        assert r.status_code == 400
+        assert "spaceship" in r.json()["error"]
+
+    def test_save_free_text_make_accepted(self, browse_client):
+        """Make is free text — 'Bugatti' is not in the seeded list but
+        accepted because k-NN handles unknown classes."""
+        r = browse_client.post(self.URL, json={"make": "Bugatti"})
+        assert r.status_code == 200, r.text
+        assert r.json()["user_labels"]["make"] == "Bugatti"
+
+    def test_malformed_date_rejected(self, browse_client):
+        """Date that doesn't match YYYY-MM-DD regex (e.g. has letters)
+        returns 400 from the resolver. Semantically-invalid dates that
+        ARE regex-shaped (e.g. 2026-13-99) fall through to 404 — matches
+        the existing /tracks/{date} endpoint's behavior."""
+        r = browse_client.post(
+            "/api/browse/label/notadate/cam1/vehicle_0042_1779500000",
+            json={"color": "blue"},
+        )
+        assert r.status_code == 400
+
+    def test_path_traversal_rejected(self, browse_client):
+        """Attempt to escape the snapshots root via .. — must 400."""
+        r = browse_client.post(
+            "/api/browse/label/2026-05-23/..%2Fetc/vehicle_0042_1779500000",
+            json={"color": "blue"},
+        )
+        assert r.status_code in (400, 404)
+
+    def test_unknown_track_404s(self, browse_client):
+        r = browse_client.post(
+            "/api/browse/label/2026-05-23/cam1/vehicle_9999_1779500000",
+            json={"color": "blue"},
+        )
+        assert r.status_code == 404
+
+    def test_relabel_overwrites_previous(self, browse_client):
+        """Re-saving overwrites the previous user_labels block."""
+        browse_client.post(self.URL, json={"color": "blue"})
+        r = browse_client.post(self.URL, json={"color": "red"})
+        assert r.status_code == 200, r.text
+        assert r.json()["user_labels"]["color"] == "red"

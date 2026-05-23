@@ -358,6 +358,13 @@ services:
       - ./services/dashboard/ai_db.py:/app/ai_db.py:ro
       - ./services/dashboard/constants.py:/app/constants.py:ro
       - ./services/dashboard/event_renderer.py:/app/event_renderer.py:ro
+      # vehicle-attributes class JSONs — dashboard needs them to populate
+      # the label dropdowns in the cropsModal (Phase 4 labeling pipeline).
+      # Same files the vehicle-attributes containers serve their classifier
+      # heads from; bind-mounted RO so a class-list update in the va
+      # source (rare — only on retrain with new classes) is picked up by
+      # the dashboard on next restart.
+      - ./services/vehicle-attributes/classes:/app/vehicle_attributes_classes:ro
       # .env is bind-mounted RW so the setup wizard can persist the user's
       # chosen GPU/tier/model selections without the user having to edit
       # the file by hand. The dashboard only writes known keys (see
