@@ -1,8 +1,24 @@
 """tracker/core/manager.py — PersonTracker orchestrator class.
 
 Owns the dictionaries of currently-tracked people + vehicles, runs the
-IoU matching, emits events to Redis, and keeps the camera state hash
-in sync. The big one — ~700 lines of pipeline logic.
+IoU matching, and keeps the camera state hash in sync.
+
+Split into mixins on 2026-05-22 — the per-area methods now live next to
+each other:
+    _vehicle_matcher.py  — fallback match strategies (idle-IoM, ghost, center-distance)
+    _vehicle_events.py   — vehicle_detected / sample / idle / left / gone emit
+    _person_events.py    — person event emit + snapshot pairing
+    _zones.py            — zone polygon load + dead-zone gate
+    _identity.py         — face-recognizer → track identity sync
+    _classes.py          — YOLO car↔truck↔bus equivalence helper
+
+What remains here:
+    __init__, _read_face_recognition_flag, _generate_id
+    _process_vehicle_detections — the vehicle-pipeline orchestrator
+        (kept here so the env-driven sample-throttle constants below
+         stay reloadable via `importlib.reload(manager)` — many tests
+         monkeypatch then reload to flip the sample-emit policy)
+    _update_state, update — the person-pipeline orchestrator
 """
 
 import json
@@ -14,45 +30,33 @@ import redis
 from .config import (
     logger,
     CAMERA_ID,
-    EVENT_STREAM,
     STATE_KEY,
-    ZONE_KEY,
-    IDENTITY_KEY,
-    FRAME_STREAM,
     VEHICLE_SNAPSHOT_KEY_TMPL as _VSNAP_TMPL,
     VEHICLE_SNAPSHOT_BBOX_KEY_TMPL as _VSNAP_BBOX_TMPL,
-    PERSON_SNAPSHOT_KEY_TMPL as _PSNAP_TMPL,
-    MAX_EVENT_STREAM_LEN,
     VEHICLE_IDLE_TIMEOUT,
     VEHICLE_LOST_TIMEOUT,
     VEHICLE_LOST_TIMEOUT_DRIVING,
-    VEHICLE_CENTER_MATCH_STALE_SECS,
     MIN_SAMPLE_BBOX_AREA_SUB_PX,
     VEHICLE_IOU_THRESHOLD,
     VEHICLE_IDLE_IOU_THRESHOLD,
-    VEHICLE_IDLE_IOM_THRESHOLD,
-    VEHICLE_IDLE_IOM_AREA_RATIO_MAX,
     VEHICLE_MATCH_STALE_SECS,
     VEHICLE_MATCH_AREA_RATIO_MAX,
-    SAMPLE_OCCLUSION_IOU_THRESHOLD,
     VEHICLE_GHOST_TTL,
     VEHICLE_IDLE_GHOST_TTL,
-    VEHICLE_GHOST_MAX_DIST_RATIO,
     MIN_BBOX_AREA,
     IDENTITY_GRACE_SECONDS,
-    IDENTITY_POLL_INTERVAL,
     IDENTITY_TRACK_IOU_THRESHOLD,
     IDENTITY_LOST_TIMEOUT,
     IDENTITY_PERSIST_GAP_SECS,
-    VEHICLE_SAMPLE_EVENT,
-    VEHICLE_GONE_EVENT,
     stream_key,
-    point_in_polygon,
-    should_alert,
-    get_time_period,
 )
 from .iou import compute_iou
 from .state import TrackedPerson, TrackedVehicle
+from ._identity import IdentityMixin
+from ._person_events import PersonEventsMixin
+from ._vehicle_events import VehicleEventsMixin
+from ._vehicle_matcher import VehicleMatcherMixin
+from ._zones import ZonesMixin
 
 # Phase 1 of the vehicle-attributes pipeline. Off by default until the
 # consumer (vehicle-attributes-cam{N}) is wired up. See spec §2.2.
@@ -71,37 +75,24 @@ SAMPLE_INTERVAL_FRAMES = max(1, int(os.getenv("SAMPLE_INTERVAL_FRAMES", "3")))
 # parked-car traffic doesn't 3x the Redis HD-sample writes.
 EAGER_SAMPLE_FRAMES = max(0, int(os.getenv("EAGER_SAMPLE_FRAMES", "8")))
 
-# YOLOv8 frequently flips a single vehicle between "car", "truck", and
-# "bus" across consecutive frames (especially trucks/SUVs at partial
-# occlusion, vans seen end-on, large sedans at angle). The fallback
-# match paths used to require strict class equality, which split one
-# physical drive-by into two tracks (observed live: a red pickup at
-# 11:35 became vehicle_0009 "car" + vehicle_0010 "truck" 2 s later,
-# neither got full per-track samples).
-#
-# 4-wheel motor vehicles (car, truck, bus) are treated as
-# interchangeable in the fallback paths. Bicycle + motorcycle stay
-# strict — they're visually distinct enough that YOLO almost never
-# confuses them with 4-wheel vehicles, and false-merging a passing
-# motorcycle into a car track would be a real data error.
-_VEHICLE_CLASS_EQUIV = {"car", "truck", "bus"}
 
-
-def _class_compatible(a: str, b: str) -> bool:
-    """True if two YOLO class labels can plausibly be the same physical
-    vehicle observed across frames (YOLO class flicker tolerance)."""
-    if a == b:
-        return True
-    return a in _VEHICLE_CLASS_EQUIV and b in _VEHICLE_CLASS_EQUIV
-
-
-class PersonTracker:
+class PersonTracker(
+    VehicleMatcherMixin,
+    VehicleEventsMixin,
+    PersonEventsMixin,
+    ZonesMixin,
+    IdentityMixin,
+):
     """
     Tracks people across frames using IoU matching.
 
     Maintains a dictionary of currently tracked people. On each new set of
     detections, matches them to existing tracks or creates new ones.
     Emits events when people appear or leave.
+
+    Inherits domain methods from five mixins — see this module's docstring
+    for the layout. None of the mixins override each other; MRO order is
+    purely for documentation grouping.
     """
 
     def __init__(self, r: redis.Redis, iou_threshold: float = VEHICLE_IOU_THRESHOLD,
@@ -161,105 +152,6 @@ class PersonTracker:
         pid = f"person_{self.next_id:04d}"
         self.next_id += 1
         return pid
-
-    def _emit_event(self, event_type: str, person: TrackedPerson, timestamp: float, extra: dict = None):
-        """Publish an event to the events stream."""
-        # Determine which zone the person is in
-        zone_name, alert_level = self._find_zone(person.bbox)
-
-        # Evaluate zone + time-of-day rules to decide if this should trigger an alert
-        alert_triggered = should_alert(alert_level) if alert_level else False
-
-        event = {
-            "camera_id": CAMERA_ID,
-            "event_type": event_type,
-            "timestamp": str(timestamp),
-            "person_id": person.person_id,
-            "identity_name": person.identity_name,
-            "duration": str(round(person.duration, 1)),
-            "direction": person.direction,
-            "action": person.action,
-            "bbox": json.dumps(person.bbox),
-            "frame_count": str(person.frame_count),
-            "zone": zone_name,
-            "alert_level": alert_level,
-            "alert_triggered": str(alert_triggered),
-            "time_period": get_time_period(),
-        }
-
-        # Save a snapshot at event emission time for person events
-        # so the dashboard uses the correct frame, not the (stale) live frame.
-        # Also save the bbox that matches the snapshot frame so the dashboard
-        # draws the box in the right place (not a stale detection bbox).
-        if event_type in ("person_appeared", "person_identified"):
-            # Pass the buffered frame_bytes (paired with `person.bbox` at
-            # detection time) so the snapshot frame matches the bbox. Falls
-            # back to grabbing the latest frame if we don't have buffered
-            # bytes (e.g. pose-detector hasn't been upgraded yet).
-            snap_key = self._save_person_snapshot(
-                timestamp, person.bbox, frame_bytes=person.last_frame_bytes,
-            )
-            if snap_key:
-                event["snapshot_key"] = snap_key
-                event["snapshot_bbox"] = json.dumps(person.bbox)
-
-        if extra:
-            event.update(extra)
-
-        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
-        self.total_events += 1
-
-        zone_str = f" | zone={zone_name}" if zone_name else ""
-        name_str = f" ({person.identity_name})" if person.identity_name else ""
-        logger.info(
-            f"EVENT: {event_type} | {person.person_id}{name_str} | "
-            f"action={person.action} | "
-            f"duration={person.duration:.1f}s | direction={person.direction}"
-            f"{zone_str}"
-        )
-
-    def _save_person_snapshot(self, timestamp: float, bbox: list = None,
-                                frame_bytes: bytes | None = None) -> str | None:
-        """
-        Save the JPEG frame that the bbox was computed from, plus the bbox
-        itself, to Redis so the dashboard can render the notification with
-        the box drawn over the right pixels.
-
-        `frame_bytes` is the preferred input — passed in from
-        TrackedPerson.last_frame_bytes, which is the exact frame the
-        pose-detector ran on when it produced `bbox`. With the 4-second
-        announce grace period there's a wide gap between detection time
-        and emit time, so falling back to "latest frame in the stream"
-        (the old behavior, kept as a defensive fallback) draws the bbox
-        on a frame from several seconds AFTER the detection. For a moving
-        person that gap is the "bbox on empty floor" symptom.
-
-        Returns the Redis key or None if no frame available.
-        Uses 2h TTL (matches dashboard snapshot cleanup).
-        """
-        try:
-            # Prefer the frame bytes paired with this detection. Fall back
-            # to xrevrange only if the caller didn't pass any (older
-            # detector versions, or pre-detection event types).
-            if not frame_bytes:
-                entries = self.r.xrevrange(FRAME_STREAM.encode(), count=1)
-                if entries:
-                    frame_bytes = entries[0][1].get(b"frame") or entries[0][1].get(b"frame_bytes")
-            if not frame_bytes:
-                return None
-
-            snap_key = stream_key(_PSNAP_TMPL, camera_id=CAMERA_ID, timestamp=int(timestamp))
-            self.r.setex(snap_key, 7200, frame_bytes)  # 2h TTL
-
-            # Save companion bbox key so dashboard draws box in the right place
-            if bbox:
-                bbox_key = f"{snap_key}:bbox"
-                self.r.setex(bbox_key, 7200, json.dumps(bbox))
-
-            return snap_key
-        except Exception as e:
-            logger.debug(f"Person snapshot save failed: {e}")
-            return None
 
     def _process_vehicle_detections(
         self, detections: list, timestamp: float,
@@ -552,603 +444,6 @@ class PersonTracker:
             self._emit_vehicle_gone_event(veh, timestamp)
             if veh.idle_alerted:
                 self._emit_vehicle_left_event(veh, timestamp)
-
-    def _try_idle_iom_match(self, bbox: list, class_name: str) -> str | None:
-        """Borderline-IoU rescue for idle/stationary tracks.
-
-        The tight idle IoU gate (VEHICLE_IDLE_IOU_THRESHOLD=0.65) rejects
-        detections whose bbox is the same parked car but YOLO-jittered
-        slightly wider/taller. Without this, a jittered detection spawns
-        a phantom track on top of the idle car and fires a duplicate
-        vehicle_idle 150s later (observed live at 12:25 on cam1).
-
-        Returns the matched vehicle_id when:
-          1. an existing track is idle or stationary,
-          2. the detection's class is compatible (car↔truck↔bus equivalence
-             from #41 applies, so bbox-jitter on the same vehicle won't
-             miss when YOLO also flips class), and
-          3. intersection-over-min ≥ VEHICLE_IDLE_IOM_THRESHOLD AND the
-             two bboxes are within VEHICLE_IDLE_IOM_AREA_RATIO_MAX in area
-             (rules out person/cyclist inside parked-truck bbox).
-
-        Returns None otherwise. Does not modify state.
-        """
-        a_x1, a_y1, a_x2, a_y2 = bbox
-        a_area = (a_x2 - a_x1) * (a_y2 - a_y1)
-        if a_area <= 0:
-            return None
-
-        best_vid = None
-        best_iom = VEHICLE_IDLE_IOM_THRESHOLD  # only beat the threshold
-
-        for vid, veh in self.tracked_vehicles.items():
-            if not (veh.idle_alerted or veh.is_stationary):
-                continue
-            if not _class_compatible(veh.class_name, class_name):
-                continue
-            b_x1, b_y1, b_x2, b_y2 = veh.bbox
-            b_area = (b_x2 - b_x1) * (b_y2 - b_y1)
-            if b_area <= 0:
-                continue
-
-            # Area-ratio gate first — cheap rejection of person-in-truck shapes.
-            area_ratio = max(a_area, b_area) / min(a_area, b_area)
-            if area_ratio > VEHICLE_IDLE_IOM_AREA_RATIO_MAX:
-                continue
-
-            ix1 = max(a_x1, b_x1)
-            iy1 = max(a_y1, b_y1)
-            ix2 = min(a_x2, b_x2)
-            iy2 = min(a_y2, b_y2)
-            if ix2 <= ix1 or iy2 <= iy1:
-                continue
-            i_area = (ix2 - ix1) * (iy2 - iy1)
-            iom = i_area / min(a_area, b_area)
-
-            if iom >= best_iom:
-                best_iom = iom
-                best_vid = vid
-
-        return best_vid
-
-    def _try_idle_iom_ghost_match(self, bbox: list, class_name: str) -> str | None:
-        """Same as _try_idle_iom_match but checks _ghost_vehicles (idle only).
-
-        Needed because when a parked car's detector intermittently drops
-        for >VEHICLE_LOST_TIMEOUT (10 s) — e.g., a passing vehicle visually
-        blocks YOLO for a moment — the idle track moves to the ghost
-        buffer. Without this rescue, a non-idle live track passing through
-        the same area can claim the parked car's subsequent detections via
-        the primary IoU loop before the regular ghost_match (center
-        distance) gets a chance, because primary IoU runs first.
-
-        Returns a ghost vehicle_id when the same gates pass
-        (IoM ≥ VEHICLE_IDLE_IOM_THRESHOLD, area ratio ≤ ...AREA_RATIO_MAX,
-        class compatible). Caller must pop from _ghost_vehicles and add
-        back to tracked_vehicles (mirroring _try_ghost_match's contract).
-        """
-        a_x1, a_y1, a_x2, a_y2 = bbox
-        a_area = (a_x2 - a_x1) * (a_y2 - a_y1)
-        if a_area <= 0:
-            return None
-
-        best_vid = None
-        best_iom = VEHICLE_IDLE_IOM_THRESHOLD
-
-        for vid, (veh, _ghost_ts) in self._ghost_vehicles.items():
-            if not veh.idle_alerted:
-                continue  # only idle ghosts are sticky
-            if not _class_compatible(veh.class_name, class_name):
-                continue
-            b_x1, b_y1, b_x2, b_y2 = veh.bbox
-            b_area = (b_x2 - b_x1) * (b_y2 - b_y1)
-            if b_area <= 0:
-                continue
-            area_ratio = max(a_area, b_area) / min(a_area, b_area)
-            if area_ratio > VEHICLE_IDLE_IOM_AREA_RATIO_MAX:
-                continue
-            ix1 = max(a_x1, b_x1)
-            iy1 = max(a_y1, b_y1)
-            ix2 = min(a_x2, b_x2)
-            iy2 = min(a_y2, b_y2)
-            if ix2 <= ix1 or iy2 <= iy1:
-                continue
-            i_area = (ix2 - ix1) * (iy2 - iy1)
-            iom = i_area / min(a_area, b_area)
-            if iom >= best_iom:
-                best_iom = iom
-                best_vid = vid
-
-        return best_vid
-
-    @staticmethod
-    def _bbox_area(bbox: list) -> int:
-        """Sub-stream-coordinate bbox area (used as a sample-quality
-        gate — see MIN_SAMPLE_BBOX_AREA_SUB_PX). Returns 0 for a
-        degenerate / empty bbox."""
-        if not bbox or len(bbox) < 4:
-            return 0
-        w = max(0, bbox[2] - bbox[0])
-        h = max(0, bbox[3] - bbox[1])
-        return int(w * h)
-
-    def _sample_occluded_by_moving_vehicle(self, veh: 'TrackedVehicle') -> bool:
-        """True if a vehicle_sample for `veh` would capture pixels of
-        another foreground (moving) vehicle.
-
-        Returns True when any OTHER currently-tracked vehicle that is NOT
-        idle_alerted and NOT is_stationary has bbox IoU above
-        SAMPLE_OCCLUSION_IOU_THRESHOLD with `veh`. The idle-vs-idle carve-out
-        keeps two adjacent permanently-parked cars from blocking each
-        other's sampling.
-
-        Used to skip vehicle_sample emit during drive-by occlusion of a
-        parked car (the parked track's bbox region in the HD frame
-        contains pixels of the foreground intruder, polluting the
-        classifier's color/body/make/model vote).
-        """
-        for other_vid, other_veh in self.tracked_vehicles.items():
-            if other_vid == veh.vehicle_id:
-                continue
-            if other_veh.idle_alerted or other_veh.is_stationary:
-                continue
-            if compute_iou(veh.bbox, other_veh.bbox) > SAMPLE_OCCLUSION_IOU_THRESHOLD:
-                return True
-        return False
-
-    def _try_live_center_match(self, bbox: list, class_name: str,
-                                current_ts: float = 0.0) -> str | None:
-        """Fallback live-track match by center distance when IoU failed.
-
-        When a vehicle drifts fast enough that consecutive-frame bboxes have
-        IoU below VEHICLE_IOU_THRESHOLD, the standard match step misses it
-        and the tracker spawns a new TrackedVehicle for the same physical
-        car. This helper checks whether any currently-tracked vehicle of the
-        SAME class is within `bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO` of the
-        new bbox's center; if so, return its id so the match step reuses it.
-
-        Same-class only — mirrors the ghost-match's safety rule. Cars
-        don't morph into trucks mid-track. Note: the standard IoU step
-        deliberately doesn't check class (handles YOLO class flicker on
-        the same vehicle); we restrict the looser center-distance path
-        only.
-        """
-        if not self.tracked_vehicles:
-            return None
-        cx = (bbox[0] + bbox[2]) / 2
-        cy = (bbox[1] + bbox[3]) / 2
-        bbox_w = max(1.0, bbox[2] - bbox[0])
-        max_dist = bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO
-        det_area = max(0, bbox[2] - bbox[0]) * max(0, bbox[3] - bbox[1])
-        best_id = None
-        best_dist = max_dist
-        for vid, veh in self.tracked_vehicles.items():
-            # A track already updated in THIS frame can't be the same
-            # physical vehicle as a different detection in the same frame.
-            # Two cars side-by-side at different positions both belong to
-            # the same `_process_vehicle_detections` call — each must get
-            # its own track id. Without this gate the relaxed class-
-            # compatibility check below would let the second detection's
-            # center-distance fallback merge into the first.
-            if current_ts and veh.last_seen >= current_ts:
-                continue
-            # Stale-track skip: this fallback exists to recover the fast-
-            # mover IoU-jitter case (~200 ms drift between consecutive
-            # frames). For a stale track (>VEHICLE_CENTER_MATCH_STALE_SECS
-            # since last_seen), the 3.5×bbox_w radius is a vast region —
-            # easily grabbing a completely different physical vehicle that
-            # happens to enter the same screen area. Hard-skip rather than
-            # scale the radius: simpler, and stale tracks should naturally
-            # ghost out anyway.
-            if current_ts and (current_ts - veh.last_seen) > VEHICLE_CENTER_MATCH_STALE_SECS:
-                continue
-            if not _class_compatible(veh.class_name, class_name):
-                continue  # bus vs car etc; car↔truck flicker is allowed
-            # Size-ratio gate for stale tracks. Mirrors the primary IoU
-            # loop's gate — without it, a non-idle stale track whose
-            # bbox center happens to be near a new (much-larger or
-            # much-smaller) detection would still merge via this loose
-            # center-distance fallback. Same live-regression as the
-            # primary loop's gate (school bus inheriting the small car's
-            # track at 15:09:45).
-            if current_ts and (current_ts - veh.last_seen) > VEHICLE_MATCH_STALE_SECS:
-                veh_area = max(0, veh.bbox[2] - veh.bbox[0]) * max(0, veh.bbox[3] - veh.bbox[1])
-                if det_area > 0 and veh_area > 0:
-                    area_ratio = max(det_area, veh_area) / min(det_area, veh_area)
-                    if area_ratio > VEHICLE_MATCH_AREA_RATIO_MAX:
-                        continue
-            # Idle-confirmed tracks must not be matched via the loose
-            # center-distance fallback. This fallback exists for FAST cars
-            # whose IoU drops between consecutive frames — parked cars
-            # don't move. Letting a parked track match this way would let
-            # a drive-by car that already failed the tight idle-IoU check
-            # sneak back in via the looser center-distance path. Skipping
-            # them here keeps the idle-IoU tightening effective. Use
-            # is_stationary (not just idle_alerted) so freshly-parked
-            # cars are protected from the moment they stop moving, not
-            # 150 s later when idle_alerted finally fires.
-            if veh.idle_alerted or veh.is_stationary:
-                continue
-            vx = (veh.bbox[0] + veh.bbox[2]) / 2
-            vy = (veh.bbox[1] + veh.bbox[3]) / 2
-            dist = ((cx - vx) ** 2 + (cy - vy) ** 2) ** 0.5
-            if dist < best_dist:
-                best_dist = dist
-                best_id = vid
-        return best_id
-
-    def _try_ghost_match(self, bbox: list, class_name: str, timestamp: float) -> str | None:
-        """If a recently-departed vehicle is near this bbox, return its id.
-        Otherwise None. Class compatibility uses _class_compatible — strict
-        equality is too tight because YOLOv8 frequently flickers a single
-        drive-by between 'car' and 'truck'."""
-        if not self._ghost_vehicles:
-            return None
-        cx = (bbox[0] + bbox[2]) / 2
-        cy = (bbox[1] + bbox[3]) / 2
-        bbox_w = max(1.0, bbox[2] - bbox[0])
-        max_dist = bbox_w * VEHICLE_GHOST_MAX_DIST_RATIO
-        best_id = None
-        best_dist = max_dist
-        for vid, (veh, _ts) in self._ghost_vehicles.items():
-            if not _class_compatible(veh.class_name, class_name):
-                continue  # bus/motorcycle/bicycle stay strict
-            gx = (veh.bbox[0] + veh.bbox[2]) / 2
-            gy = (veh.bbox[1] + veh.bbox[3]) / 2
-            dist = ((cx - gx) ** 2 + (cy - gy) ** 2) ** 0.5
-            # Idle ghosts: stricter center-distance bound. A parked car
-            # ghosted by a brief detector miss should re-attach only if
-            # the new detection is essentially at the same spot
-            # (≤ 30 % of bbox width). The loose 3.5× threshold is meant
-            # for fast-moving drive-by cars; applied to a stationary
-            # ghost it would let an unrelated nearby vehicle inherit
-            # the parked car's track id.
-            idle_max = bbox_w * 0.3
-            # Use is_stationary (not just idle_alerted) so a freshly-
-            # parked car ghosted by a brief detector miss gets the
-            # stricter re-association bound from the moment it stops
-            # moving — same rationale as the IoU gate above.
-            parked = veh.idle_alerted or veh.is_stationary
-            effective_max = idle_max if parked else max_dist
-            if dist < effective_max and dist < best_dist:
-                best_dist = dist
-                best_id = vid
-        return best_id
-
-    def _emit_vehicle_detected_event(self, veh: 'TrackedVehicle', timestamp: float):
-        """Emit a vehicle_detected event to the events stream."""
-        zone_name, alert_level = self._find_zone(veh.bbox)
-        alert_triggered = should_alert(alert_level) if alert_level else False
-
-        event = {
-            "camera_id": CAMERA_ID,
-            "event_type": "vehicle_detected",
-            "timestamp": str(timestamp),
-            "person_id": "",
-            "identity_name": "",
-            "duration": "0",
-            "direction": "",
-            "action": "",
-            "bbox": json.dumps(veh.bbox),
-            "frame_count": str(veh.frame_count),
-            "zone": zone_name,
-            "alert_level": alert_level,
-            "alert_triggered": str(alert_triggered),
-            "vehicle_class": veh.class_name,
-            "vehicle_confidence": str(round(veh.confidence, 3)),
-            "vehicle_id": veh.vehicle_id,
-            "vehicle_first_seen": str(int(veh.first_seen)),
-            "snapshot_key": veh.snapshot_key,
-            "snapshot_bbox": json.dumps(veh.snapshot_bbox),
-            "time_period": get_time_period(),
-        }
-
-        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
-        self.total_events += 1
-
-        logger.info(
-            f"EVENT: vehicle_detected | {veh.class_name} ({veh.confidence:.2f})"
-            f"{f' | zone={zone_name}' if zone_name else ''}"
-        )
-
-    def _emit_vehicle_sample_event(self, veh: 'TrackedVehicle', timestamp: float):
-        """Emit a low-weight sampling event the attribute service uses to
-        decide when to crop the current HD frame for this track.
-
-        Mirrors vehicle_detected payload so a consumer can treat both as
-        `(track_id, bbox, timestamp)` carriers without branching on event_type.
-        """
-        # Write the per-sample HD snapshot to Redis with a short TTL so
-        # vehicle-attributes-cam{N} crops a frame that's temporally paired
-        # with the bbox (avoids the drift bug where `frame_hd:{cam}` may
-        # carry a frame from a different moment than when the bbox was
-        # computed). Mirror of the v0.2.0 person_appeared snapshot fix.
-        hd_snapshot_key = ""
-        if veh.last_hd_frame_bytes:
-            ts_ms = int(timestamp * 1000)
-            hd_snapshot_key = f"vehicle_hd_sample:{CAMERA_ID}:{veh.vehicle_id}:{ts_ms}"
-            try:
-                self.r.setex(hd_snapshot_key, 60, veh.last_hd_frame_bytes)
-            except Exception:
-                hd_snapshot_key = ""  # SETEX failed; consumer falls back
-
-        event = {
-            "camera_id": CAMERA_ID,
-            "event_type": VEHICLE_SAMPLE_EVENT,
-            "timestamp": str(timestamp),
-            "bbox": json.dumps(veh.bbox),
-            "vehicle_class": veh.class_name,
-            "vehicle_confidence": str(round(veh.confidence, 3)),
-            "vehicle_id": veh.vehicle_id,
-            "vehicle_first_seen": str(int(veh.first_seen)),
-            "frame_count": str(veh.frame_count),
-            "hd_snapshot_key": hd_snapshot_key,
-        }
-        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
-
-    def _emit_vehicle_idle_event(self, veh: 'TrackedVehicle', timestamp: float):
-        """
-        Emit a vehicle_idle event when a vehicle has been stationary
-        for longer than VEHICLE_IDLE_TIMEOUT.
-        """
-        zone_name, alert_level = self._find_zone(veh.bbox)
-        alert_triggered = should_alert(alert_level) if alert_level else False
-
-        event = {
-            "camera_id": CAMERA_ID,
-            "event_type": "vehicle_idle",
-            "timestamp": str(timestamp),
-            "person_id": "",
-            "identity_name": "",
-            "duration": str(round(veh.duration, 1)),
-            "direction": "",
-            "action": "",
-            "bbox": json.dumps(veh.bbox),
-            "frame_count": str(veh.frame_count),
-            "zone": zone_name,
-            "alert_level": alert_level,
-            "alert_triggered": str(alert_triggered),
-            "vehicle_class": veh.class_name,
-            "vehicle_confidence": str(round(veh.confidence, 3)),
-            "vehicle_id": veh.vehicle_id,
-            "vehicle_first_seen": str(int(veh.first_seen)),
-            "snapshot_key": veh.snapshot_key,
-            "snapshot_bbox": json.dumps(veh.snapshot_bbox),
-            "time_period": get_time_period(),
-        }
-
-        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
-        self.total_events += 1
-
-        logger.info(
-            f"EVENT: vehicle_idle | {veh.class_name} idling {veh.duration:.1f}s"
-            f"{f' | zone={zone_name}' if zone_name else ''}"
-        )
-
-    def _emit_vehicle_left_event(self, veh: 'TrackedVehicle', timestamp: float):
-        """Emit a vehicle_left event when a tracked vehicle disappears.
-
-        Fires when the vehicle hasn't been detected for VEHICLE_LOST_TIMEOUT
-        seconds. `duration` is the full visit length (first_seen → last_seen),
-        which is what the dashboard / Telegram feed will display for the
-        "car parked here for 2h" use case.
-        """
-        zone_name, alert_level = self._find_zone(veh.bbox)
-        alert_triggered = should_alert(alert_level) if alert_level else False
-        visit_duration = veh.last_seen - veh.first_seen
-
-        event = {
-            "camera_id": CAMERA_ID,
-            "event_type": "vehicle_left",
-            "timestamp": str(timestamp),
-            "person_id": "",
-            "identity_name": "",
-            "duration": str(round(visit_duration, 1)),
-            "direction": "",
-            "action": "",
-            "bbox": json.dumps(veh.bbox),
-            "frame_count": str(veh.frame_count),
-            "zone": zone_name,
-            "alert_level": alert_level,
-            "alert_triggered": str(alert_triggered),
-            "vehicle_class": veh.class_name,
-            "vehicle_confidence": str(round(veh.confidence, 3)),
-            "vehicle_id": veh.vehicle_id,
-            "vehicle_first_seen": str(int(veh.first_seen)),
-            "snapshot_key": veh.snapshot_key,
-            "snapshot_bbox": json.dumps(veh.snapshot_bbox),
-            "time_period": get_time_period(),
-        }
-
-        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
-        self.total_events += 1
-
-        logger.info(
-            f"EVENT: vehicle_left | {veh.class_name} after {visit_duration:.1f}s"
-            f"{f' | zone={zone_name}' if zone_name else ''}"
-        )
-
-    def _emit_vehicle_gone_event(self, veh: 'TrackedVehicle', timestamp: float):
-        """Emit a vehicle_gone event when a tracked vehicle's ghost expires.
-
-        Fires for EVERY track end — both drive-bys and idle-leaves. Used by
-        `vehicle-attributes-cam{N}` to flush its per-track HD-crop buffer
-        regardless of whether the vehicle ever went idle. Carries `was_idle`
-        so consumers can distinguish without re-deriving from `duration`.
-
-        Drive-by tracks (short duration, never set idle_alerted): only
-        vehicle_gone fires. Idle-leave tracks: BOTH vehicle_gone (internal)
-        AND vehicle_left (user-facing) fire.
-        """
-        visit_duration = veh.last_seen - veh.first_seen
-
-        event = {
-            "camera_id": CAMERA_ID,
-            "event_type": VEHICLE_GONE_EVENT,
-            "timestamp": str(timestamp),
-            "duration": str(round(visit_duration, 1)),
-            "bbox": json.dumps(veh.bbox),
-            "frame_count": str(veh.frame_count),
-            "vehicle_class": veh.class_name,
-            "vehicle_confidence": str(round(veh.confidence, 3)),
-            "vehicle_id": veh.vehicle_id,
-            "vehicle_first_seen": str(int(veh.first_seen)),
-            "was_idle": str(bool(veh.idle_alerted)),
-        }
-
-        self.r.xadd(EVENT_STREAM, event, maxlen=MAX_EVENT_STREAM_LEN)
-        self.total_events += 1
-
-    def _load_zones(self):
-        """Load zone definitions from Redis (cached)."""
-        now = time.time()
-        if now - self._zone_load_time < self._zone_reload_interval:
-            return
-
-        try:
-            raw = self.r.hgetall(ZONE_KEY)
-            self._zones = {}
-            for k, v in raw.items():
-                key = k.decode() if isinstance(k, bytes) else k
-                val = v.decode() if isinstance(v, bytes) else v
-                self._zones[key] = json.loads(val)
-        except Exception as e:
-            logger.debug(f"Zone load error: {e}")
-
-        self._zone_load_time = now
-
-    def _find_zone(self, bbox: list) -> tuple:
-        """
-        Check which zone a person's bbox center falls in.
-
-        Returns (zone_name, alert_level) or ("", "") if no zone.
-        """
-        self._load_zones()
-
-        if not self._zones or len(bbox) != 4:
-            return ("", "")
-
-        # Normalize bbox center to 0-1 using actual frame dimensions
-        frame_w = self.frame_width
-        frame_h = self.frame_height
-
-        cx = ((bbox[0] + bbox[2]) / 2) / frame_w
-        cy = ((bbox[1] + bbox[3]) / 2) / frame_h
-
-        for zone_id, zone in self._zones.items():
-            pts = zone.get("points", [])
-            if len(pts) >= 3 and point_in_polygon(cx, cy, pts):
-                return (zone.get("name", zone_id), zone.get("alert_level", "log_only"))
-
-        return ("", "")
-
-    def _check_in_dead_zone(self, bbox: list) -> bool:
-        """Return True if the bbox center falls in a 'dead_zone' — fully ignored area."""
-        self._load_zones()
-        if not self._zones or len(bbox) != 4:
-            return False
-        frame_w = self.frame_width
-        frame_h = self.frame_height
-        cx = ((bbox[0] + bbox[2]) / 2) / frame_w
-        cy = ((bbox[1] + bbox[3]) / 2) / frame_h
-        for zone_id, zone in self._zones.items():
-            if zone.get("alert_level", "") != "dead_zone":
-                continue
-            pts = zone.get("points", [])
-            if len(pts) >= 3 and point_in_polygon(cx, cy, pts):
-                return True
-        return False
-
-    def _update_identities(self):
-        """Read face identity state from Redis and map names to tracked persons."""
-        now = time.time()
-        if now - self._identity_load_time < IDENTITY_POLL_INTERVAL:
-            return
-        self._identity_load_time = now
-
-        try:
-            id_state = self.r.hgetall(IDENTITY_KEY)
-            if not id_state:
-                return
-            id_json = id_state.get(b"identities", id_state.get("identities", b"[]"))
-            if isinstance(id_json, bytes):
-                id_json = id_json.decode()
-            identities = json.loads(id_json)
-        except Exception:
-            return
-
-        for ident in identities:
-            id_name = ident.get("name", "Unknown")
-            if id_name == "Unknown":
-                continue
-            id_bbox = ident.get("bbox", [])
-            if len(id_bbox) != 4:
-                continue
-            # Skip identities whose face bbox sits inside a dead zone —
-            # don't let an identity match in a "don't care" area assign
-            # a name to a legitimate person whose bbox happens to overlap.
-            if self._check_in_dead_zone(id_bbox):
-                continue
-            # Match identity bbox to a tracked person via IoU
-            best_iou = 0.0
-            best_person = None
-            for person in self.tracked.values():
-                iou = compute_iou(id_bbox, person.bbox)
-                if iou > best_iou:
-                    best_iou = iou
-                    best_person = person
-            if best_iou > 0.2 and best_person:
-                # Identity-expiry guard reads this. Refreshed on every
-                # face-recognizer match — first identification, same-
-                # name re-confirmation, and identity flip — so a track
-                # that's continuously confirmed is never demoted.
-                best_person.last_identity_confirmation_ts = now
-                if not best_person.identity_name:
-                    # First identification — emit event
-                    best_person.identity_name = id_name
-                    best_person._pending_identity = id_name
-                    best_person._pending_identity_count = 1
-                    self._emit_event(
-                        "person_identified", best_person, now,
-                        extra={"identity_name": id_name}
-                    )
-                elif id_name == best_person.identity_name:
-                    # Same name — clear any pending flip candidate.
-                    best_person._pending_identity = id_name
-                    best_person._pending_identity_count = 0
-                else:
-                    # Different name proposed for an already-identified
-                    # person. Require N consecutive cycles agreeing on
-                    # the new name before overwriting; one bad face
-                    # frame shouldn't corrupt the track. Always log so
-                    # unexpected flips show up in operator review.
-                    if best_person._pending_identity == id_name:
-                        best_person._pending_identity_count += 1
-                    else:
-                        best_person._pending_identity = id_name
-                        best_person._pending_identity_count = 1
-                    logger.info(
-                        f"Identity flip candidate: {best_person.person_id} "
-                        f"'{best_person.identity_name}' → '{id_name}' "
-                        f"({best_person._pending_identity_count}"
-                        f"/{TrackedPerson._IDENTITY_FLIP_CONFIRM_CYCLES})"
-                    )
-                    if (best_person._pending_identity_count
-                            >= TrackedPerson._IDENTITY_FLIP_CONFIRM_CYCLES):
-                        previous = best_person.identity_name
-                        logger.warning(
-                            f"Identity flip CONFIRMED: {best_person.person_id} "
-                            f"'{previous}' → '{id_name}'"
-                        )
-                        best_person.identity_name = id_name
-                        best_person._pending_identity_count = 0
-                        self._emit_event(
-                            "person_identified", best_person, now,
-                            extra={
-                                "identity_name": id_name,
-                                "previous_identity": previous,
-                            },
-                        )
 
     def _update_state(self):
         """
