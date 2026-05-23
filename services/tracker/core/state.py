@@ -9,7 +9,17 @@ from .config import (
     classify_action,
     ACTION_DEBOUNCE_FRAMES,
     ACTION_STICKY_MULTIPLIER,
+    MIN_KEYPOINTS_FOR_ACTION,
 )
+
+
+# How many visible keypoints (conf >= 0.3) a person has in the latest
+# detection — used by the action classifier to gate noisy partial-body
+# inputs. Defined at module scope so tests can reload the module after
+# monkeypatching the env.
+def _count_visible_keypoints(keypoints) -> int:
+    return sum(1 for kp in keypoints
+               if len(kp) >= 3 and kp[2] >= 0.3)
 
 class TrackedVehicle:
     """
@@ -182,10 +192,27 @@ class TrackedPerson:
         # Classify action from keypoints (with debounce + sticky bias).
         # Pass bbox so the classifier can scale its pixel thresholds —
         # otherwise distant/small detections fail the absolute-pixel checks.
+        # Gate on visible-keypoint count: a partial detection with only
+        # 4-5 visible joints produces unreliable arms_raised / crouching
+        # labels (e.g. wrist+shoulder visible but hips occluded → the
+        # arms_raised rule fires with no torso-scale anchor). Falls
+        # through to "unknown" below MIN_KEYPOINTS_FOR_ACTION.
         prev_action = self.action
         if keypoints:
-            result = classify_action(keypoints, bbox=bbox)
+            n_visible = _count_visible_keypoints(keypoints)
+            if n_visible < MIN_KEYPOINTS_FOR_ACTION:
+                result = {"action": "unknown", "confidence": 0.0, "details": {}}
+            else:
+                result = classify_action(keypoints, bbox=bbox)
             raw_action = result["action"]
+            # "walking" is a derived action: if the keypoint-based
+            # classifier returned "standing" AND the person's bbox
+            # history shows lateral motion (direction != stationary),
+            # promote it. Direction is computed lazily via the
+            # @property below; we trigger it explicitly here so the
+            # action reflects locomotion, not just posture.
+            if raw_action == "standing" and self.direction in ("left", "right"):
+                raw_action = "walking"
             # Debounce: only change if new action is stable for N consecutive frames
             if raw_action == self._pending_action:
                 self._pending_count += 1
