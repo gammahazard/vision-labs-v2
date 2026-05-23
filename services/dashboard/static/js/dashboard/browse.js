@@ -242,6 +242,212 @@ function _replaceLabelArea(section, track, userLabels) {
     if (newRow) row.replaceWith(newRow);
 }
 
+// Click-dispatch for the ✕ remove-crop button. Called by _openCropsModal's
+// stub-local listener. Sends a DELETE to /api/browse/tracks/.../{filename},
+// removes the thumbnail from the modal in place on success, refuses with
+// a 409 if it's the last crop (server enforces that — UI also disables
+// the button preemptively).
+async function _handleRemoveCrop(target, tracks) {
+    if (target.hasAttribute("disabled")) return;
+    const date = target.getAttribute("data-date") || "";
+    const camera = target.getAttribute("data-camera") || "";
+    const trackDir = target.getAttribute("data-track-dir") || "";
+    const filename = target.getAttribute("data-filename") || "";
+    if (!filename) return;
+    const trackKey = `${date}/${camera}/${trackDir}`;
+    const track = (tracks || []).find(
+        (t) => `${t.date}/${t.camera}/${t.dir_id}` === trackKey,
+    );
+    if (!track) return;
+
+    // Confirm before deleting. Bad-quality crop removal is a one-way
+    // operation (no undelete) so always ask.
+    if (!confirm(`Remove this crop (${filename}) from track ${track.track_id}? `
+        + `Its labels stay. This can't be undone.`)) {
+        return;
+    }
+
+    const url = `/api/browse/tracks/${encodeURIComponent(date)}`
+        + `/${encodeURIComponent(camera)}/${encodeURIComponent(trackDir)}`
+        + `/${encodeURIComponent(filename)}`;
+    let r;
+    try {
+        r = await fetch(url, { method: "DELETE" });
+    } catch (e) {
+        alert(`Couldn't remove crop: ${e.message || e}`);
+        return;
+    }
+    if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try {
+            const body = await r.json();
+            if (body.error) msg = body.error;
+        } catch (_) {}
+        alert(`Couldn't remove crop: ${msg}`);
+        return;
+    }
+    const data = await r.json();
+
+    // Look up the wrap + section BEFORE removing the wrap. Once wrap is
+    // detached from the DOM, target.closest() can't walk up to find the
+    // section — it stops at the orphaned wrap.
+    const wrap = target.closest(".crops-modal-thumb-wrap");
+    const section = target.closest(".crops-modal-track");
+
+    if (filename === "hero.jpg" && data.promoted) {
+        // The promoted angle is now hero.jpg on disk. Update track state
+        // in memory + cache-bust the now-leading thumb's src so a later
+        // viewer-open shows the new content (server returns a fresh JPEG
+        // on the same URL).
+        const promoted = data.promoted;
+        track.angle_urls = (track.angle_urls || []).filter(
+            (u) => !u.endsWith("/" + promoted),
+        );
+        if (section) {
+            // The promoted thumb is whichever <img> in this section has
+            // its src ending with the promoted angle filename. Re-point
+            // it at hero.jpg and bust the browser cache.
+            const promotedImg = Array.from(
+                section.querySelectorAll(".crops-modal-thumb"),
+            ).find((img) => img.src.endsWith("/" + promoted));
+            if (promotedImg) {
+                promotedImg.src = `${track.hero_url}?_=${Date.now()}`;
+                promotedImg.setAttribute("data-url", track.hero_url);
+            }
+        }
+    } else if (filename !== "hero.jpg") {
+        // Removed an angle — drop it from track.angle_urls.
+        track.angle_urls = (track.angle_urls || []).filter(
+            (u) => !u.endsWith("/" + filename),
+        );
+    }
+
+    if (wrap) wrap.remove();
+
+    // Update the "N crops" meta line + disable last remaining ✕ if
+    // we're now down to one crop in this section.
+    if (section) {
+        const remaining = section.querySelectorAll(".crops-modal-thumb-wrap").length;
+        const meta = section.querySelector(".crops-modal-track-meta");
+        if (meta) {
+            meta.textContent = meta.textContent.replace(
+                /· \d+ crops?/,
+                `· ${remaining} crop${remaining === 1 ? "" : "s"}`,
+            );
+        }
+        if (remaining === 1) {
+            const lastBtn = section.querySelector(".crops-modal-thumb-remove");
+            if (lastBtn) {
+                lastBtn.setAttribute("disabled", "");
+                lastBtn.setAttribute("title",
+                    "Can't remove the last crop in a track");
+            }
+        }
+    }
+
+    // Update the modal-header "N tracks, M crops" line. We're not removing
+    // the track itself so track count is unchanged; just decrement crops.
+    const header = document.querySelector(".crops-modal-header > span");
+    if (header) {
+        header.textContent = header.textContent.replace(
+            /(\d+) crops?\)/,
+            (_m, n) => {
+                const v = Math.max(0, parseInt(n, 10) - 1);
+                return `${v} crop${v === 1 ? "" : "s"})`;
+            },
+        );
+    }
+}
+
+// Click-dispatch for the per-track "Delete track" button. Sends a
+// DELETE to /api/browse/tracks/{date}/{camera}/{track_dir} which nukes
+// the entire vehicle_*/ folder (crops + embedding + metadata + labels).
+// Use only when a track is unsalvageable — the per-crop ✕ preserves
+// labels and is preferred for "one bad crop" cases.
+async function _handleDeleteTrack(target, tracks) {
+    const date = target.getAttribute("data-date") || "";
+    const camera = target.getAttribute("data-camera") || "";
+    const trackDir = target.getAttribute("data-track-dir") || "";
+    const trackId = target.getAttribute("data-track-id") || trackDir;
+    if (!date || !camera || !trackDir) return;
+
+    // Hard-confirm — this destroys the user's labels too, and there's
+    // no undo. Make sure they read the message.
+    if (!confirm(
+        `Delete the ENTIRE track ${trackId}?\n\n`
+        + `This removes all crops, the embedding, the metadata, AND any `
+        + `labels you've added for this track. It can't be undone.`,
+    )) {
+        return;
+    }
+
+    const url = `/api/browse/tracks/${encodeURIComponent(date)}`
+        + `/${encodeURIComponent(camera)}/${encodeURIComponent(trackDir)}`;
+    let r;
+    try {
+        r = await fetch(url, { method: "DELETE" });
+    } catch (e) {
+        alert(`Couldn't delete track: ${e.message || e}`);
+        return;
+    }
+    if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try {
+            const body = await r.json();
+            if (body.error) msg = body.error;
+        } catch (_) {}
+        alert(`Couldn't delete track: ${msg}`);
+        return;
+    }
+    const data = await r.json();
+
+    // Drop the section from the DOM + the tracks array.
+    const section = target.closest(".crops-modal-track");
+    const removedCrops = section
+        ? section.querySelectorAll(".crops-modal-thumb-wrap").length
+        : 0;
+    if (section) section.remove();
+
+    const trackKey = `${date}/${camera}/${trackDir}`;
+    const idx = (tracks || []).findIndex(
+        (t) => `${t.date}/${t.camera}/${t.dir_id}` === trackKey,
+    );
+    if (idx >= 0) tracks.splice(idx, 1);
+
+    // Update the modal-header "N tracks, M crops" line.
+    const header = document.querySelector(".crops-modal-header > span");
+    if (header) {
+        header.textContent = header.textContent
+            .replace(/\((\d+) track/, (_m, n) => {
+                const v = Math.max(0, parseInt(n, 10) - 1);
+                return `(${v} track`;
+            })
+            .replace(/(\d+) tracks?,/, (_m, n) => {
+                const v = parseInt(n, 10);
+                return `${v} track${v === 1 ? "" : "s"},`;
+            })
+            .replace(/(\d+) crops?\)/, (_m, n) => {
+                const v = Math.max(0, parseInt(n, 10) - removedCrops);
+                return `${v} crop${v === 1 ? "" : "s"})`;
+            });
+    }
+
+    // If we just removed the last track in the modal, swap in an
+    // empty-state message so the user knows the action took effect.
+    const body = document.querySelector(".crops-modal-body");
+    if (body && body.querySelectorAll(".crops-modal-track").length === 0) {
+        body.innerHTML = _safeHtml(
+            `<div class="crops-modal-empty">All tracks for this day have been deleted.</div>`,
+        );
+    }
+
+    if (typeof data.files_removed === "number") {
+        // Brief non-blocking confirmation. console rather than alert so
+        // we don't interrupt rapid pruning.
+        console.info(`Deleted track ${trackId} (${data.files_removed} files)`);
+    }
+}
+
 // Click-dispatch for label-{open,save,skip,cancel} actions. Called by
 // _openCropsModal's stub-local listener. `target` is the [data-action]
 // element clicked; `tracks` is the closure-scoped array of tracks for
@@ -563,6 +769,18 @@ async function _openCropsModal(date) {
         if (action === "label-open" || action === "label-save"
             || action === "label-skip" || action === "label-cancel") {
             await _handleLabelAction(action, target, tracks);
+            return;
+        }
+        if (action === "remove-crop") {
+            // Stop the click from bubbling to the parent thumbnail's
+            // "open" action (which would launch the photo viewer).
+            ev.stopPropagation();
+            await _handleRemoveCrop(target, tracks);
+            return;
+        }
+        if (action === "delete-track") {
+            ev.stopPropagation();
+            await _handleDeleteTrack(target, tracks);
         }
     });
     document.body.appendChild(stub);
@@ -588,17 +806,42 @@ async function _openCropsModal(date) {
     const sections = tracks.map(t => {
         const allUrls = [t.hero_url, ...t.angle_urls];
         totalCrops += allUrls.length;
+        const tDate = _escapeAttr(t.date || "");
+        const tCam = _escapeAttr(t.camera || "");
+        const tDir = _escapeAttr(t.dir_id || "");
+        const isLastCrop = allUrls.length === 1;
+        // Each thumbnail gets wrapped in a container so we can absolutely-position
+        // an ✕ remove-crop button on top. The button is disabled when only one
+        // crop remains — removing the last crop would orphan the track + labels,
+        // and the server enforces the same via a 409 on DELETE (defense-in-depth).
         const thumbs = allUrls.map((url, idx) => {
             const label = `${t.track_id} ${idx === 0 ? "hero" : "angle " + idx}`;
-            return `<img class="crops-modal-thumb"
-                src="${url}"
-                alt="${label}"
-                loading="lazy"
-                data-action="open"
-                data-url="${url}"
-                data-label="${label}"
-                role="button"
-                tabindex="0">`;
+            // The URL is `/api/browse/tracks/{date}/{cam}/{dir}/{filename}`.
+            // Last path segment is the filename we want to DELETE.
+            const filename = url.split("/").pop() || "";
+            const removeDisabled = isLastCrop ? "disabled" : "";
+            const removeTitle = isLastCrop
+                ? "Can't remove the last crop in a track"
+                : "Remove this crop (its labels stay)";
+            return `<div class="crops-modal-thumb-wrap">
+                <img class="crops-modal-thumb"
+                    src="${url}"
+                    alt="${label}"
+                    loading="lazy"
+                    data-action="open"
+                    data-url="${url}"
+                    data-label="${label}"
+                    role="button"
+                    tabindex="0">
+                <button type="button" class="crops-modal-thumb-remove"
+                    ${removeDisabled}
+                    title="${removeTitle}"
+                    data-action="remove-crop"
+                    data-date="${tDate}"
+                    data-camera="${tCam}"
+                    data-track-dir="${tDir}"
+                    data-filename="${_escapeAttr(filename)}">×</button>
+            </div>`;
         }).join("");
 
         const attrLine = _formatAttrs(t.attributes);
@@ -611,6 +854,13 @@ async function _openCropsModal(date) {
                     · ${t.duration_seconds.toFixed(1)}s
                     · ${allUrls.length} crop${allUrls.length === 1 ? "" : "s"}
                 </span>
+                <button type="button" class="crops-modal-track-delete"
+                    title="Delete this entire track (crops, embedding, labels — all gone)"
+                    data-action="delete-track"
+                    data-date="${tDate}"
+                    data-camera="${tCam}"
+                    data-track-dir="${tDir}"
+                    data-track-id="${_escapeAttr(t.track_id || '')}">Delete track</button>
             </header>
             ${attrLine ? `<div class="track-attrs">${attrLine}</div>` : ""}
             ${labelSection}
