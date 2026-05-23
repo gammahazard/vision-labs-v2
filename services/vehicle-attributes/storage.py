@@ -13,8 +13,12 @@ kwarg preserves the Phase 1 null-block behavior (backward compat).
 import json
 import logging
 import os
+import sys
 from datetime import datetime
 from typing import Optional
+
+sys.path.insert(0, "/workspace")
+from contracts.tz import TZ_LOCAL  # noqa: E402
 
 from buffer import TrackBuffer
 
@@ -22,8 +26,15 @@ logger = logging.getLogger("vehicle-attributes.storage")
 
 
 def _date_str_from_first_seen(first_seen: float) -> str:
-    """YYYY-MM-DD in local time (container TZ from LOCATION_TIMEZONE)."""
-    return datetime.fromtimestamp(first_seen).strftime("%Y-%m-%d")
+    """YYYY-MM-DD in LOCATION_TIMEZONE.
+
+    Naive `datetime.fromtimestamp(...)` falls back to the container's
+    local TZ — which on the slim base image silently resolves to UTC
+    because tzdata isn't installed. Result: per-track dirs got filed
+    under tomorrow's UTC date during the user's evening hours. Always
+    pass `tz=TZ_LOCAL` (validated IANA zone, see contracts/tz.py).
+    """
+    return datetime.fromtimestamp(first_seen, tz=TZ_LOCAL).strftime("%Y-%m-%d")
 
 
 def flush_buffer_to_disk(

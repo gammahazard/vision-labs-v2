@@ -68,17 +68,6 @@ body {
     touch-action: pan-y;
 }
 
-/* iOS Safari zooms the viewport when a form field <16 px is focused.
-   Forcing 16 px on form controls prevents the accidental zoom without
-   needing user-scalable=no on the meta viewport (which breaks
-   accessibility). Applies everywhere — most of our inputs were
-   inheriting a smaller body font and hitting this. */
-input,
-textarea,
-select {
-    font-size: 16px;
-}
-
 /* Defensive: anything that COULD push wider than the viewport (long URLs
    in event metadata, JSON-dumped state, etc.) should wrap rather than
    force a horizontal scroll the user can't reach. `overflow-wrap: anywhere`
@@ -2644,12 +2633,7 @@ input[type="range"]::-moz-range-thumb {
     border-radius: 12px;
     max-width: 960px;
     width: 100%;
-    /* `dvh` resolves to the dynamic viewport (excludes mobile URL bar
-       when visible). Older browsers fall back to the 85vh static value
-       via the first declaration. Without this, the modal extended below
-       Safari's URL bar and the bottom of the scroll body was invisible. */
     max-height: 85vh;
-    max-height: calc(100dvh - 2rem);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -2677,13 +2661,6 @@ input[type="range"]::-moz-range-thumb {
 .crops-modal-body {
     overflow-y: auto;
     padding: 0.5rem 1rem 1rem;
-    /* iOS momentum scroll — without this the touch-scroll inside the
-       modal feels stuck/janky on mobile Safari. */
-    -webkit-overflow-scrolling: touch;
-    /* Don't let an inertia-scroll past the modal edges chain into the
-       backdrop (would otherwise close the modal accidentally) or into
-       the parent #browseContent scroll context. */
-    overscroll-behavior: contain;
 }
 .crops-modal-loading,
 .crops-modal-empty {
