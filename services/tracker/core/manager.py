@@ -40,6 +40,7 @@ from .config import (
     VEHICLE_GHOST_MAX_DIST_RATIO,
     MIN_BBOX_AREA,
     IDENTITY_GRACE_SECONDS,
+    IDENTITY_POLL_INTERVAL,
     VEHICLE_SAMPLE_EVENT,
     VEHICLE_GONE_EVENT,
     stream_key,
@@ -1058,7 +1059,7 @@ class PersonTracker:
     def _update_identities(self):
         """Read face identity state from Redis and map names to tracked persons."""
         now = time.time()
-        if now - self._identity_load_time < 2:  # Check every 2 seconds
+        if now - self._identity_load_time < IDENTITY_POLL_INTERVAL:
             return
         self._identity_load_time = now
 
