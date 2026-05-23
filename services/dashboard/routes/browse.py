@@ -342,7 +342,14 @@ async def delete_track_image(date: str, camera: str, track_id: str,
     if not os.path.isdir(track_dir):
         return JSONResponse(status_code=404, content={"ok": False, "error": "track not found"})
 
-    target = os.path.join(track_dir, filename)
+    # Re-resolve the full target path and re-check containment after the
+    # filename join. Filename is already regex-validated to (hero.jpg|
+    # angle_NN.jpg) — no `..`, no `/` — but adding the explicit realpath
+    # check makes the safety obvious to static analyzers and is genuine
+    # defense-in-depth.
+    target = os.path.realpath(os.path.join(track_dir, filename))
+    if not target.startswith(track_dir + os.sep):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "out of range"})
     if not os.path.isfile(target):
         return JSONResponse(status_code=404, content={"ok": False, "error": "crop not found"})
 
@@ -371,8 +378,11 @@ async def delete_track_image(date: str, camera: str, track_id: str,
         if filename == "hero.jpg":
             angle_remaining = [f for f in other_crops if f.startswith("angle_")]
             if angle_remaining:
-                promote_src = os.path.join(track_dir, angle_remaining[0])
-                promote_dst = os.path.join(track_dir, "hero.jpg")
+                promote_src = os.path.realpath(os.path.join(track_dir, angle_remaining[0]))
+                promote_dst = os.path.realpath(os.path.join(track_dir, "hero.jpg"))
+                if (not promote_src.startswith(track_dir + os.sep)
+                        or not promote_dst.startswith(track_dir + os.sep)):
+                    return JSONResponse(status_code=400, content={"ok": False, "error": "out of range"})
                 os.rename(promote_src, promote_dst)
                 promoted = angle_remaining[0]
                 ctx.logger.info(
@@ -388,10 +398,13 @@ async def delete_track_image(date: str, camera: str, track_id: str,
                 )
         else:
             ctx.logger.info(f"Browse remove-crop: deleted {filename} from {track_dir}")
-    except OSError as e:
+    except OSError:
+        # Log full exception server-side; return generic message to the
+        # client to avoid leaking filesystem paths in error text.
+        ctx.logger.exception(f"Browse remove-crop: OSError unlinking from {track_dir}")
         return JSONResponse(
             status_code=500,
-            content={"ok": False, "error": f"couldn't remove crop: {e}"},
+            content={"ok": False, "error": "couldn't remove crop"},
         )
 
     return {"ok": True, "removed": filename, "promoted": promoted, "error": None}
@@ -445,10 +458,13 @@ async def delete_track(date: str, camera: str, track_id: str):
         ctx.logger.info(
             f"Browse delete-track: removed {track_dir} ({files_removed} files)"
         )
-    except OSError as e:
+    except OSError:
+        # Log full exception server-side; return generic message to the
+        # client to avoid leaking filesystem paths in error text.
+        ctx.logger.exception(f"Browse delete-track: OSError removing {track_dir}")
         return JSONResponse(
             status_code=500,
-            content={"ok": False, "error": f"couldn't remove track: {e}"},
+            content={"ok": False, "error": "couldn't remove track"},
         )
 
     return {"ok": True, "removed": track_id, "files_removed": files_removed,
