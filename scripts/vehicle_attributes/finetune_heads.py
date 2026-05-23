@@ -1,27 +1,36 @@
-"""Fine-tune the COLOR classifier head on user-labeled tracks.
+"""Fine-tune COLOR or BODY classifier heads on user-labeled tracks.
 
 Adapted from train_color_head.py but:
   - Reads labeled crops via collect_labels.py instead of VeRi-776 XML
-  - Warm-starts the head from current HF-Hub weights (color_head_v0.safetensors)
-    so the model doesn't forget VeRi-776 patterns and overfit to a small
-    user dataset
+  - Warm-starts the head from current HF-Hub weights so the model doesn't
+    forget VeRi-776 / Stanford-Cars patterns and overfit to a small user set
   - Lower learning rate (1e-4 default vs from-scratch 1e-3) for the same reason
   - Held-out 20% val set + early stopping if val accuracy stops improving
   - Computes a baseline val acc with the warm-started (= current deployed)
     weights before training, so the caller can refuse to deploy when training
     didn't actually improve things on YOUR labels.
 
-Backbone stays frozen (same as the original training script). Only the linear
-head weights move. ~7,690 trainable params.
+Backbone stays frozen. Only the linear head weights move (~7,000 params per
+head).
 
-Body retrain is intentionally NOT in this script. Body lives INSIDE the
-multihead.safetensors file alongside the make + model heads — deploying a
-new body head means re-emitting a full multihead file with the new body
-weights merged in with unchanged make+model weights. That's PR2b.
+Color vs body differ in two important ways:
+  - Color uses an ImageNet-pretrained ConvNeXt-Tiny backbone (frozen). The
+    color head is the only learnable layer. Output is a stand-alone
+    color_head_<vN>.safetensors with two tensors.
+  - Body lives INSIDE multihead.safetensors next to make+model heads. The
+    backbone there is fine-tuned on Stanford-Cars (NOT ImageNet), so the
+    body finetune must also use the Stanford-Cars backbone — otherwise the
+    new body head is trained on features that don't match the deployed
+    backbone, causing a train/infer divergence. Output is a NEW full
+    multihead_<vN>.safetensors with the new body head merged in alongside
+    unchanged make+model+backbone tensors.
 
-Output: /models/color_head_<version>.safetensors. Bump the
-VEHICLE_ATTR_COLOR_MODEL env var to the new version name and recreate the
-va containers — they'll auto-load the new file.
+Outputs:
+  /models/color_head_<version>.safetensors  (color only — bare head tensors)
+  /models/multihead_<version>.safetensors   (body — full merged multihead)
+
+Bump VEHICLE_ATTR_COLOR_MODEL or VEHICLE_ATTR_MULTIHEAD_MODEL accordingly
+and recreate the va containers — they'll auto-load the new file.
 
 Usage (called by retrain_attributes.py orchestrator):
     python finetune_heads.py --head color \\
@@ -29,6 +38,12 @@ Usage (called by retrain_attributes.py orchestrator):
         --classes-dir /app/classes \\
         --current-weights /models/color_head_v0.safetensors \\
         --output /models/color_head_v1.safetensors
+
+    python finetune_heads.py --head body \\
+        --snapshot-root /data/snapshots/vehicles \\
+        --classes-dir /app/classes \\
+        --current-weights /models/multihead_v0.safetensors \\
+        --output /models/multihead_v1.safetensors
 """
 
 from __future__ import annotations
@@ -114,11 +129,13 @@ def _split_train_val(tracks: list[LabeledTrack], head: str,
     return eligible[n_val:], eligible[:n_val]
 
 
-def _build_model_for_head(num_classes: int, current_weights: Path | None,
-                          device: str):
-    """Frozen ConvNeXt-Tiny backbone + linear head. Optionally warm-starts
-    from `current_weights` so the head doesn't forget VeRi-776/Stanford-Cars
-    knowledge when the user-label dataset is small."""
+def _build_color_model(num_classes: int, current_weights: Path | None,
+                       device: str):
+    """Frozen ImageNet-pretrained ConvNeXt-Tiny backbone + linear color head.
+    Optionally warm-starts the head from `current_weights` (color_head_v0
+    .safetensors) so the head doesn't forget VeRi-776 knowledge when the
+    user-label dataset is small.
+    """
     import timm
     backbone = timm.create_model("convnext_tiny", pretrained=True,
                                   num_classes=0).to(device)
@@ -131,14 +148,10 @@ def _build_model_for_head(num_classes: int, current_weights: Path | None,
     if current_weights and current_weights.exists():
         from safetensors.torch import load_file
         state = load_file(str(current_weights))
-        # color_head_v0.safetensors uses keys like "color_head.weight" /
-        # "color_head.bias"; multihead_v0 uses "body_head.weight" etc.
+        # color_head_v0.safetensors uses "color_head.weight"/"color_head.bias".
         # We're loading into a bare nn.Linear; strip the prefix.
-        head_state = {}
-        for k, v in state.items():
-            short = k.split(".")[-1]
-            if short in ("weight", "bias"):
-                head_state[short] = v
+        head_state = {k.split(".")[-1]: v for k, v in state.items()
+                      if k.split(".")[-1] in ("weight", "bias")}
         if head_state:
             try:
                 head.load_state_dict(head_state, strict=False)
@@ -147,6 +160,68 @@ def _build_model_for_head(num_classes: int, current_weights: Path | None,
                 logger.warning(f"couldn't warm-start head from {current_weights}: {e}")
         else:
             logger.warning(f"no recognized head tensors in {current_weights}")
+
+    return backbone, head
+
+
+def _build_body_model(num_classes: int, multihead_weights: Path,
+                      device: str):
+    """Frozen Stanford-Cars-fine-tuned ConvNeXt-Tiny backbone + body head.
+
+    UNLIKE color, body's backbone weights MUST come from multihead.safetensors
+    (which holds the Cars-fine-tuned backbone), not ImageNet. The deployed
+    model uses this backbone, so if we train the body head against ImageNet
+    features the deployed inference would compute different features than the
+    head was trained on — silent train/infer divergence.
+
+    Warm-starts the body head from multihead.body_head.* if those tensors
+    are present in the state dict (they should be for any v0+).
+    """
+    import timm
+    from safetensors.torch import load_file
+
+    if not multihead_weights.exists():
+        raise FileNotFoundError(
+            f"body retrain needs the current multihead weights "
+            f"({multihead_weights}) but the file is missing — make sure the "
+            f"vehicle-attributes container has run at least once so HF lazy-"
+            f"download has populated /models."
+        )
+
+    state = load_file(str(multihead_weights))
+
+    # Backbone: timm convnext_tiny with pretrained=False (we're about to
+    # overwrite every backbone weight from the multihead state). Match the
+    # va classifier's `_build_multihead_model` exactly.
+    backbone = timm.create_model("convnext_tiny", pretrained=False,
+                                  num_classes=0).to(device)
+    backbone_state = {k[len("backbone."):]: v
+                      for k, v in state.items() if k.startswith("backbone.")}
+    if not backbone_state:
+        raise ValueError(
+            f"{multihead_weights} has no backbone.* tensors — not a valid "
+            f"multihead checkpoint?"
+        )
+    missing, unexpected = backbone.load_state_dict(backbone_state, strict=False)
+    if unexpected:
+        logger.warning(f"body backbone: unexpected keys when loading from "
+                       f"multihead: {unexpected[:5]}{'…' if len(unexpected) > 5 else ''}")
+    backbone.train(False)
+    for p in backbone.parameters():
+        p.requires_grad = False
+
+    head = nn.Linear(backbone.num_features, num_classes).to(device)
+    body_head_state = {k[len("body_head."):]: v
+                       for k, v in state.items() if k.startswith("body_head.")}
+    if body_head_state:
+        try:
+            head.load_state_dict(body_head_state, strict=False)
+            logger.info(f"warm-started body head from {multihead_weights.name}")
+        except Exception as e:
+            logger.warning(f"couldn't warm-start body head: {e}")
+    else:
+        logger.warning(f"{multihead_weights} has no body_head.* tensors — "
+                       f"body head will be re-init from scratch")
 
     return backbone, head
 
@@ -166,20 +241,53 @@ def _evaluate(backbone, head, loader, device) -> tuple[int, int]:
     return correct, total
 
 
+_HEAD_CONFIG = {
+    "color": {"track_attr": "color",     "classes_file": "color_classes.json"},
+    "body":  {"track_attr": "body_type", "classes_file": "body_classes.json"},
+}
+
+
+def _save_merged_multihead(source_multihead: Path,
+                           new_body_head_state: dict,
+                           output: Path) -> None:
+    """Re-emit `source_multihead` with body_head.* replaced by the trained
+    weights. Backbone + make_head + model_head are passed through untouched.
+
+    This is what makes a body retrain deployable — the va service loads
+    one .safetensors per multihead and that file must contain backbone +
+    every head. We can't just write a stand-alone body_head.safetensors.
+    """
+    from safetensors.torch import load_file, save_file
+    src = load_file(str(source_multihead))
+    # Drop any existing body_head.* tensors so the rebuilt dict only has
+    # the new ones (safetensors disallows duplicate keys).
+    merged = {k: v for k, v in src.items() if not k.startswith("body_head.")}
+    for k, v in new_body_head_state.items():
+        merged[f"body_head.{k}"] = v.cpu()
+    if not any(k.startswith("backbone.") for k in merged):
+        raise ValueError(
+            f"merged multihead has no backbone.* tensors — source "
+            f"{source_multihead} appears corrupt"
+        )
+    save_file(merged, str(output))
+
+
 def finetune(head_name: str, snapshot_root: Path, classes_dir: Path,
               current_weights: Path | None, output: Path,
               epochs: int = 8, batch_size: int = 16, lr: float = 1e-4,
               val_frac: float = 0.2) -> dict:
-    """Fine-tune the color head. Returns a results dict the caller prints.
+    """Fine-tune a single classifier head. Returns a results dict.
 
-    head_name is restricted to "color" in PR2 — body lives inside the
-    multihead .safetensors and needs a separate merge-aware path (PR2b).
+    head_name ∈ {"color", "body"}. Color emits a bare head .safetensors;
+    body emits a full merged multihead .safetensors (see _save_merged_multihead).
     """
-    if head_name != "color":
+    if head_name not in _HEAD_CONFIG:
         return {"head": head_name, "trained": False,
-                "error": "only color is supported in PR2; body comes in PR2b"}
-    track_attr = "color"
-    classes_file = "color_classes.json"
+                "error": f"unknown head {head_name!r}; supported: "
+                         f"{list(_HEAD_CONFIG.keys())}"}
+    cfg = _HEAD_CONFIG[head_name]
+    track_attr = cfg["track_attr"]
+    classes_file = cfg["classes_file"]
 
     class_list = json.loads((classes_dir / classes_file).read_text())
     logger.info(f"[{head_name}] {len(class_list)} classes loaded from {classes_file}")
@@ -202,9 +310,18 @@ def finetune(head_name: str, snapshot_root: Path, classes_dir: Path,
     logger.info(f"[{head_name}] device={device}, "
                 f"train={len(train_tracks)}, val={len(val_tracks)}")
 
-    backbone, head = _build_model_for_head(
-        len(class_list), current_weights, device,
-    )
+    if head_name == "color":
+        backbone, head = _build_color_model(
+            len(class_list), current_weights, device,
+        )
+    else:  # body
+        if current_weights is None:
+            return {"head": head_name, "trained": False,
+                    "error": "body retrain requires --current-weights pointing "
+                             "to the multihead .safetensors (no ImageNet fallback)"}
+        backbone, head = _build_body_model(
+            len(class_list), current_weights, device,
+        )
     weights = weights.to(device)
 
     train_ds = _LabeledCropDataset(train_tracks, track_attr, class_list, train=True)
@@ -281,14 +398,25 @@ def finetune(head_name: str, snapshot_root: Path, classes_dir: Path,
 
     head.load_state_dict(best_state)
 
-    # Save with the same key prefix the inference code expects:
-    # services/vehicle-attributes/classifier.py loads via load_state_dict
-    # on the FULL ColorModel which has self.color_head — so the keys must
-    # be "color_head.weight" and "color_head.bias".
-    from safetensors.torch import save_file
-    out_state = {f"color_head.{k}": v.cpu() for k, v in best_state.items()}
+    # Save with the same key prefix the inference code expects.
+    # Color: services/vehicle-attributes/classifier.py loads via
+    #   load_state_dict on the FULL ColorModel which has self.color_head —
+    #   keys must be "color_head.weight" / "color_head.bias".
+    # Body:  the deployed inference loads multihead.safetensors as one file
+    #   that contains backbone + body_head + make_head + model_head. We
+    #   re-emit a NEW multihead by copying every tensor from the input
+    #   multihead and overwriting only body_head.* with the new weights.
     output.parent.mkdir(parents=True, exist_ok=True)
-    save_file(out_state, str(output))
+    if head_name == "color":
+        from safetensors.torch import save_file
+        out_state = {f"color_head.{k}": v.cpu() for k, v in best_state.items()}
+        save_file(out_state, str(output))
+    else:  # body
+        _save_merged_multihead(
+            source_multihead=current_weights,
+            new_body_head_state=best_state,
+            output=output,
+        )
     logger.info(f"[{head_name}] saved {output}")
 
     return {
@@ -307,10 +435,10 @@ def finetune(head_name: str, snapshot_root: Path, classes_dir: Path,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--head", choices=["color"], required=True,
-                    help="only 'color' in PR2; body finetune (PR2b) needs a "
-                         "multihead-merge path because body lives inside "
-                         "multihead.safetensors alongside make + model")
+    ap.add_argument("--head", choices=["color", "body"], required=True,
+                    help="which head to fine-tune. Color emits a stand-alone "
+                         "head .safetensors; body emits a full merged "
+                         "multihead .safetensors with body_head.* replaced.")
     ap.add_argument("--snapshot-root", type=Path,
                     default=Path("/data/snapshots/vehicles"))
     ap.add_argument("--classes-dir", type=Path, default=Path("/app/classes"))
