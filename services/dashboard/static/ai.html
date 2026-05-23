@@ -322,7 +322,15 @@
 
     <script src="js/lib/dompurify.min.js?v=1"></script>
     <script src="js/lib/safe-html.js?v=1"></script>
-    <script src="js/pages/ai.js?v=11"></script>
+    <!-- ai/ split (2026-05-22) — load order matters: state first, then helpers,
+         then tab modules, then the orchestrator entry. -->
+    <script src="js/pages/ai/_state.js?v=1"></script>
+    <script src="js/pages/ai/_utils.js?v=1"></script>
+    <script src="js/pages/ai/_wizard.js?v=1"></script>
+    <script src="js/pages/ai/_chat.js?v=1"></script>
+    <script src="js/pages/ai/_vision-tab.js?v=1"></script>
+    <script src="js/pages/ai/_dvr-tab.js?v=1"></script>
+    <script src="js/pages/ai.js?v=12"></script>
 
     <script src="js/core/nav.js?v=4"></script>
 </body>
