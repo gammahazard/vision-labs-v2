@@ -265,6 +265,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -723,6 +724,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -926,6 +928,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -1119,6 +1122,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -1312,6 +1316,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -1505,6 +1510,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -1698,6 +1704,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -1891,6 +1898,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -2084,6 +2092,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -2277,6 +2286,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -2470,6 +2480,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -2663,6 +2674,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -2856,6 +2868,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -3049,6 +3062,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -3242,6 +3256,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -3435,6 +3450,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -3628,6 +3644,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -3821,6 +3838,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -4014,6 +4032,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
@@ -4207,6 +4226,7 @@ services:
       - JPEG_QUALITY=${JPEG_QUALITY:-85}
       - HD_FRAME_WIDTH=${HD_FRAME_WIDTH:-2304}
       - HD_FRAME_HEIGHT=${HD_FRAME_HEIGHT:-1296}
+      - LOCATION_TIMEZONE=${LOCATION_TIMEZONE:-America/Toronto}
       - TZ=${LOCATION_TIMEZONE:-America/Toronto}
       # Phase 3 classifier — disabled by default until weights exist on HF Hub
       - ENABLE_CLASSIFIER=${ENABLE_CLASSIFIER:-0}
