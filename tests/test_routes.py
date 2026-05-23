@@ -863,6 +863,23 @@ class TestSaveTrackLabel:
         assert r.status_code == 400
         assert "purple" in r.json()["error"]
 
+    def test_skipped_clears_other_fields(self, browse_client):
+        """skipped=true is authoritative — any color/body/make/model
+        sent alongside is discarded so downstream code never sees a
+        contradictory `{skipped: true, color: 'blue'}` user_labels."""
+        r = browse_client.post(self.URL, json={
+            "skipped": True, "skip_reason": "blur",
+            "color": "blue", "body_type": "sedan",
+            "make": "Toyota", "model": "Sienna 2018",
+        })
+        assert r.status_code == 200, r.text
+        ul = r.json()["user_labels"]
+        assert ul["skipped"] is True
+        assert ul["color"] is None
+        assert ul["body_type"] is None
+        assert ul["make"] is None
+        assert ul["model"] is None
+
     def test_save_unknown_body_rejected(self, browse_client):
         r = browse_client.post(self.URL, json={"body_type": "spaceship"})
         assert r.status_code == 400

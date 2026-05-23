@@ -591,11 +591,15 @@ async def save_track_label(date: str, camera: str, track_dir: str,
             content={"ok": False, "error": f"couldn't read metadata.json: {e}"},
         )
 
+    # When skipped=true, ignore any color/body/make/model the caller
+    # included. Saving "skipped + color=blue" produces contradictory
+    # state that downstream code (k-NN, retrain) has to disambiguate.
+    # Cleaner to enforce here: skipped tracks have NO label fields.
     user_labels = {
-        "color": color or None,
-        "body_type": body_type or None,
-        "make": make or None,
-        "model": model or None,
+        "color": None if skipped else (color or None),
+        "body_type": None if skipped else (body_type or None),
+        "make": None if skipped else (make or None),
+        "model": None if skipped else (model or None),
         "skipped": skipped,
         "skip_reason": body.get("skip_reason") if skipped else None,
         "labeled_at": datetime.now(tz=TZ_LOCAL).isoformat(timespec="seconds"),
