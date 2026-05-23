@@ -380,6 +380,45 @@ def upsert_camera(entry: dict) -> tuple[bool, Optional[str]]:
                     logger.warning(
                         f"Registry: couldn't publish config:apply for {cid}: {e}"
                     )
+
+        # Auto-tie ENABLE_CLASSIFIER to detect_vehicle_attributes. The
+        # per-cam toggle starts the container, but the classifier itself
+        # is gated by the global ENABLE_CLASSIFIER env var. Previously
+        # that lived ONLY in .env (manual edit required) — users flipped
+        # the per-cam flag, got crops without predictions, and had no
+        # clue why. Now: when ANY camera transitions
+        # detect_vehicle_attributes False→True (or is created with it
+        # =True), write ENABLE_CLASSIFIER=1 to .env and force-recreate
+        # every enabled vehicle-attributes-camN container so they pick
+        # up the new env. No auto-disable on True→False flip-back: the
+        # container exits cleanly and frees VRAM regardless of the env
+        # value, and a user who set ENABLE_CLASSIFIER=1 manually to test
+        # should not have it silently flipped back.
+        old_va = bool(existing.get("detect_vehicle_attributes", False)) if existing else False
+        new_va = bool(entry.get("detect_vehicle_attributes", False))
+        if not old_va and new_va:
+            try:
+                from helpers.env_writer import update_env
+                res = update_env({"ENABLE_CLASSIFIER": "1"})
+                if res.get("written"):
+                    logger.info(
+                        f"Registry: ENABLE_CLASSIFIER=1 written to .env "
+                        f"(triggered by {cid} flipping detect_vehicle_attributes on)"
+                    )
+                    # Force-recreate ALL enabled vehicle-attributes-camN
+                    # containers — not just this cam's — so cameras that
+                    # already had the flag on pick up the new global env.
+                    # The orchestrator's PER_CAM_SERVICE_PREFIXES expansion
+                    # turns "vehicle-attributes" into every enabled slot.
+                    ctx.r.publish("config:apply", json.dumps({
+                        "request_id": f"enable-classifier-{int(time.time() * 1000)}",
+                        "services": ["vehicle-attributes"],
+                        "keys_changed": ["ENABLE_CLASSIFIER"],
+                    }))
+            except Exception as e:
+                logger.warning(
+                    f"Registry: couldn't auto-enable classifier for {cid}: {e}"
+                )
         return True, None
     except Exception:
         logger.exception(f"Registry upsert({cid}) failed")
