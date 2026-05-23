@@ -233,3 +233,85 @@ class TestTrackedPersonSerialization:
             p.update([100, 100, 200, 300], 1001.0 + i * 0.1, keypoints=kps)
         assert p.action == "standing"
         assert p.action_confidence > 0
+
+    def test_action_unknown_when_too_few_keypoints_visible(self):
+        """A partial detection with < MIN_KEYPOINTS_FOR_ACTION visible
+        joints must NOT commit a real action label. Live observation: a
+        person walking behind a planter has shoulders + maybe one knee
+        visible, the rest occluded. The old rule-based classifier would
+        sometimes fire arms_raised or crouching off noise from those
+        partial inputs."""
+        p = TrackedPerson("p_partial", [100, 100, 200, 300], 1000.0)
+        # Only 5 visible (conf >= 0.3) — well below the default 10 floor.
+        kps_partial = [
+            [320, 100, 0.9],   # nose
+            [310, 90, 0.9],    # eye
+            [280, 180, 0.9],   # shoulder
+            [360, 180, 0.9],   # shoulder
+            [290, 350, 0.9],   # hip
+        ] + [[0, 0, 0.0]] * 12  # rest below conf threshold
+        for i in range(10):
+            p.update([100, 100, 200, 300], 1001.0 + i * 0.1,
+                     keypoints=kps_partial)
+        # _pending_action stays "unknown"; without 10 consecutive
+        # real-action frames, self.action also stays "" → "unknown".
+        assert p.action in ("", "unknown"), \
+            f"partial-keypoint detection must not commit a real action, got {p.action}"
+
+    def test_action_walking_when_standing_pose_plus_motion(self):
+        """A person whose POSE classifies as standing but whose BBOX
+        history shows lateral motion gets promoted to 'walking'. The
+        keypoint-based classifier alone returns 'standing' even for
+        moving people — locomotion is in the bbox trajectory, not the
+        pose. Combine the two.
+
+        Needs 13+ frames because the `direction` property returns
+        'unknown' for the first 3 frames (waiting for bbox_history to
+        fill to len >= 4), so the first valid 'walking' raw_action only
+        appears at frame 4, and then 10 more frames of pending stability
+        are needed for the debounce to commit it. 14 frames in real
+        life = ~1.4 s of walking at 10 fps — appropriate for a
+        first-walking-commit window."""
+        p = TrackedPerson("p_walker", [100, 100, 200, 300], 1000.0)
+        kps_standing = [
+            [320, 100, 0.9], [310, 90, 0.9], [330, 90, 0.9],
+            [300, 100, 0.8], [340, 100, 0.8],
+            [280, 180, 0.9], [360, 180, 0.9],
+            [260, 260, 0.8], [380, 260, 0.8],
+            [250, 340, 0.8], [390, 340, 0.8],
+            [290, 350, 0.9], [350, 350, 0.9],
+            [285, 460, 0.8], [355, 460, 0.8],
+            [280, 570, 0.8], [360, 570, 0.8],
+        ]
+        # 14 frames, each shifting the bbox 30 px right.
+        for i in range(14):
+            x_off = i * 30
+            p.update(
+                [100 + x_off, 100, 200 + x_off, 300],
+                1001.0 + i * 0.1,
+                keypoints=kps_standing,
+            )
+        assert p.action == "walking", \
+            f"standing pose + lateral motion must commit as walking, got {p.action}"
+
+    def test_action_standing_when_pose_standing_and_stationary(self):
+        """Negative case for walking: a standing pose with no bbox motion
+        must remain 'standing', not falsely fire 'walking'. Don't break
+        the original behavior."""
+        p = TrackedPerson("p_still", [100, 100, 200, 300], 1000.0)
+        kps_standing = [
+            [320, 100, 0.9], [310, 90, 0.9], [330, 90, 0.9],
+            [300, 100, 0.8], [340, 100, 0.8],
+            [280, 180, 0.9], [360, 180, 0.9],
+            [260, 260, 0.8], [380, 260, 0.8],
+            [250, 340, 0.8], [390, 340, 0.8],
+            [290, 350, 0.9], [350, 350, 0.9],
+            [285, 460, 0.8], [355, 460, 0.8],
+            [280, 570, 0.8], [360, 570, 0.8],
+        ]
+        for i in range(10):
+            # No bbox motion
+            p.update([100, 100, 200, 300], 1001.0 + i * 0.1,
+                     keypoints=kps_standing)
+        assert p.action == "standing", \
+            f"stationary standing person must stay 'standing', got {p.action}"

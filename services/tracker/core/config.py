@@ -162,7 +162,20 @@ VEHICLE_IDLE_GHOST_TTL = float(os.getenv("VEHICLE_IDLE_GHOST_TTL", "600.0"))
 VEHICLE_GHOST_MAX_DIST_RATIO = float(os.getenv("VEHICLE_GHOST_MAX_DIST_RATIO", "3.5"))
 CONFIG_RELOAD_INTERVAL = int(os.getenv("CONFIG_RELOAD_INTERVAL", "10"))
 ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))
-ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "1"))
+# Once an action is committed, this multiplier is applied to the
+# debounce to require MORE consecutive frames before flipping to a
+# new action. Bumped 1 → 2 so a brief pose oscillation (gait swing,
+# leaning over, half-second partial occlusion) doesn't immediately
+# flip the committed action. 1 = no extra stickiness, 2 = needs 2×
+# evidence to flip, 3 = 3×, etc.
+ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "2"))
+# Minimum visible keypoints (conf ≥ KP_CONFIDENCE_THRESH in the
+# pose-detector) before we attempt action classification. Below this,
+# the action is set to "unknown" — partial detections (only shoulders
+# visible, lower body occluded) produced unreliable arms_raised /
+# crouching labels. 17 is the COCO total; 10 = "we can see at least
+# the upper body + most of the lower body."
+MIN_KEYPOINTS_FOR_ACTION = int(os.getenv("MIN_KEYPOINTS_FOR_ACTION", "10"))
 MIN_BBOX_AREA = int(os.getenv("MIN_BBOX_AREA", "3072"))
 IDENTITY_GRACE_SECONDS = float(os.getenv("IDENTITY_GRACE_SECONDS", "4.0"))
 # How often the tracker polls identity_state:{cam} to see what the
