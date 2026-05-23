@@ -9,6 +9,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ## [Unreleased]
 
 ### Added
+- **Auto-enable classifier on per-cam toggle** — Cameras edit modal's `detect_vehicle_attributes=true` now also writes `ENABLE_CLASSIFIER=1` to `.env` + recreates all `vehicle-attributes-camN` containers. Was: toggle ran the container but classification silently stayed off. *Requires dashboard restart.*
 ### Changed
 - **Classifier thresholds re-tuned again** — `COLOR_CONF_THRESHOLD` 0.55→0.45 (was firing only 33%); `MAKE_CONF_THRESHOLD` 0.50→0.65 (kills wrong-confident Lamborghini/Ferrari calls while preserving 0.86+ Chevy/Ford/Dodge). Body + model keep their thresholds. *Requires va recreate.*
 ### Fixed

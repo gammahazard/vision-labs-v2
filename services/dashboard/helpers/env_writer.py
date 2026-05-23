@@ -67,6 +67,14 @@ ALLOWED_KEYS = {
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
     "TELEGRAM_ALLOWED_USERS",
+    # Vehicle-attributes classifier master switch. Auto-set to "1" by
+    # `cameras.upsert_camera` the first time any camera flips
+    # `detect_vehicle_attributes=true`. Previously this lived ONLY in
+    # .env (manual edit required) — meaning the per-cam toggle started
+    # the container but the classifier silently stayed disabled and
+    # metadata.json.attributes always came back null. Read by the
+    # vehicle-attributes service at startup.
+    "ENABLE_CLASSIFIER",
 }
 
 
