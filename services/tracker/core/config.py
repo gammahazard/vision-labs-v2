@@ -165,6 +165,17 @@ ACTION_DEBOUNCE_FRAMES = int(os.getenv("ACTION_DEBOUNCE_FRAMES", "10"))
 ACTION_STICKY_MULTIPLIER = int(os.getenv("ACTION_STICKY_MULTIPLIER", "1"))
 MIN_BBOX_AREA = int(os.getenv("MIN_BBOX_AREA", "3072"))
 IDENTITY_GRACE_SECONDS = float(os.getenv("IDENTITY_GRACE_SECONDS", "4.0"))
+# How often the tracker polls identity_state:{cam} to see what the
+# face-recognizer matched. The dashboard's live-video overlay polls at
+# 10 fps and turns bboxes blue + writes names within ~100 ms of a
+# match — but the tracker is what fires the `person_identified` event
+# (which hits the Telegram alert + recent-activity feed). If a face is
+# visible only briefly (a person walking past, head turned for a
+# moment), a 2 s poll easily lands BEFORE the match and again AFTER,
+# missing the identification entirely. 0.5 s catches anything that
+# lingers ≥ 500 ms, which is the typical face-visible window for a
+# walking pedestrian. Cost: ≈2 extra HGETALL/sec/cam — negligible.
+IDENTITY_POLL_INTERVAL = float(os.getenv("IDENTITY_POLL_INTERVAL", "0.5"))
 
 # Re-exported snapshot key templates. The underscore aliases preserve the
 # names the legacy monolithic tracker.py used internally so manager.py can
