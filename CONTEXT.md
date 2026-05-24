@@ -1,6 +1,6 @@
 # Vision Labs — Full Project Context
 
-> One-stop reference for a new session (human or LLM) to understand the project end-to-end. Last updated 2026-05-20.
+> One-stop reference for a new session (human or LLM) to understand the project end-to-end. Last updated 2026-05-24.
 
 This document is the canonical context for working in this repo. It assumes you can read source code, but tells you **where to look**, **what reads what**, and **what to be careful of**. For architectural reasoning ("why services are split this way") see ARCHITECTURE.md — this doc tracks operational details (current AI tool catalog, env vars, retention defaults). Historical planning docs live in `docs/history/`.
 
@@ -130,16 +130,16 @@ All paths under `services/`. Every service ID below is profile-gated unless note
   - `match_threshold * 0.6 ≤ sim < match_threshold` → delete unknown (loose match noise).
   - `sim < match_threshold * 0.6` → keep as unknown.
 
-### 4.6 `vehicle-attributes/` (per-cam, no GPU in Phase 1)
+### 4.6 `vehicle-attributes/` (per-cam, GPU)
 - **Per-track HD-crop buffer.** Consumes `events:{cam}` filtered to `vehicle_detected` / `vehicle_sample` / `vehicle_gone` / `vehicle_idle`. Maintains in-memory `dict[track_id, TrackBuffer]`; cap 8 crops per track (`MAX_BUFFER_CROPS` env, default 8).
 - **HD frame source:** `GET frame_hd:{cam}` (binary Redis client, 5 s TTL set by camera-ingester). On miss, skip the sample — next event tries again.
-- **Cropping pipeline:** sub→HD bbox scale (×2.571 / ×2.531 at 896×512→2304×1296) → 20% padding (`CROP_PADDING_PCT`) → `cv2.imdecode` → slice → `cv2.imencode` JPEG q=85 (`JPEG_QUALITY`).
+- **Cropping pipeline:** sub→HD bbox scale (×2.571 / ×2.531 at 896×512→2304×1296) → 35% padding (`CROP_PADDING_PCT`, default 0.35) → `cv2.imdecode` → slice → `cv2.imencode` JPEG q=85 (`JPEG_QUALITY`).
 - **Storage:** flushes to `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}` on `vehicle_gone` (internal track-end event, fires for ALL track ends — drive-by + idle-leave) or `vehicle_idle` (preview flush mid-life). Hero = highest-confidence crop. Empty buffer = silent no-op. *Why not `vehicle_left`?* That's now strictly idle-leave-only (user-facing event); drive-by tracks would never flush if we used it.
 - **Registry gate:** exits cleanly at startup if `detect_vehicles=false` OR `detect_vehicle_attributes!=true` (mirrors face-recognizer's pattern). `restart: on-failure` on the compose block leaves clean exits alone (vs `unless-stopped` which would loop).
-- **No GPU in Phase 1** — Dockerfile uses `python:3.11-slim`, no PyTorch/ONNX. Phase 3 will add the multi-head classifier per the spec at `docs/superpowers/specs/2026-05-21-vehicle-attribute-classification-design.md`. The all-null `attributes` block in metadata.json is committed now so Phase 3 only fills values, doesn't restructure.
-- **Producer/consumer:** consumes `events:{cam}` + `frame_hd:{cam}` + `cameras:registry`. Writes filesystem only (no Redis writes in Phase 1).
+- **GPU (Phase 3 shipped).** Dockerfile is `FROM vision-labs-base:cuda12.8` with `torch`/`torchvision` (cu128) + `timm` installed; each `vehicle-attributes-cam{N}` compose block reserves an nvidia GPU device (`DETECTOR_GPU`). The classifier (`classifier.py`) is gated by `ENABLE_CLASSIFIER` — when off, the service still does Phase 1 crop-flushing and writes an all-null `attributes` block. Design spec: `docs/superpowers/specs/2026-05-21-vehicle-attribute-classification-design.md`.
+- **Producer/consumer:** consumes `events:{cam}` + `frame_hd:{cam}` + `cameras:registry`. Writes crops to the filesystem; no Redis writes.
 - **Tracker integration:** tracker emits `vehicle_sample` event every `SAMPLE_INTERVAL_FRAMES` matched updates when `EMIT_VEHICLE_SAMPLES=1` (default 0). Tracker code at `services/tracker/core/manager.py:_emit_vehicle_sample_event`.
-- **Phase 3 classifier integration:** when `ENABLE_CLASSIFIER=1`, the flush path calls `classifier.run_classifier_and_vote(buf, event_kind)` before writing metadata.json. The v0 ships **two** ConvNeXt-Tiny models, not one (see §4.6.2): color uses an ImageNet-pretrained backbone (frozen) + linear color head trained on VeRi-776; body/make/model use a Stanford-Cars-fine-tuned backbone + 3 heads. Both lazy-loaded from the `vehicle-attribute-models:/models` volume (HF Hub repo via `VEHICLE_ATTR_HF_REPO`, default `mangolover/vision-labs-vehicle-attributes`). Model head skipped for `event_kind == "idle"`. Weighted voting (yolo_conf × classifier_prob), confidence thresholds color 0.55 / body 0.50 / make 0.50 / model 0.55 (env-overridable via `COLOR_CONF_THRESHOLD` etc.), make-model consistency check. **IR detection:** if >50% of crops in a buffer have mean HSV saturation < `IR_SATURATION_THRESHOLD` (default 8.0), color is skipped and `ir_track=true` written into metadata.json — body/make/model still run (shape-based, not chroma).
+- **Phase 3 classifier integration:** when `ENABLE_CLASSIFIER=1`, the flush path calls `classifier.run_classifier_and_vote(buf, event_kind)` before writing metadata.json. The v0 ships **two** ConvNeXt-Tiny models, not one (see §4.6.2): color uses an ImageNet-pretrained backbone (frozen) + linear color head trained on VeRi-776; body/make/model use a Stanford-Cars-fine-tuned backbone + 3 heads. Both lazy-loaded from the `vehicle-attribute-models:/models` volume (HF Hub repo via `VEHICLE_ATTR_HF_REPO`, default `mangolover/vision-labs-vehicle-attributes`). Model head skipped for `event_kind == "idle"`. Weighted voting (yolo_conf × classifier_prob), confidence thresholds (deployed compose defaults) color 0.45 / body 0.50 / make 0.65 / model 0.55 — env-overridable via `COLOR_CONF_THRESHOLD` etc.; classifier.py's own code defaults are higher (color 0.55, make 0.50) but the compose env overrides them. make-model consistency check. **IR detection:** if >50% of crops in a buffer have mean HSV saturation < `IR_SATURATION_THRESHOLD` (default 8.0), color is skipped and `ir_track=true` written into metadata.json — body/make/model still run (shape-based, not chroma).
 - **Reservoir sampling** (Phase 3) in `TrackBuffer.append` replaces Phase 1's first-N capping — kept samples are statistically uniform across the track's lifetime, important for drive-by multi-view voting.
 - **Training pipeline** at `scripts/vehicle_attributes/`:
   - **Pre-training (one-time, public datasets)** — `train_color_head.py` (frozen-backbone, VeRi-776, ~20 min on 3090) produces `color_head.pth`; `train_multihead.py` (full fine-tune on Stanford Cars-196, ~2 hr) produces `multihead.pth`. `upload_weights.py` converts both to `.safetensors` and pushes them + class JSONs to HF Hub. See §4.6.1.
@@ -171,7 +171,7 @@ Line-numbered trace of the path from RTSP frame to per-track HD crop on disk. Th
 15. **Sample event published** — `manager.py:504-516`. Includes `bbox` (sub-stream coords) + `hd_snapshot_key` so vehicle-attributes can crop the same-moment HD frame.
 16. **vehicle-attributes reads the per-sample HD key** — `services/vehicle-attributes/service.py:150-156`. Tries `hd_snapshot_key` first, falls back to generic `frame_hd:cam{N}` if missing/expired.
 17. **Scale bbox sub→HD** — `service.py:164-166`. `_scale_bbox_sub_to_hd(bbox_sub, sub_size=(896,512), hd_size=hd_size)` — multiplies by HD/sub ratio per axis (~×2.5 on the Reolink).
-18. **Pad bbox** — `service.py:167`. `_pad_bbox(bbox_hd, CROP_PADDING_PCT, frame_size=hd_size)` — adds 20 % padding clipped at frame edges so the classifier sees full vehicle context.
+18. **Pad bbox** — `service.py:192`. `_pad_bbox(bbox_hd, CROP_PADDING_PCT, frame_size=hd_size)` — adds 35 % padding (`CROP_PADDING_PCT` default 0.35) clipped at frame edges so the classifier sees full vehicle context.
 19. **Crop HD JPEG** — `service.py:172`. `_crop_hd_frame(hd_bytes, bbox_padded)` decodes the HD JPEG, slices `[y1:y2, x1:x2]`, re-encodes JPEG q=85.
 20. **Append to reservoir-sampling buffer** — `service.py:176`. `buf.append(crop=crop, yolo_conf=yolo_conf, bbox=bbox_padded)`. Buffer caps at `MAX_BUFFER_CROPS` (default 8); past that, reservoir-replaces uniformly.
 21. **Flush on track end** — `service.py:106-113`. On `vehicle_gone` (drive-by + idle-leave) or `vehicle_idle` (mid-life preview), `_flush(event, buffers, snapshot_root)` writes `/data/snapshots/vehicles/{cam}/{date}/{track_id}/{hero.jpg, angle_NN.jpg, metadata.json}`. Hero = highest-confidence crop. If `ENABLE_CLASSIFIER=1`, `classifier.run_classifier_and_vote(buf, event_kind)` runs first and its output is merged into metadata.json's `attributes` block.
@@ -311,7 +311,7 @@ Dataclasses (`FrameMessage`, `DetectionMessage`, `EventMessage`) at the bottom o
 
 This is the biggest service. Read this section when working on UI, routes, or background tasks.
 
-### 6.1 `server.py` startup sequence (lines 299–360)
+### 6.1 `server.py` startup sequence (`@app.on_event("startup")` ~line 332; file ~458 lines)
 1. `init_auth_db()` — creates `/data/auth.db`, default admin/admin user, HMAC secret key (env override `SECRET_KEY`).
 2. Default `config:{camN}` seeding for any registered cam with empty config hash.
 3. `auto_mark_complete_if_preexisting()` — writes setup.json automatically if registry already has cameras (upgraded install).
@@ -319,10 +319,10 @@ This is the biggest service. Read this section when working on UI, routes, or ba
 5. Background asyncio tasks: `event_notification_poller`, `poll_telegram_callbacks`, `reminder_poller`, `warm_ollama`, `retention_poller`, `health_poller` (disk + Redis memory alerts), `start_metrics_collector`.
 6. WebSocket registered via `register_websocket(app)`.
 7. StaticFiles mounted AFTER routers (so `/api/*` wins over static `index.html`).
-8. **auth_middleware** (line 204) validates `vl_session` cookie via `validate_session`. Redirects to `/login.html` (HTML routes) or returns 401 (API routes).
-9. **`_setup_exempt()`** gate (line 250) — if setup.json missing, only `/setup.html`, `/js/pages/setup.js`, `/css/setup.css`, `/api/setup/*`, `/api/auth/*`, `/static/*`, `/api/cameras*` are accessible. (After the 2026-05-19 static-folder reorg, JS/CSS now live under `/js/<group>/` and `/css/` subdirs respectively.)
+8. **auth_middleware** (~line 212) validates `vl_session` cookie via `validate_session`. Redirects to `/login.html` (HTML routes) or returns 401 (API routes).
+9. **`_setup_exempt()`** gate (~line 283) — if setup.json missing, only `/setup.html`, `/js/pages/setup.js`, `/css/setup.css`, `/api/setup/*`, `/api/auth/*`, `/static/*`, `/api/cameras*` are accessible. (After the 2026-05-19 static-folder reorg, JS/CSS now live under `/js/<group>/` and `/css/` subdirs respectively.)
 
-### 6.2 `routes/` — 14 router modules + 3 split packages + 2 utility modules (ai_state, ai_prompts)
+### 6.2 `routes/` — 15 router modules + 3 split packages (ai_tools, bot_commands, notifications) + 2 utility modules (ai_state, ai_prompts)
 
 The packages (`ai_tools/`, `bot_commands/`, `notifications/`) are former monoliths refactored on 2026-05-19; their public surface (router object, function names) is unchanged.
 
@@ -522,13 +522,14 @@ Detectors use `restart: on-failure` (NOT `unless-stopped`) so that a clean exit 
 ### Always-on services (no profile)
 - `redis`, `ollama`, `dashboard`, `prometheus`, `grafana`, `redis-exporter`, `dcgm-exporter`, `orchestrator`, `portainer`.
 
-### Named volumes (line 1041 in docker-compose.yml)
+### Named volumes (`volumes:` block near the end of docker-compose.yml)
 | Volume | Mount | What's stored |
 |---|---|---|
 | `redis-data` | redis:/data | AOF + 2GB maxmemory allkeys-lru |
 | `face-data` | face-recognizer-*:/data | SQLite faces.db (embeddings + photos) |
 | `yolo-models` | pose/vehicle:/models | YOLO weights auto-downloaded |
 | `insightface-models` | face-recognizer:/root/.insightface | buffalo_l model |
+| `vehicle-attribute-models` | vehicle-attributes-cam{N}:/models | ConvNeXt-Tiny classifier weights — color_head + multihead safetensors, lazy-downloaded from HF Hub; also where retrained `*_v1.safetensors` land |
 | `auth-data` | dashboard:/data | auth.db, ai.db, setup-state/setup.json |
 | `ollama-models` | ollama:/root/.ollama | ~9.3 GB Qwen + MiniCPM-V |
 | `prometheus-data` | prometheus | metrics history |
@@ -547,6 +548,7 @@ The `qnap-*` volumes are plain local Docker volumes by default. `docker-compose.
 - **`./contracts`** → /app/contracts (RO) in every service.
 - **`./services/dashboard/{static,routes,pollers,helpers,*.py}`** → bind-mounted RO into dashboard for fast iteration (no rebuild on Python edits — just `docker compose restart dashboard`).
 - **`./.env`** → dashboard:/app/.env (RW) so env_writer can mutate it.
+- **`./services/vehicle-attributes/classes`** → vehicle-attributes-cam{N}:/app/classes (RO) — the color/body/make/model class-list JSONs (also bind-mounted into dashboard at `/app/vehicle_attributes_classes` for the labeling UI's `/label-classes` endpoint). Classes are a bind mount, NOT a named volume.
 
 ### Network mode
 - `host` on: camera-ingester-*, recorder-*, prometheus, grafana, redis-exporter, dcgm-exporter.
@@ -759,7 +761,7 @@ All three default `DETECTOR_GPU=0` and `CHAT_GPU=0`. Set `CHAT_GPU=1` for dual-G
 ### Phase J fallout (2026-05-19 / 2026-05-20)
 The AST-driven splits walked top-level defs but did NOT follow the call graph or module-level name references. Two regression incidents:
 
-1. **`_load_jsonl_journal` lost from `query_events_by_date`** (2026-05-19) — past-date queries crashed silently inside tool results. Soft-failure UX masked the bug for a week. Fix: restored the helper + added `tests/test_ai_tools_no_nameerror.py` (21 tests, one per tool).
+1. **`_load_jsonl_journal` lost from `query_events_by_date`** (2026-05-19) — past-date queries crashed silently inside tool results. Soft-failure UX masked the bug for a week. Fix: restored the helper + added `tests/test_ai_tools_no_nameerror.py` (a no-NameError smoke test exercising every `_tool_*` entrypoint).
 2. **Six bot commands lost module-level imports** (2026-05-20) — `/events`, `/status`, `/analyze`, `/ask`, `/timelapse` lost `make_redis_client`, `REDIS_HOST/PORT`, `OLLAMA_*`, `SNAPSHOT_DIR`; `/clip` lost cross-module `_extract_clip_frames` + `_describe_scene_multi` from `analyze.py`. Surfaced as NameError when users invoked the commands. Fix: routed all shared constants through `bot_commands/_shared.py` and added each name to its consuming file's import list. Regression guard: `tests/test_bot_commands_no_nameerror.py` (added 2026-05-20) — captures `send_text` calls and asserts no regression-class error text leaks through the try/except wrappers that originally hid the bug.
 
 See CLAUDE.md §0 for the canonical lesson.
@@ -779,6 +781,18 @@ Qwen 3 14B is the model ceiling on a single-host install — no swap to larger m
 - `query_events_by_date` now returns a pre-composed `summary` field (LLM tends to grab `total_events` when it should grab `detection_count`) and trims `latest_events` from 10 → 3 to save attention budget.
 - Server-side enforcement loop in `routes/ai.py` detects DVR-link text without a real URL and re-prompts with "append the link, keep the rest verbatim".
 - AI tab suggestion chips rewritten to single-purpose questions. Visible tip: "💡 ask one thing at a time. Compound questions get muddled." This is the honest framing — the 14B model is fine for one focused question per turn but compound multi-part questions still drift.
+
+### v0.3.0 release (2026-05-23)
+First tagged release after GHCR went live. Tracker identity-bearing tracks survive bbox loss (IoU 0.10 + 30 s lost-timeout, demote on >6 s gap); new `walking` action from pose+motion; per-track 768-dim `embedding.npy` saved for future same-vehicle grouping; camera-row edit pencil (rename/lat-lon/detector toggles without delete+re-add).
+
+### Vehicle-attributes Phase 1 → 3 → 4 (2026-05-21 → 05-24) — the dominant arc of the week
+- **Phase 1 — per-track HD crops.** `vehicle-attributes-cam{N}` flushes `hero.jpg`/`angle_*.jpg`/`metadata.json` per track on `vehicle_gone`, with an all-null `attributes` block. Browse day-view gained a "📸 Vehicle crops taken" modal. See §4.6 / §4.6.1.
+- **Phase 3 — classifier shipped.** Two ConvNeXt-Tiny models (frozen-ImageNet color head + Stanford-Cars-fine-tuned body/make/model multihead), lazy-fetched from HF Hub, gated by `ENABLE_CLASSIFIER`. va Dockerfile moved python:3.11-slim → `vision-labs-base:cuda12.8` + torch/timm; service now reserves a GPU. Reservoir sampling replaced first-N crop capping. IR-frame color skip. See §4.6.2.
+- **Phase 4 — per-operator labeling + retrain.** `POST /api/browse/label/...` writes user_labels into metadata.json; inline cropsModal labeling UI (color/body dropdowns + make/model autocomplete); crop-pruning (per-thumb ✕, auto-promote hero) + whole-track delete. `scripts/vehicle_attributes/{collect_labels,finetune_heads,retrain_attributes}.py` fine-tune the color + body heads on the operator's labels (warm-start, class-weighted CE, 20% held-out val, refuse-deploy-on-regression). Body retrain re-emits a full merged multihead. Make/model intentionally left as-is (no per-operator retrain — too long-tail). First live retrain: color val 25%→50%, body 67%→87% on the dev install's ~80 labels.
+- **Auto-enable classifier** — toggling `detect_vehicle_attributes=true` on any cam now also writes `ENABLE_CLASSIFIER=1` and recreates the va containers (was: container ran but classification stayed silently off).
+
+### Recorder recovery-alert timing fix (2026-05-24)
+`recorder_recovered` (the "✅ DVR Recorder Recovered" Telegram ping) was only emitted in the post-ffmpeg-exit branch, so continuous segmented recording — where ffmpeg stays alive across hourly segments — never fired it on a self-heal until the next drop. Now emitted in-session ~5 min (`_RECORDER_HEALTHY_THRESHOLD`) after recording stabilizes. `services/recorder/recorder.py`.
 
 ---
 
@@ -811,7 +825,7 @@ Qwen 3 14B is the model ceiling on a single-host install — no swap to larger m
   - `server.py` — FastAPI app + startup
   - `websocket.py` — `/ws/live` handler
   - `cameras.py` — `AVAILABLE_SLOTS` + helpers
-  - `routes/` — 18 router files + 3 split packages (ai_tools/, bot_commands/, notifications/); see §6.2
+  - `routes/` — 15 router modules + 2 utility modules (ai_state, ai_prompts) + 3 split packages (ai_tools/, bot_commands/, notifications/); see §6.2
   - `helpers/{env_writer,onvif_discovery,geometry}.py`
   - `pollers/{events,health,ollama_warmup,reminders,retention}.py`
   - `static/` — 8 HTML pages + JS/CSS in subdirs (see §6.5)
