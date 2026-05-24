@@ -305,6 +305,9 @@ Append a tier to `.env` with `cat tiers/<tier>.env >> .env`.
 | `CACHE_REFRESH_INTERVAL` | No | face-recognizer: seconds between cache reloads from shared DB (default 30) |
 | `ALLOWED_PROFILES` | No | orchestrator: profile names it's permitted to up/down (default `cam1,cam2,...,cam20`) |
 | `RECONCILE_INTERVAL` | No | orchestrator: safety-net reconcile loop period in seconds (default 10) |
+| `ENABLE_CLASSIFIER` | No | vehicle-attributes: gates ConvNeXt-Tiny color + multihead loading (default `0`). Set to `1` to fill `attributes` block in metadata.json. Auto-flipped to `1` by the dashboard when any cam toggles `detect_vehicle_attributes=true`. |
+| `VEHICLE_ATTR_COLOR_MODEL` | No | vehicle-attributes: filename in `/models` of the color-head safetensors to load (default `color_head_v0`). Bump to `color_head_v1` etc. after running `scripts/vehicle_attributes/retrain_attributes.py`. |
+| `VEHICLE_ATTR_MULTIHEAD_MODEL` | No | vehicle-attributes: filename in `/models` of the multihead (body + make + model) safetensors to load (default `multihead_v0`). Bump to `multihead_v1` after running the body retrain (`--heads body`). |
 
 ---
 

@@ -66,7 +66,8 @@ The embedded Grafana panel pulls from a Prometheus scrape of every service in th
 ## What you get
 
 - **Person + face + vehicle detection** on every camera in real time (YOLOv8s-pose, InsightFace, YOLOv8s)
-- **Vehicle attribute crops** — per-track HD reservoir of color/body/make/model crops, browseable per-drive-by. Optional ConvNeXt-Tiny classifier head can fill the attributes block at flush time (off by default until weights ship)
+- **Vehicle attribute crops + classification** — per-track HD reservoir of crops, browseable per-drive-by. Optional ConvNeXt-Tiny classifier (color + body + make + model) fills the attributes block at flush time; gated by `ENABLE_CLASSIFIER`, auto-enabled when any cam toggles `detect_vehicle_attributes` on. Weights lazy-download from HF Hub on first vehicle event.
+- **Per-operator label + retrain workflow** — label tracks via the Browse crops modal (color/body dropdowns + make/model autocomplete), prune bad crops or delete unsalvageable tracks, then fine-tune the color + body heads on your own labels via `scripts/vehicle_attributes/retrain_attributes.py`. The script holds out 20% val and refuses to deploy on regression.
 - **AI scene descriptions** on every Telegram alert (MiniCPM-V vision LLM)
 - **19-tool AI assistant** (Qwen 3 14B) — query events, capture live snapshots (with auto vision-model description), set reminders, find DVR segments — all multi-camera aware
 - **DVR recording** — 1-hour MPEG-TS segments, browseable through the dashboard with date + camera filters
