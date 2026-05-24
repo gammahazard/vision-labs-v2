@@ -285,7 +285,8 @@ def record_segments() -> bool:
             stderr=subprocess.DEVNULL,
         )
 
-        global _recorder_session_start
+        global _recorder_session_start, _consecutive_short_sessions
+        global _recorder_error_active
         _recorder_session_start = time.time()
         logger.info(f"ffmpeg started (PID {_ffmpeg_proc.pid})")
 
@@ -304,6 +305,23 @@ def record_segments() -> bool:
                 return True
 
             now = time.time()
+
+            # In-session recovery: if we previously alerted on a failure
+            # streak and THIS session has now run past the healthy
+            # threshold, announce recovery immediately — don't wait for
+            # ffmpeg to exit. Continuous segmented recording keeps the
+            # same ffmpeg alive across hourly segments, so the post-exit
+            # recovery branch below would otherwise not fire until the
+            # next camera drop (potentially hours later, or never).
+            # _recorder_error_active flips False here so this fires once.
+            if (_recorder_error_active
+                    and (now - _recorder_session_start) > _RECORDER_HEALTHY_THRESHOLD):
+                _recorder_error_active = False
+                _consecutive_short_sessions = 0
+                _emit_recorder_event(
+                    "recorder_recovered",
+                    f"recording stable for {now - _recorder_session_start:.0f}s",
+                )
 
             # Pre-create day directories every 30 minutes
             if now - last_dir_check > 1800:
@@ -331,9 +349,12 @@ def record_segments() -> bool:
             logger.info(f"ffmpeg exited normally after {session_duration:.1f}s")
 
         # Recorder health tracking — fire alerts when ffmpeg keeps crashing
-        # quickly (network down, bad RTSP URL, disk full) and recover when a
-        # session runs long enough to suggest things are stable.
-        global _consecutive_short_sessions, _recorder_error_active
+        # quickly (network down, bad RTSP URL, disk full). Recovery is
+        # normally emitted in-session by the monitor loop above; this
+        # post-exit branch is a backstop for the narrow case where ffmpeg
+        # exits right as it crosses the healthy threshold (before the
+        # loop's next tick). The _recorder_error_active flag ensures only
+        # one recovery event fires. (Globals already declared at fn top.)
         if session_duration < _RECORDER_SHORT_SESSION_THRESHOLD:
             _consecutive_short_sessions += 1
             if (_consecutive_short_sessions >= _RECORDER_FAILURES_BEFORE_ALERT
