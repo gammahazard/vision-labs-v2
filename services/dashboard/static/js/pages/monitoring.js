@@ -24,8 +24,11 @@
     // ─── Config ───
     const HEALTH_POLL_INTERVAL = 30_000; // 30 seconds
     const HEALTH_API = "/api/monitoring/health";
-    // Use the same hostname the user is browsing from (supports LAN IPs)
-    const GRAFANA_BASE = `http://${window.location.hostname}:3000`;
+    // Grafana is bound to 127.0.0.1 (off the LAN) for security, so links point
+    // at localhost — correct on the host browser and over an SSH tunnel
+    // (ssh -L 3000:localhost:3000 <host>). The monitoring tab links out rather
+    // than embedding, since a non-host browser can't reach the loopback bind.
+    const GRAFANA_BASE = "http://localhost:3000";
     const DASHBOARD_PATH = "/d/vision-labs-main/vision-labs-system-monitor";
 
     let _healthTimer = null;
