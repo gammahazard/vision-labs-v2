@@ -759,10 +759,13 @@ async def save_track_label(date: str, camera: str, track_dir: str,
     try:
         with open(meta_path) as fh:
             meta = json.load(fh)
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError):
+        # Log full exception server-side; return a generic message so we
+        # don't leak filesystem paths / stack detail in the response body.
+        ctx.logger.exception(f"Browse label: failed to read {meta_path}")
         return JSONResponse(
             status_code=500,
-            content={"ok": False, "error": f"couldn't read metadata.json: {e}"},
+            content={"ok": False, "error": "couldn't read metadata.json"},
         )
 
     # When skipped=true, ignore any color/body/make/model the caller
@@ -802,10 +805,11 @@ async def save_track_label(date: str, camera: str, track_dir: str,
             except OSError:
                 pass
             raise
-    except OSError as e:
+    except OSError:
+        ctx.logger.exception(f"Browse label: failed to write {meta_path}")
         return JSONResponse(
             status_code=500,
-            content={"ok": False, "error": f"couldn't write metadata.json: {e}"},
+            content={"ok": False, "error": "couldn't write metadata.json"},
         )
 
     return {"ok": True, "user_labels": user_labels, "error": None}
