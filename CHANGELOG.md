@@ -27,6 +27,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Dropped `SYS_ADMIN` from dcgm-exporter** — near-root capability not needed for util/temp/power/mem metrics. *Requires recreate.*
 - **Escaped vision-model text in Telegram alert captions** — `describe_scene` output is now `_esc()`'d before HTML interpolation; an attacker putting text in a camera's view could otherwise inject markup or malform the caption and silently drop the alert. *Dashboard restart.*
 - **`env_writer` rejects newlines in values** — a value containing `\n`/`\r` (reachable via `/api/setup/apply-config` free-text fields) could inject extra `.env` keys that docker-compose interpolates, bypassing the key allowlist. Now refused at the boundary. *Dashboard restart.*
+- **Removed hardcoded Grafana admin password** — `GF_SECURITY_ADMIN_PASSWORD=visionlabs` (world-readable in this public repo) replaced with `${GRAFANA_ADMIN_PASSWORD}`, auto-generated at install. Embed (anonymous Viewer) unaffected. *Existing installs: env var only seeds on first DB init — run `docker compose exec grafana grafana cli admin reset-admin-password <pw>` once.*
 
 ---
 

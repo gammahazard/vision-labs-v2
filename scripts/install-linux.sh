@@ -232,6 +232,23 @@ else
     ok "REDIS_PASSWORD already set — leaving it alone"
 fi
 
+# Generate a Grafana admin password if one isn't set. The compose file reads
+# GRAFANA_ADMIN_PASSWORD from .env; we never hardcode it because the repo is
+# public. Anonymous Viewer (for the embedded panels) is unaffected — this
+# only protects the admin/edit login.
+if ! grep -qE "^GRAFANA_ADMIN_PASSWORD=[A-Za-z0-9]" .env 2>/dev/null; then
+    GRAFANA_PW="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | base64 | tr -d '/+=')"
+    if [ -n "$GRAFANA_PW" ]; then
+        sed -i '/^[[:space:]]*#*[[:space:]]*GRAFANA_ADMIN_PASSWORD=/d' .env
+        printf '\n# Grafana admin password — auto-generated at install. Never commit a value.\nGRAFANA_ADMIN_PASSWORD=%s\n' "$GRAFANA_PW" >> .env
+        ok "Generated GRAFANA_ADMIN_PASSWORD and added to .env"
+    else
+        warn "Could not generate GRAFANA_ADMIN_PASSWORD — set one manually before starting the stack."
+    fi
+else
+    ok "GRAFANA_ADMIN_PASSWORD already set — leaving it alone"
+fi
+
 # ---------------------------------------------------------------------------
 # Step 6: Pull or build, then run
 # ---------------------------------------------------------------------------
