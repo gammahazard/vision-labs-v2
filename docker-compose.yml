@@ -562,6 +562,10 @@ services:
       # Auth — empty default = no auth (matches current Redis config).
       # When REDIS_PASSWORD is set, exporter authenticates so metrics keep flowing.
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      # Bind the exporter's own /metrics endpoint to loopback so the LAN
+      # can't scrape Redis internals. Prometheus is on host-net and reaches
+      # it via localhost:9121, so scraping is unaffected.
+      - REDIS_EXPORTER_WEB_LISTEN_ADDRESS=127.0.0.1:9121
     depends_on:
       - redis
     restart: unless-stopped
@@ -569,6 +573,10 @@ services:
   dcgm-exporter:
     image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
     network_mode: host
+    environment:
+      # Bind /metrics to loopback — host-net Prometheus scrapes it at
+      # localhost:9400, so the LAN can't enumerate GPU telemetry.
+      - DCGM_EXPORTER_LISTEN=127.0.0.1:9400
     deploy:
       resources:
         reservations:
@@ -576,8 +584,9 @@ services:
             - driver: nvidia
               count: all  # both GPUs — exporter scrapes metrics from all cards
               capabilities: [ gpu ]
-    cap_add:
-      - SYS_ADMIN
+    # SYS_ADMIN dropped 2026-05-26 (security): util/temp/power/mem metrics
+    # don't need it. If a future DCGM profiling field-group requires it,
+    # re-add the narrowest capability rather than SYS_ADMIN.
     restart: unless-stopped
 
   # Host-level metrics: disk usage, memory, CPU, load, network. The
@@ -610,11 +619,15 @@ services:
   # ---------------------------------------------------------------------------
   # HTTPS UI at https://localhost:9443 — first visit creates the admin user.
   # Mounts the Docker socket so it can manage everything on this host.
+  # Bound to 127.0.0.1 (2026-05-26 security): Portainer holds the rw Docker
+  # socket = root-equivalent. Loopback-only keeps that off the untrusted LAN.
+  # Reach it from another machine via SSH tunnel:
+  #   ssh -L 9443:localhost:9443 <host>  then  https://localhost:9443
   portainer:
     image: portainer/portainer-ce:latest
     ports:
-      - "9000:9000"
-      - "9443:9443"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9443:9443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer-data:/data

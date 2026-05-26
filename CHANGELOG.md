@@ -21,6 +21,10 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ### Fixed
 - **DVR `recorder_recovered` alert never fired on self-heal** — recovery was only emitted when ffmpeg exited after a healthy run, but continuous segmented recording keeps ffmpeg alive across segments, so the "recovered" Telegram ping was hours late or never came. Now emitted in-session ~5 min after recording stabilizes. *Requires recorder rebuild.*
 - **3 people walking out → tracker spawned 12 IDs + `num_people` peaked at 11** — added center-distance fallback (`_try_live_person_center_match`) for plain person tracks; mirrors the vehicle path but tighter (1.0× bbox_w, vs 3.5× for vehicles). Skips identified tracks (they use IDENTITY_TRACK_IOU_THRESHOLD), same-frame tracks, and stale tracks. *Requires tracker rebuild.*
+### Security
+- **Portainer no longer LAN-exposed** — bound `9000`/`9443` to `127.0.0.1` (was `0.0.0.0`); it holds the rw Docker socket so LAN reach = root-equivalent. Manage via SSH tunnel. *Requires recreate.*
+- **Metrics exporters bound to loopback** — `redis-exporter` (9121) + `dcgm-exporter` (9400) now listen on `127.0.0.1`; Prometheus (host-net) still scrapes them. Stops LAN recon of Redis/GPU internals. *Requires recreate.*
+- **Dropped `SYS_ADMIN` from dcgm-exporter** — near-root capability not needed for util/temp/power/mem metrics. *Requires recreate.*
 
 ---
 
