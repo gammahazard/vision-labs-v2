@@ -34,6 +34,8 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **ffmpeg protocol whitelist** — recorder + `test-rtsp` ffprobe now pass `-protocol_whitelist file,crypto,udp,rtp,tcp,tls,rtsp,rtsps`, so a malicious RTSP server can't redirect ffmpeg to `file://`/`http://`/`concat:` via SDP. *Requires recorder rebuild.*
 - **ONVIF SSRF guard** — `/onvif-stream-uri` rejects a `device_url` that isn't an http(s) URL resolving to a private/LAN address, so the endpoint can't be used to reach metadata/cloud services. *Dashboard restart.*
 - **ONVIF SOAP XML escaping** — the WSSE username and the camera-supplied profile token are XML-escaped before interpolation into the SOAP envelope. *Dashboard restart.*
+- **QNAP password placeholder blanked** — `.env.example` ships `QNAP_PASSWORD=` (was `changeme`) so an unconfigured NAS mount fails loudly instead of trying a guessable default.
+- **Hardening guards** — `.gitignore` now covers `*.pem`/`*.key`/`*.crt`/`*.p12`; a regression test pins Redis to its `127.0.0.1` bind so a passwordless Redis can't silently drift onto the LAN.
 
 ---
 

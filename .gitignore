@@ -74,6 +74,12 @@ SECURITY_AUDIT.md
 # Prometheus /metrics bearer token — installer-generated secret, never commit.
 services/prometheus/metrics_token
 
+# TLS keys/certs — never commit a private key (defensive; no in-repo TLS today).
+*.pem
+*.key
+*.crt
+*.p12
+
 # Vehicle-attributes training assets — local-only, multi-GB datasets + checkpoints.
 datasets/
 training-output/
