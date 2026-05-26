@@ -255,6 +255,11 @@ def record_segments() -> bool:
         "-loglevel", "warning",
         # --- RTSP input with reconnection ---
         "-rtsp_transport", "tcp",
+        # Constrain protocols so a malicious RTSP server at a registered URL
+        # can't redirect ffmpeg to file://, http://, concat:, etc. via
+        # SDP/Content-Base. Covers rtsp + rtsps; `file` is for the segment
+        # output muxer.
+        "-protocol_whitelist", "file,crypto,udp,rtp,tcp,tls,rtsp,rtsps",
         "-timeout", "5000000",           # 5s I/O timeout (µs)
         "-i", RTSP_URL,
         # --- Copy codec (no transcode) ---
