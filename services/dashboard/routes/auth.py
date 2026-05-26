@@ -409,7 +409,12 @@ async def login(request: Request):
         key="vl_session",
         value=token,
         httponly=True,
-        samesite="lax",
+        # strict, not lax: single-admin dashboard has no legitimate cross-site
+        # entry, so the session cookie is never sent on cross-site requests —
+        # a belt-and-suspenders CSRF defense alongside the middleware's
+        # Origin check (server.py). Cost: a top-level link from another origin
+        # won't carry the cookie, so the user re-navigates once. Acceptable.
+        samesite="strict",
         secure=_COOKIE_SECURE,
         max_age=86400,
         path="/",
@@ -494,7 +499,12 @@ async def change_password(request: Request):
         key="vl_session",
         value=new_token,
         httponly=True,
-        samesite="lax",
+        # strict, not lax: single-admin dashboard has no legitimate cross-site
+        # entry, so the session cookie is never sent on cross-site requests —
+        # a belt-and-suspenders CSRF defense alongside the middleware's
+        # Origin check (server.py). Cost: a top-level link from another origin
+        # won't carry the cookie, so the user re-navigates once. Acceptable.
+        samesite="strict",
         secure=_COOKIE_SECURE,
         max_age=86400,
         path="/",
