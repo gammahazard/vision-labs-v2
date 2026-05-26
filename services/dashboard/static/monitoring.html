@@ -95,26 +95,21 @@
         <div class="mon-iframe-container mon-tab-panel" id="panelGrafana">
             <div class="mon-iframe-toolbar">
                 <span class="mon-iframe-title">📈 Grafana Dashboard</span>
-                <div class="mon-iframe-actions">
-                    <select id="monTimeRange" class="mon-time-select" onchange="window._monUpdateTimeRange(this.value)">
-                        <option value="now-15m">Last 15 min</option>
-                        <option value="now-1h" selected>Last 1 hour</option>
-                        <option value="now-3h">Last 3 hours</option>
-                        <option value="now-6h">Last 6 hours</option>
-                        <option value="now-12h">Last 12 hours</option>
-                        <option value="now-24h">Last 24 hours</option>
-                        <option value="now-7d">Last 7 days</option>
-                    </select>
-                    <button class="mon-iframe-expand-btn" id="monExpandBtn" onclick="window._monToggleFullscreen()"
-                        title="Toggle fullscreen">⛶</button>
-                </div>
             </div>
             <div class="mon-iframe-wrapper" id="monIframeWrapper">
-                <iframe id="grafanaFrame" src="" frameborder="0" allowfullscreen></iframe>
-                <div class="mon-iframe-loading" id="monIframeLoading">
-                    <div class="mon-spinner"></div>
-                    <span>Connecting to Grafana...</span>
-                    <p class="mon-iframe-hint">Make sure Grafana is running on port 3000</p>
+                <!-- Grafana is bound to 127.0.0.1 (off the LAN) for security, so
+                     it can't be embedded from a non-host browser. Link out instead. -->
+                <div class="mon-iframe-loading">
+                    <span style="font-size: 2.2rem;">📈</span>
+                    <span>Grafana runs on this host only (bound to <code>127.0.0.1</code>).</span>
+                    <p class="mon-iframe-hint">
+                        It's no longer exposed on the LAN. Open it on the host, or tunnel
+                        from another machine:<br>
+                        <code>ssh -L 3000:localhost:3000 &lt;this-host&gt;</code>
+                    </p>
+                    <a href="http://localhost:3000/d/vision-labs-main/vision-labs-system-monitor"
+                       target="_blank" rel="noopener" class="mon-grafana-link"
+                       style="margin-top: 12px;">↗ Open Grafana</a>
                 </div>
             </div>
         </div>
@@ -136,7 +131,7 @@
 
     <script src="js/lib/dompurify.min.js?v=1"></script>
     <script src="js/lib/safe-html.js?v=1"></script>
-    <script src="js/pages/monitoring.js?v=6"></script>
+    <script src="js/pages/monitoring.js?v=7"></script>
     <script src="js/core/nav.js?v=4"></script>
 </body>
 
