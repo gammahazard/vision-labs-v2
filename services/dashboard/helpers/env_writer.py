@@ -99,6 +99,21 @@ def update_env(updates: dict[str, str],
     valid = {k: str(v) for k, v in updates.items() if k in ALLOWED_KEYS}
     ignored = sorted(set(updates) - ALLOWED_KEYS)
 
+    # Reject newlines/carriage-returns in any value. A value like
+    # "home\nDETECTOR_GPU=1" would inject extra physical lines into .env
+    # that docker-compose then interpolates — bypassing the key allowlist
+    # above (the injected line is parsed by compose, not by this function).
+    # The allowlist is the privilege boundary; this keeps it from leaking.
+    for k, v in valid.items():
+        if "\n" in v or "\r" in v:
+            return {
+                "ok": False,
+                "path": str(path),
+                "written": [],
+                "ignored": ignored,
+                "error": f"value for {k} contains a newline — refused",
+            }
+
     if not valid:
         return {
             "ok": True,

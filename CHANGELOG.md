@@ -25,6 +25,8 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **Portainer no longer LAN-exposed** — bound `9000`/`9443` to `127.0.0.1` (was `0.0.0.0`); it holds the rw Docker socket so LAN reach = root-equivalent. Manage via SSH tunnel. *Requires recreate.*
 - **Metrics exporters bound to loopback** — `redis-exporter` (9121) + `dcgm-exporter` (9400) now listen on `127.0.0.1`; Prometheus (host-net) still scrapes them. Stops LAN recon of Redis/GPU internals. *Requires recreate.*
 - **Dropped `SYS_ADMIN` from dcgm-exporter** — near-root capability not needed for util/temp/power/mem metrics. *Requires recreate.*
+- **Escaped vision-model text in Telegram alert captions** — `describe_scene` output is now `_esc()`'d before HTML interpolation; an attacker putting text in a camera's view could otherwise inject markup or malform the caption and silently drop the alert. *Dashboard restart.*
+- **`env_writer` rejects newlines in values** — a value containing `\n`/`\r` (reachable via `/api/setup/apply-config` free-text fields) could inject extra `.env` keys that docker-compose interpolates, bypassing the key allowlist. Now refused at the boundary. *Dashboard restart.*
 
 ---
 
