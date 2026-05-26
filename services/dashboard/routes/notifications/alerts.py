@@ -79,7 +79,7 @@ async def notify_person_detected(event_data: dict,
         # AI scene analysis — describe the person before sending
         ai_desc = await describe_scene(frame, prompt=_PERSON_PROMPT)
         if ai_desc:
-            caption += f"\n\n\U0001f916 <i>{ai_desc}</i>"
+            caption += f"\n\n\U0001f916 <i>{_esc(ai_desc)}</i>"
             # Store description in Redis for dashboard/journal access
             if event_id:
                 try:
@@ -253,7 +253,7 @@ async def notify_vehicle_idle(event_data: dict,
         # AI scene analysis — describe the vehicle before sending
         ai_desc = await describe_scene(frame, prompt=_VEHICLE_PROMPT)
         if ai_desc:
-            caption += f"\n\n\U0001f916 <i>{ai_desc}</i>"
+            caption += f"\n\n\U0001f916 <i>{_esc(ai_desc)}</i>"
             # Store description in Redis for dashboard/journal access
             if event_id:
                 try:
