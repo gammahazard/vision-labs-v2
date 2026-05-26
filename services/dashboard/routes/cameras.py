@@ -27,12 +27,15 @@ AUTH:
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
 import re
+import socket
 import urllib.parse
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import URLError, HTTPError
+from xml.sax.saxutils import escape as _xml_escape
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -60,6 +63,9 @@ async def _ffprobe_rtsp(url: str, timeout: float = 8.0) -> dict:
     cmd = [
         "ffprobe",
         "-rtsp_transport", "tcp",
+        # Constrain protocols so a malicious RTSP server can't redirect ffprobe
+        # to file://, http://, etc. via SDP/Content-Base.
+        "-protocol_whitelist", "file,crypto,udp,rtp,tcp,tls,rtsp,rtsps",
         "-v", "error",
         "-show_streams",
         "-show_format",
@@ -214,13 +220,37 @@ def _wsse_security_header(username: str, password: str) -> str:
         f'<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" '
         f'xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">'
         f'<wsse:UsernameToken>'
-        f'<wsse:Username>{username}</wsse:Username>'
+        f'<wsse:Username>{_xml_escape(username)}</wsse:Username>'
         f'<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">{base64.b64encode(digest).decode()}</wsse:Password>'
         f'<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">{base64.b64encode(nonce).decode()}</wsse:Nonce>'
         f'<wsu:Created>{created}</wsu:Created>'
         f'</wsse:UsernameToken>'
         f'</wsse:Security>'
     )
+
+
+def _is_lan_host(host: str) -> bool:
+    """True only if `host` resolves entirely to private/loopback/link-local IPs.
+
+    ONVIF cameras live on the LAN, so a public/metadata target for `device_url`
+    is never legitimate — this blocks the endpoint being used as an SSRF
+    primitive (e.g. pointing the dashboard at a cloud metadata service). Fails
+    closed on resolution errors or any non-private address.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if not (addr.is_private or addr.is_loopback or addr.is_link_local):
+            return False
+    return True
 
 
 def _soap_post(device_url: str, body: str, soap_action: str = "") -> str:
@@ -270,6 +300,15 @@ async def onvif_stream_uri(request: Request):
     if not device_url:
         return JSONResponse({"ok": False, "error": "device_url required"}, status_code=400)
 
+    # SSRF guard: device_url must be http(s) to a private/LAN host. Cameras are
+    # on the LAN; a public/metadata target is never legitimate and would turn
+    # this authenticated endpoint into an SSRF primitive.
+    _parsed_dev = urllib.parse.urlparse(device_url)
+    if _parsed_dev.scheme not in ("http", "https") or not _parsed_dev.hostname:
+        return JSONResponse({"ok": False, "error": "device_url must be an http(s) URL with a host"}, status_code=400)
+    if not _is_lan_host(_parsed_dev.hostname):
+        return JSONResponse({"ok": False, "error": "device_url must resolve to a private/LAN address"}, status_code=400)
+
     def _do_call() -> dict:
         # The media-service URL usually has the same host:port as the device
         # service but a different path. For Reolink: device=/onvif/device_service,
@@ -297,7 +336,9 @@ async def onvif_stream_uri(request: Request):
         profile_names = []
         for token in tokens[:4]:  # cap at 4 just in case
             sec = _wsse_security_header(username, password)
-            payload = _GETSTREAMURI_SOAP.format(security=sec, profile=token)
+            # token comes from the camera's GetProfiles response — a malicious
+            # camera controls it. Escape before interpolating into SOAP XML.
+            payload = _GETSTREAMURI_SOAP.format(security=sec, profile=_xml_escape(token))
             try:
                 r = _soap_post(media_url, payload)
             except (URLError, HTTPError):

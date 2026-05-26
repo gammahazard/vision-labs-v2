@@ -31,6 +31,9 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **`/metrics` now requires a bearer token** — the dashboard's LAN-reachable `/metrics` was an unauthenticated occupancy/inference side-channel. Gated by an installer-generated `METRICS_TOKEN` (one secret in `.env`; Prometheus reads the same value from a gitignored `credentials_file`). Unset = open + a logged warning. *Requires dashboard + prometheus recreate.*
 - **Grafana taken off the LAN** — bound to `127.0.0.1` (`GF_SERVER_HTTP_ADDR`), closing the anonymous-Viewer occupancy/metrics recon side-channel (H1's LAN-read residual after the #89 password fix). Prometheus datasource unaffected (it's an outbound call). The monitoring tab's embedded iframe is replaced with an "Open Grafana ↗" link — reach it on the host or via `ssh -L 3000:localhost:3000 <host>`. *Requires grafana recreate + dashboard restart.*
 - **CSRF hardening** — session cookie switched to `SameSite=Strict`, and the auth middleware now refuses any state-changing request (POST/PUT/DELETE/PATCH) whose `Origin` header doesn't match the served `Host` (absent Origin = non-browser client, allowed). Blocks cross-site forged requests against the logged-in admin. *Dashboard restart.*
+- **ffmpeg protocol whitelist** — recorder + `test-rtsp` ffprobe now pass `-protocol_whitelist file,crypto,udp,rtp,tcp,tls,rtsp,rtsps`, so a malicious RTSP server can't redirect ffmpeg to `file://`/`http://`/`concat:` via SDP. *Requires recorder rebuild.*
+- **ONVIF SSRF guard** — `/onvif-stream-uri` rejects a `device_url` that isn't an http(s) URL resolving to a private/LAN address, so the endpoint can't be used to reach metadata/cloud services. *Dashboard restart.*
+- **ONVIF SOAP XML escaping** — the WSSE username and the camera-supplied profile token are XML-escaped before interpolation into the SOAP envelope. *Dashboard restart.*
 
 ---
 
