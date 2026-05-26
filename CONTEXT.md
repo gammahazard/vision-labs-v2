@@ -439,6 +439,8 @@ The step indicator at the top is clickable for any already-visited step; forward
 ### Authorization
 Users in `telegram:users` hash (managed via dashboard `/api/telegram/users`). Unauthorized commands silently dropped + logged + emit `unauthorized_access` event to the primary camera's events stream.
 
+**Trust model (security):** any allowlisted Telegram user is **fully trusted**. The only role distinction is `/arm` and `/disarm` (admin-gated via `TELEGRAM_ADMIN_USERS`); *every other* capability — including `/ask`, which hands the LLM the full tool set (live snapshots/clips of any camera, `send_telegram`, `schedule_reminder`) — is available to any allowlisted user. So the admin/user split is **not** a real privilege boundary for data access; treat adding a Telegram user as granting full read + snapshot access to all cameras. There is no self-service approval (users are added only through the authenticated dashboard) and the transport is long-poll (no inbound webhook), so an un-allowlisted user can do nothing. (Audit M6: this is by-design for the single-operator model; if multi-user least-privilege is ever needed, filter the tool list for non-admin `/ask` in `routes/bot_commands/ask.py`.)
+
 ### Commands (all in `routes/bot_commands/`, one file per command)
 - Admin only (role=admin): `/arm`, `/disarm` (toggle notify_person + notify_vehicle on primary config).
 - User: `/snapshot [cam]`, `/clip [Ns] [cam]`, `/status [cam]`, `/who [cam]`, `/events [N] [cam]`, `/zones [cam]`, `/timelapse [YYYY-MM-DD] [cam]`, `/analyze [cam] [prompt]`, `/ask <q>`, `/rules`, `/night`, `/faces`, `/cameras`, `/start`, `/help`.
