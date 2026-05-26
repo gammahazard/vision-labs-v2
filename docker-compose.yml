@@ -395,6 +395,9 @@ services:
       - FACE_API_URL=http://face-recognizer-cam1:8081
       - AUTH_DB_PATH=/data/auth.db
       - OLLAMA_HOST=http://ollama:11434
+      # Bearer token /metrics requires (Prometheus sends it via credentials_file).
+      # Installer-generated into .env; unset = /metrics open + a logged warning.
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
       # AI model configuration (see .env / tiers/*.env). Empty CHAT_MODEL
       # disables the AI chat tab and skips the ollama warmup poller. Empty
       # VISION_MODEL disables the vision LLM image-analysis features.
@@ -501,6 +504,11 @@ services:
     volumes:
       - prometheus-data:/prometheus
       - ./services/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Bearer token for scraping the dashboard's /metrics. Gitignored,
+      # installer-generated, mounted read-only. Prometheus reads it via
+      # authorization.credentials_file in prometheus.yml. (644 on the host,
+      # not 600: prometheus runs as non-root and must read the bind-mount.)
+      - ./services/prometheus/metrics_token:/etc/prometheus/metrics_token:ro
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"

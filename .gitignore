@@ -71,6 +71,9 @@ audits/
 # Security audit report — documents live unpatched findings; never commit to history.
 SECURITY_AUDIT.md
 
+# Prometheus /metrics bearer token — installer-generated secret, never commit.
+services/prometheus/metrics_token
+
 # Vehicle-attributes training assets — local-only, multi-GB datasets + checkpoints.
 datasets/
 training-output/

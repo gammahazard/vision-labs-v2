@@ -16,11 +16,13 @@ RELATIONSHIPS:
 """
 
 import asyncio
+import hmac
 import json
 import logging
+import os
 import sys
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 
 from prometheus_client import (
     Gauge,
@@ -50,6 +52,22 @@ except ImportError:  # pragma: no cover — only hits during test import
     def stream_key(t, **kw): return t.format(**kw)
 
 logger = logging.getLogger("dashboard.metrics")
+
+# Bearer token for /metrics. The dashboard's :8080 is LAN-reachable (it's the
+# main UI), so /metrics rides on the LAN — without a token any LAN device can
+# scrape occupancy/inference gauges as a surveillance side-channel. Prometheus
+# (host-net) sends this token via its scrape-config credentials_file. The token
+# is installer-generated into .env (same value materialized into the file
+# Prometheus reads). If unset (bare compose-up that skipped the installer),
+# /metrics stays open with a logged warning — same optional-secret stance as
+# REDIS_PASSWORD; the supported install path always sets it.
+_METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+if not _METRICS_TOKEN:
+    logger.warning(
+        "METRICS_TOKEN unset — /metrics is served WITHOUT authentication. "
+        "Any LAN host on :8080 can scrape it. Run the installer or set "
+        "METRICS_TOKEN in .env to require a bearer token."
+    )
 
 # ---------------------------------------------------------------------------
 # Prometheus Metrics Definitions — every per-camera metric carries a
@@ -146,8 +164,18 @@ def _enabled_camera_ids() -> list[str]:
 # /metrics endpoint
 # ---------------------------------------------------------------------------
 @router.get("/metrics")
-async def prometheus_metrics():
-    """Return all metrics in Prometheus text exposition format."""
+async def prometheus_metrics(request: Request):
+    """Return all metrics in Prometheus text exposition format.
+
+    Gated by a bearer token when METRICS_TOKEN is set (see module top).
+    This route is in server.py's AUTH_EXEMPT set because Prometheus can't
+    present a session cookie — the bearer check here is its auth instead.
+    """
+    if _METRICS_TOKEN:
+        provided = request.headers.get("authorization", "")
+        # Constant-time compare to avoid leaking the token via timing.
+        if not hmac.compare_digest(provided, f"Bearer {_METRICS_TOKEN}"):
+            return Response(status_code=401, content="unauthorized")
     body = generate_latest(REGISTRY)
     return Response(content=body, media_type=CONTENT_TYPE_LATEST)
 
