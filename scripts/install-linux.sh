@@ -249,6 +249,39 @@ else
     ok "GRAFANA_ADMIN_PASSWORD already set — leaving it alone"
 fi
 
+# Generate the /metrics bearer token. ONE generated secret with two consumers:
+# .env (the dashboard validates the bearer header against METRICS_TOKEN) and a
+# gitignored file Prometheus reads via authorization.credentials_file. The file
+# is always a derivative of the .env value — never hand-placed.
+METRICS_TOKEN_FILE="services/prometheus/metrics_token"
+if ! grep -qE "^METRICS_TOKEN=[A-Za-z0-9]" .env 2>/dev/null; then
+    METRICS_TOK="$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '/+=')"
+    if [ -n "$METRICS_TOK" ]; then
+        sed -i '/^[[:space:]]*#*[[:space:]]*METRICS_TOKEN=/d' .env
+        printf '\n# /metrics bearer token — auto-generated at install. Never commit.\nMETRICS_TOKEN=%s\n' "$METRICS_TOK" >> .env
+        ok "Generated METRICS_TOKEN and added to .env"
+    else
+        warn "Could not generate METRICS_TOKEN — /metrics will be served without auth."
+    fi
+fi
+# Materialize the .env value into the file Prometheus reads (no trailing
+# newline — Prometheus would include it in the credential). 644 not 600: the
+# prom/prometheus container runs as a non-root user (uid 65534) and must read
+# this bind-mounted file, so owner-only perms fail with EACCES. The real
+# protection is the host-FS boundary (a LAN attacker can't read host files; a
+# host-local user already has .env), not the file mode.
+METRICS_TOK_VAL="$(grep -E '^METRICS_TOKEN=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+if [ -n "$METRICS_TOK_VAL" ]; then
+    printf '%s' "$METRICS_TOK_VAL" > "$METRICS_TOKEN_FILE"
+    chmod 644 "$METRICS_TOKEN_FILE"
+    ok "Wrote $METRICS_TOKEN_FILE for Prometheus"
+else
+    # Ensure the bind-mount source exists even when unset, so compose doesn't
+    # create a phantom directory; empty token = dashboard serves /metrics open.
+    : > "$METRICS_TOKEN_FILE"
+    chmod 644 "$METRICS_TOKEN_FILE"
+fi
+
 # ---------------------------------------------------------------------------
 # Step 6: Pull or build, then run
 # ---------------------------------------------------------------------------

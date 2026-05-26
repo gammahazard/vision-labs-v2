@@ -22,6 +22,14 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:8080"]
     metrics_path: "/metrics"
+    # /metrics is on the LAN-reachable :8080, so it's gated by a bearer token.
+    # The token is installer-generated into both .env (the dashboard validates
+    # against it) and this gitignored file (mounted :ro). If the file is empty
+    # (installer not run), the dashboard serves /metrics open and this empty
+    # credential is ignored — scraping still works.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
 
   # Redis health metrics (memory, clients, commands/sec, stream lengths)
   - job_name: "redis"
