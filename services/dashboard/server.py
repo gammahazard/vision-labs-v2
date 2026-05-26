@@ -208,10 +208,31 @@ _MUST_CHANGE_PASSWORD_ALLOWED = {
 }
 
 
+_MUTATING_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Redirect unauthenticated requests to the login page."""
     path = request.url.path
+
+    # CSRF / cross-origin defense (applies before auth so it also covers the
+    # login + setup POSTs). For state-changing requests, if the browser sent an
+    # Origin header it MUST match the Host we're served on. Same-origin
+    # dashboard fetches always satisfy this; a cross-site forged POST carries
+    # the attacker's Origin and is rejected. Absent Origin = a non-browser
+    # client (curl/CLI) which isn't a CSRF vector, so it's allowed through.
+    # Pairs with the SameSite=strict session cookie (routes/auth.py).
+    if request.method in _MUTATING_METHODS:
+        origin = request.headers.get("origin")
+        if origin:
+            from urllib.parse import urlparse
+            origin_host = urlparse(origin).netloc
+            if origin_host and origin_host != request.headers.get("host", ""):
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    {"error": "cross-origin request refused"}, status_code=403,
+                )
 
     # Allow exempt paths through
     if path in _AUTH_EXEMPT:
