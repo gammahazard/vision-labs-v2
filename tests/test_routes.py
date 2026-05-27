@@ -655,6 +655,47 @@ class TestAuthRoutes:
         )
         assert resp.status_code == 401
 
+    def test_login_rejects_malformed_username(self, auth_client):
+        # Username with ':' (token delimiter) / CRLF must be refused before it
+        # flows into the signed token + Set-Cookie value (CodeQL cookie-injection).
+        for bad in ("a:b", "x\r\nSet-Cookie: y", "has space", "ev;il"):
+            resp = auth_client.post(
+                "/api/auth/login", json={"username": bad, "password": "admin"},
+            )
+            assert resp.status_code == 401, f"{bad!r} should be rejected"
+
+    def test_change_password_rejects_bad_new_username(self, auth_client):
+        login_resp = auth_client.post(
+            "/api/auth/login", json={"username": "admin", "password": "admin"},
+        )
+        auth_client.cookies.set("vl_session", login_resp.cookies.get("vl_session"))
+        resp = auth_client.post(
+            "/api/auth/change-password",
+            json={"current_password": "admin", "new_password": "newpass123",
+                  "new_username": "bad:name"},
+        )
+        assert resp.status_code == 400
+        assert "username" in resp.json().get("error", "").lower()
+
+    def test_change_password_allows_valid_rename(self, auth_client):
+        login_resp = auth_client.post(
+            "/api/auth/login", json={"username": "admin", "password": "admin"},
+        )
+        auth_client.cookies.set("vl_session", login_resp.cookies.get("vl_session"))
+        resp = auth_client.post(
+            "/api/auth/change-password",
+            json={"current_password": "admin", "new_password": "newpass123",
+                  "new_username": "operator-1.cam"},
+        )
+        assert resp.status_code == 200
+        # The valid rename can log in
+        auth_client.cookies.clear()
+        nl = auth_client.post(
+            "/api/auth/login",
+            json={"username": "operator-1.cam", "password": "newpass123"},
+        )
+        assert nl.status_code == 200
+
 
 # ===========================================================================
 # Notification Route Tests

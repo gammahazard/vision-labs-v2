@@ -36,6 +36,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 - **ONVIF SOAP XML escaping** — the WSSE username and the camera-supplied profile token are XML-escaped before interpolation into the SOAP envelope. *Dashboard restart.*
 - **QNAP password placeholder blanked** — `.env.example` ships `QNAP_PASSWORD=` (was `changeme`) so an unconfigured NAS mount fails loudly instead of trying a guessable default.
 - **Hardening guards** — `.gitignore` now covers `*.pem`/`*.key`/`*.crt`/`*.p12`; a regression test pins Redis to its `127.0.0.1` bind so a passwordless Redis can't silently drift onto the LAN.
+- **Username validation on the session token** — login + change-password now require usernames match `^[A-Za-z0-9_.-]{1,64}$` before the value flows into the signed token / `Set-Cookie`. Blocks `:` (token-format corruption) and CRLF/`;` (cookie injection). Closes two CodeQL `py/cookie-injection` alerts. *Dashboard restart.*
 
 ---
 

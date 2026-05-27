@@ -21,6 +21,7 @@ ENDPOINTS:
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -49,6 +50,13 @@ _DB_PATH: str = None
 # without being annoying on a personal LAN install. Bump to 12 if you want
 # more friction.
 MIN_PASSWORD_LENGTH = 8
+
+# Usernames go into the signed session token (format username:flag:ts:sig) and
+# thus into the Set-Cookie value. Constrain to a safe charset so a username
+# can't contain ':' (corrupts the token format), CRLF/';' (cookie/header
+# injection), or other control chars. Validated everywhere a username flows
+# into a token (login + change-password rename).
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 # Brute-force gate state — in-memory dict keyed by client IP.
 # {ip: {"fails": int, "window_start": ts, "locked_until": ts}}
@@ -370,6 +378,12 @@ async def login(request: Request):
     if not username or not password:
         return JSONResponse({"error": "Username and password required"}, status_code=400)
 
+    # A malformed-charset username can't be a real account (change-password
+    # enforces the same charset on rename) — reject before it flows into the
+    # signed token / Set-Cookie value. Same 401 as bad creds.
+    if not _USERNAME_RE.match(username):
+        return JSONResponse({"error": "Invalid username or password"}, status_code=401)
+
     db = _get_db()
     try:
         row = db.execute(
@@ -450,6 +464,15 @@ async def change_password(request: Request):
 
     if not current_pw or not new_pw:
         return JSONResponse({"error": "Current and new password required"}, status_code=400)
+
+    # Validate the rename target before it lands in the DB + the new session
+    # token. Blocks ':' (token-delimiter corruption) and CRLF/';' (cookie
+    # injection) from reaching the Set-Cookie value.
+    if new_username and not _USERNAME_RE.match(new_username):
+        return JSONResponse(
+            {"error": "Username may only contain letters, digits, dot, dash, underscore (max 64)"},
+            status_code=400,
+        )
 
     if len(new_pw) < MIN_PASSWORD_LENGTH:
         return JSONResponse(
