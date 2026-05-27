@@ -9,6 +9,7 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 ## [Unreleased]
 
 ### Added
+- **Open-vocabulary "Locate" tool (opt-in)** — drop an image in the AI tab, type what to find ("vehicle", "license plate"), and get it back with boxes drawn + a download link, powered by `nvidia/LocateAnything-3B`. New `locate-anything` service + `docker-compose.locate.yml` overlay (off by default, not published). *NON-COMMERCIAL model — weights lazy-download at runtime; enable via the overlay with `ENABLE_LOCATE`.*
 - **Auto-enable classifier on per-cam toggle** — Cameras edit modal's `detect_vehicle_attributes=true` now also writes `ENABLE_CLASSIFIER=1` to `.env` + recreates all `vehicle-attributes-camN` containers. Was: toggle ran the container but classification silently stayed off. *Requires dashboard restart.*
 - **Per-track labeling backend (Phase 4 PR1)** — `POST /api/browse/label/{date}/{camera}/{track_dir}` writes user_labels block to metadata.json (atomic). `GET /api/browse/label-classes` returns color/body/make/model class lists. *Requires dashboard recreate (new bind mount).*
 - **Inline labeling UI in cropsModal (Phase 4 PR1b)** — per-track Label/Edit/Skip button + form with color/body dropdowns + make/model autocomplete. IR-mode tracks render color disabled with a tooltip.
