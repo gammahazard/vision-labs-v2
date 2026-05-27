@@ -109,6 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Also check vision status on page load
     checkVisionStatus();
+    checkLocateStatus();
 });
 
 function loadVisionImage(file) {
@@ -124,8 +125,10 @@ function loadVisionImage(file) {
         // Store base64 (strip data:image/xxx;base64, prefix)
         visionImageBase64 = dataUrl.split(',')[1];
 
-        // Enable analyze button
+        // Enable analyze + locate (locate is image-only)
         document.getElementById('visionAnalyzeBtn').disabled = false;
+        const lb = document.getElementById('visionLocateBtn');
+        if (lb) lb.disabled = false;
     };
     reader.readAsDataURL(file);
 }
@@ -142,6 +145,10 @@ function clearVisionImage() {
     document.getElementById('visionAnalyzeBtn').disabled = true;
     document.getElementById('visionResults').style.display = 'none';
     document.getElementById('visionFileInput').value = '';
+    const lb = document.getElementById('visionLocateBtn');
+    if (lb) lb.disabled = true;
+    const lr = document.getElementById('visionLocateResults');
+    if (lr) lr.style.display = 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -295,4 +302,80 @@ function copyVisionResult() {
     }).catch(() => {
         console.warn('Failed to copy to clipboard');
     });
+}
+
+// ---------------------------------------------------------------------------
+// Locate (opt-in nvidia/LocateAnything-3B service) — find objects + draw boxes
+// ---------------------------------------------------------------------------
+async function checkLocateStatus() {
+    try {
+        const r = await fetch('/api/locate/status');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.enabled) {
+            const btn = document.getElementById('visionLocateBtn');
+            if (btn) btn.style.display = '';
+        }
+    } catch (_) { /* feature off — leave the button hidden */ }
+}
+
+async function locateVisionImage() {
+    if (visionAnalyzing || !visionImageBase64) return;
+
+    // The model expects an instruction; if the user typed a bare noun, wrap it
+    // in the grounding template. A full "Locate/Point/Detect ..." prompt passes
+    // through untouched.
+    let phrase = document.getElementById('visionPrompt').value.trim();
+    if (!phrase) phrase = 'vehicle';
+    if (!/^(locate|point|detect)\b/i.test(phrase)) {
+        phrase = `Locate all instances that match: ${phrase}.`;
+    }
+
+    visionAnalyzing = true;
+    document.getElementById('visionLocateBtn').disabled = true;
+    document.getElementById('visionAnalyzeBtn').disabled = true;
+    document.getElementById('visionResults').style.display = 'none';
+    document.getElementById('visionLocateResults').style.display = 'none';
+    const loadingEl = document.getElementById('visionLoading');
+    loadingEl.style.display = 'flex';
+    loadingEl.querySelector('span').textContent = 'Locating… (first run loads the model, ~1 min)';
+
+    try {
+        // Rebuild a Blob from the stored base64 for the multipart upload.
+        const blob = await (await fetch('data:image/jpeg;base64,' + visionImageBase64)).blob();
+        const form = new FormData();
+        form.append('image', blob, 'upload.jpg');
+        form.append('phrase', phrase);
+        form.append('mode', 'slow');
+
+        const resp = await fetch('/api/locate', { method: 'POST', body: form });
+        document.getElementById('visionLoading').style.display = 'none';
+
+        if (resp.ok) {
+            const data = await resp.json();
+            const url = 'data:image/png;base64,' + data.annotated_png_b64;
+            document.getElementById('visionLocateImg').src = url;
+            document.getElementById('visionLocateDownload').href = url;
+            document.getElementById('visionLocateMeta').textContent =
+                `${data.count} match(es) for "${phrase}" · ${(data.infer_ms / 1000).toFixed(1)}s`;
+            document.getElementById('visionLocateResults').style.display = 'block';
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            document.getElementById('visionLocateMeta').textContent =
+                '❌ ' + (err.error || `Error ${resp.status}`);
+            document.getElementById('visionLocateImg').removeAttribute('src');
+            document.getElementById('visionLocateResults').style.display = 'block';
+        }
+    } catch (e) {
+        document.getElementById('visionLoading').style.display = 'none';
+        document.getElementById('visionLocateMeta').textContent =
+            '❌ Network error — is the locate service running?';
+        document.getElementById('visionLocateResults').style.display = 'block';
+    } finally {
+        visionAnalyzing = false;
+        if (visionImageBase64) {
+            document.getElementById('visionLocateBtn').disabled = false;
+            document.getElementById('visionAnalyzeBtn').disabled = false;
+        }
+    }
 }

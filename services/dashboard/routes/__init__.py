@@ -24,6 +24,8 @@ r: redis.Redis = None           # Redis client (decode_responses=True — text)
 r_bin: redis.Redis = None       # Redis client (decode_responses=False — binary/JPEG)
 logger: logging.Logger = None   # Logger instance
 FACE_API_URL: str = ""          # face-recognizer service URL
+LOCATE_API_URL: str = ""        # optional grounding service URL (opt-in overlay)
+ENABLE_LOCATE: bool = False     # opt-in grounding feature flag
 
 # Redis key names — set by server.py
 EVENT_STREAM: str = ""

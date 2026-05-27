@@ -66,6 +66,10 @@ REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8080"))
 FACE_API_URL = os.getenv("FACE_API_URL", "http://127.0.0.1:8081")
+# Optional opt-in grounding service (docker-compose.locate.yml). Off unless
+# ENABLE_LOCATE=1 and the service URL is set.
+LOCATE_API_URL = os.getenv("LOCATE_API_URL", "")
+ENABLE_LOCATE = os.getenv("ENABLE_LOCATE", "0") in ("1", "true", "yes")
 
 # Redis keys — resolved from contracts/streams.py
 FRAME_STREAM = stream_key(_FRAME_TMPL, camera_id=CAMERA_ID)
@@ -121,6 +125,8 @@ route_ctx.r = r
 route_ctx.r_bin = r_bin
 route_ctx.logger = logger
 route_ctx.FACE_API_URL = FACE_API_URL
+route_ctx.LOCATE_API_URL = LOCATE_API_URL
+route_ctx.ENABLE_LOCATE = ENABLE_LOCATE
 route_ctx.EVENT_STREAM = EVENT_STREAM
 route_ctx.FRAME_STREAM = FRAME_STREAM
 route_ctx.DETECTION_STREAM = DETECTION_STREAM
@@ -159,6 +165,7 @@ from routes.metrics import router as metrics_router, start_metrics_collector
 from routes.recordings import router as recordings_router
 from routes.cameras import router as cameras_router
 from routes.containers import router as containers_router
+from routes.locate import router as locate_router
 from routes.setup import router as setup_router, is_setup_complete, auto_mark_complete_if_preexisting
 
 app.include_router(events_router)
@@ -176,6 +183,7 @@ app.include_router(metrics_router)
 app.include_router(recordings_router)
 app.include_router(cameras_router)
 app.include_router(containers_router)
+app.include_router(locate_router)
 app.include_router(setup_router)
 
 
