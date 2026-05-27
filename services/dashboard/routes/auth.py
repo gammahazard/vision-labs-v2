@@ -502,6 +502,14 @@ async def change_password(request: Request):
         new_salt = secrets.token_hex(16)
         new_hash = _hash_password(new_pw, new_salt)
         target_username = new_username if new_username else username
+        # Validate the EXACT value that lands in the DB + signed token + cookie,
+        # regardless of source (typed rename OR carried-over session username).
+        # Guards ':' (token-format corruption) and CRLF/';' (cookie injection).
+        if not _USERNAME_RE.match(target_username):
+            return JSONResponse(
+                {"error": "Username may only contain letters, digits, dot, dash, underscore (max 64)"},
+                status_code=400,
+            )
         now = time.time()
 
         db.execute(
