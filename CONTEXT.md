@@ -236,7 +236,7 @@ The v0 design is therefore: two models, two backbones, two safetensors files on 
 ### 4.11 `prometheus/`, `grafana/`, `redis-exporter`, `dcgm-exporter`, `node-exporter`
 - All host-network. Scrapes via `localhost:9100/9121/9400/8080`.
 - **Prometheus** bound to `127.0.0.1:9090` only (so LAN can't hit the admin API). `--storage.tsdb.retention.time=30d` + `--storage.tsdb.retention.size=5GB`. `--web.enable-admin-api` enabled for `scripts/prometheus-clean-stale-cameras.sh`.
-- **Grafana**: provisioning + dashboards bind-mounted RO; port 3000; admin/visionlabs; anonymous viewer enabled so the monitoring page can embed without sign-in. Host-bound (LAN-reachable) as a trade-off for the iframe embed. Dashboard auto-refresh = 15s.
+- **Grafana**: provisioning + dashboards bind-mounted RO; port 3000; admin password from `GRAFANA_ADMIN_PASSWORD` (auto-generated at install — the old hardcoded `visionlabs` was removed, it was world-readable in this public repo); anonymous Viewer enabled. **Bound to `127.0.0.1` (`GF_SERVER_HTTP_ADDR`) — off the LAN** (2026-05 security). The monitoring tab no longer embeds an iframe; it links out ("Open Grafana ↗"), reachable on the host or via `ssh -L 3000:localhost:3000 <host>`. Datasource (outbound to Prometheus at localhost:9090) is unaffected by the loopback bind.
 - **redis-exporter**: standard Redis stats on 9121.
 - **dcgm-exporter**: GPU metrics with `gpu` (index) and `modelName` labels; Grafana labels use both to produce "GPU0 util (RTX 5070 Ti)" style legends.
 - **node-exporter**: host disk / memory / CPU / network on `127.0.0.1:9100`. Mounts `/proc`, `/sys`, and `/` (no rslave on WSL2). The dashboard's Grafana "Host" row uses this for disk-usage gauge, free-space trendline, CPU and memory.
@@ -387,7 +387,7 @@ static/
 | `single.html` (detail) | `js/dashboard/{app,events,faces,unknowns,zones,conditions,browse}.js` + `js/core/{nav,auth}.js` | WebSocket /ws/live?camera=, /api/config, /api/zones, /api/events, /api/faces, /api/unknowns |
 | `cameras.html` | `js/pages/cameras.js` + `js/core/nav.js` | /api/cameras*, /api/cameras/discover, /api/cameras/onvif-stream-uri, /api/cameras/test-rtsp, /api/cameras/{id}/status |
 | `ai.html` | `js/pages/ai.js` + `js/core/nav.js` | /api/ai/{config,status,history,chat,reset,vision*}, /api/recordings/* (DVR tab) |
-| `monitoring.html` | `js/pages/monitoring.js` + `js/core/nav.js` | /api/monitoring/health + embedded Grafana iframe |
+| `monitoring.html` | `js/pages/monitoring.js` + `js/core/nav.js` | /api/monitoring/health + "Open Grafana ↗" link-out (Grafana bound to 127.0.0.1; no longer an iframe) |
 | `telegram.html` | `js/pages/telegram.js` + `js/core/nav.js` | /api/notifications/status (decides connect vs manage panel), /api/telegram/*, /api/setup/telegram/* (connect flow reuses wizard endpoints) |
 | `setup.html` | `js/pages/setup.js` | /api/setup/{detect-hardware,apply-config,discover-cameras,telegram/*,complete}, /api/cameras*, /api/stats (verify step) |
 | `login.html` | (inline only) | /api/auth/login, /api/login-bg |
@@ -604,7 +604,7 @@ bash scripts/restore.sh ~/vl-backup-YYYYMMDD-HHMMSS.tar.gz
 
 - **No server-side session store.** Tokens are signed HMAC, fully self-contained.
 - **Token format:** `username:must_change_flag:timestamp:hmac_sha256_signature` (auth.py:143). 4-part; old 3-part tokens are rejected (users re-login). `must_change_flag` is `1` when login detected the default admin/admin combo so the middleware can force a password rotation before letting the user past. Key from env `SECRET_KEY` or generated into `app_config` SQLite table.
-- **Cookie:** `vl_session` (httponly, samesite=lax, max_age=86400, path=/).
+- **Cookie:** `vl_session` (httponly, samesite=strict, max_age=86400, path=/). The auth middleware also rejects state-changing requests whose `Origin` doesn't match `Host` (CSRF defense).
 - **`validate_session(token) → username | None`** — used by HTTP middleware AND WebSocket (websocket.py:112 — middleware doesn't intercept WS upgrades, so each handler must call it).
 - **First-run admin/admin:** `init_auth_db()` creates the default user if the users table is empty. Login endpoint detects the combo and returns `must_change_password: true` — UI forces rotation before letting through.
 - **`/api/login-bg`** (auth-exempt) returns a heavily-blurred (1/4 scale GaussianBlur 51,51 σ=30 quality 30) JPEG so the login page background can't be used for surveillance.
