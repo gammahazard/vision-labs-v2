@@ -8,6 +8,8 @@ Release images publish to `ghcr.io/gammahazard/vision-labs/<service>:<tag>` (`:v
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-27
+
 ### Added
 - **Open-vocabulary "Locate" tool (opt-in)** — drop an image in the AI tab, type what to find ("vehicle", "license plate"), and get it back with boxes drawn + a download link, powered by `nvidia/LocateAnything-3B`. New `locate-anything` service + `docker-compose.locate.yml` overlay (off by default, not published). *NON-COMMERCIAL model — weights lazy-download at runtime; enable via the overlay with `ENABLE_LOCATE`.*
 - **Auto-enable classifier on per-cam toggle** — Cameras edit modal's `detect_vehicle_attributes=true` now also writes `ENABLE_CLASSIFIER=1` to `.env` + recreates all `vehicle-attributes-camN` containers. Was: toggle ran the container but classification silently stayed off. *Requires dashboard restart.*
@@ -218,7 +220,8 @@ First tagged release. Initial publish of 9 service images to GHCR.
 
 ---
 
-[Unreleased]: https://github.com/gammahazard/vision-labs-v2/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gammahazard/vision-labs-v2/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/gammahazard/vision-labs-v2/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gammahazard/vision-labs-v2/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gammahazard/vision-labs-v2/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/gammahazard/vision-labs-v2/compare/v0.1.0...v0.1.1
