@@ -1,9 +1,10 @@
 # locate-anything — open-vocabulary visual grounding via nvidia/LocateAnything-3B.
 #
-# OPT-IN, LOCAL-ONLY. The model is NON-COMMERCIAL (NVIDIA License) and is NOT
-# baked into this image — it lazy-downloads from HF Hub at runtime into the
-# locate-models volume, so the END USER fetches it and accepts NVIDIA's license.
-# This image ships only our plumbing. Excluded from the published GHCR set.
+# OPT-IN. The model is NON-COMMERCIAL (NVIDIA License) and is NOT baked into
+# this image — it lazy-downloads from HF Hub at runtime into the locate-models
+# volume, so the END USER fetches it and accepts NVIDIA's license. This image
+# ships only our plumbing (code + public deps), so it's safe to publish to
+# GHCR — publishing the wrapper does not redistribute the licensed weights.
 #
 # Mirrors the vehicle-attributes pattern: shared CUDA base + explicit torch.
 FROM vision-labs-base:cuda12.8

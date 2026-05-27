@@ -36,7 +36,7 @@ In-depth reference for setting up, configuring, and operating Vision Labs. For t
 | **Telegram notifications** | Real-time photo alerts with AI scene descriptions, broadcast to all approved users |
 | **AI assistant** | Qwen 3 14B local LLM with 19 tool functions — query events (with by_type / by_identity / per_camera aggregations), capture live snapshots (auto-described by MiniCPM-V), find DVR segments, send alerts, set reminders. Analytical tools default to `camera="all"` for cross-camera answers. |
 | **Vision analysis** | MiniCPM-V multimodal model analyzes camera snapshots and user-uploaded images |
-| **Locate (optional)** | Open-vocabulary object grounding — describe what to find, get boxes drawn. Powered by `nvidia/LocateAnything-3B` (NON-COMMERCIAL). Opt-in via `docker-compose.locate.yml`; ships as code, model downloads at runtime — not in the default stack or published images |
+| **Locate (optional)** | Open-vocabulary object grounding — describe what to find, get boxes drawn. Powered by `nvidia/LocateAnything-3B` (NON-COMMERCIAL). Opt-in via `docker-compose.locate.yml` (not in the default stack). The image is published (code + deps only — model weights are **not** bundled, they download at runtime) |
 | **DVR recording** | ffmpeg-copy 1-hour `.ts` segments with 3-day rolling retention. Bind-mounted to `./data/recordings/{camera_id}/` so it's browseable from Windows Explorer. Optional QNAP overlay flips the destination to NFS/CIFS |
 | **Zone management** | Draw detection/alert/dead zones on the camera view — configurable per time-of-day |
 | **Local retention** | Daily prune of `/data/snapshots` and `/data/events` (default 4 days; `SNAPSHOT_RETENTION_DAYS=0` disables) |

@@ -118,6 +118,11 @@ jobs:
           - dashboard
           - recorder
           - orchestrator
+          # Opt-in grounding service. The IMAGE is publishable — it contains
+          # only our code + public PyPI deps; the nvidia/LocateAnything-3B
+          # weights (NON-COMMERCIAL) are NOT baked in, they download at runtime.
+          # So publishing the wrapper does not redistribute the licensed model.
+          - locate-anything
     steps:
       - uses: actions/checkout@v5
 

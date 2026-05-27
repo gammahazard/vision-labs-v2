@@ -1,17 +1,21 @@
 # ---------------------------------------------------------------------------
 # OPT-IN overlay: open-vocabulary visual grounding (nvidia/LocateAnything-3B).
 # ---------------------------------------------------------------------------
-# This is NOT part of the default stack and is NOT published to GHCR. Enable it
-# explicitly and locally:
+# This is NOT part of the default stack — enable it explicitly. Pull the
+# prebuilt image (fast) or let compose build it locally:
 #
+#   docker compose -f docker-compose.yml -f docker-compose.locate.yml pull locate-anything
 #   docker compose -f docker-compose.yml -f docker-compose.locate.yml up -d \
 #       locate-anything dashboard
 #
+# (Skip the `pull` to build from source instead — the `build:` block below.)
+#
 # LICENSE: LocateAnything-3B is under the NVIDIA License — NON-COMMERCIAL /
-# research use only. This overlay ships only our service code; the model
-# weights lazy-download from HF Hub at runtime into the locate-models volume,
-# so YOU fetch them and accept NVIDIA's license. Do not enable this for
-# commercial use. See https://huggingface.co/nvidia/LocateAnything-3B.
+# research use only. The published image contains ONLY our service code +
+# public deps — the model weights are NOT bundled; they lazy-download from
+# HF Hub at runtime into the locate-models volume, so YOU fetch them and accept
+# NVIDIA's license. Do not enable this for commercial use.
+# See https://huggingface.co/nvidia/LocateAnything-3B.
 #
 # GPU: set LOCATE_GPU in .env (default 0). On a dual-GPU rig, point it at the
 # card with headroom (the model needs ~8 GB).
@@ -19,7 +23,8 @@ services:
   locate-anything:
     build:
       context: ./services/locate-anything
-    image: vision-labs-locate-anything:latest
+    # Pull from GHCR by default; `build:` above lets you build from source.
+    image: ghcr.io/gammahazard/vision-labs/locate-anything:${IMAGE_TAG:-latest}
     environment:
       - LOCATE_GEN_MODE=${LOCATE_GEN_MODE:-slow}
       - LOCATE_MAX_DIM=${LOCATE_MAX_DIM:-1536}

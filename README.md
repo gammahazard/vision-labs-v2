@@ -69,9 +69,10 @@ Open-vocabulary visual grounding — drop any image into the AI tab, describe wh
 |:-:|:-:|
 | ![Locate prompt](docs/images/locate-prompt.png) | ![Locate result](docs/images/locate-result.png) |
 
-**Opt-in + non-commercial.** This is *not* part of the default stack — the model is under NVIDIA's research/non-commercial license. Anyone who clones the repo can still enable and use it: we ship only the service code, you build it locally, and the weights download from NVIDIA's HF Hub at runtime (you fetch them and accept NVIDIA's license). We never bundle the model into a published image. Enable it with the overlay:
+**Opt-in + non-commercial.** This is *not* part of the default stack — the model is under NVIDIA's research/non-commercial license. The published `locate-anything` image contains **only our code + public deps** (the model weights are **not** bundled — they download from NVIDIA's HF Hub at runtime, where you accept NVIDIA's license), so anyone can enable it. Pull it (or build from source) and bring it up with the overlay:
 
 ```bash
+docker compose -f docker-compose.yml -f docker-compose.locate.yml pull locate-anything
 docker compose -f docker-compose.yml -f docker-compose.locate.yml up -d locate-anything dashboard
 ```
 
