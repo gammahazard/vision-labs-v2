@@ -43,7 +43,7 @@ Built and tested on a dual-GPU workstation (RTX 5070 Ti + RTX 3090) running Ubun
 | Grafana + Prometheus | Container monitoring |
 |:-:|:-:|
 | ![Grafana](docs/images/grafana.png) | ![Containers](docs/images/container-monitoring.png) |
-| Live GPU, Redis, inference-time metrics embedded in the dashboard | Every service's state + uptime in one view, deep-link to Portainer |
+| Live GPU, Redis, inference-time metrics, opened from the System Monitor tab | Every service's state + uptime in one view, deep-link to Portainer |
 
 ### Setup walkthrough
 
@@ -59,7 +59,23 @@ The first-run wizard handles hardware detection, GPU tier recommendation, ONVIF 
   <img src="docs/images/grafana-live.gif" alt="Grafana System Monitor with live inference, VRAM, and stream metrics" width="800" />
 </p>
 
-The embedded Grafana panel pulls from a Prometheus scrape of every service in the stack: YOLO inference latency per camera, Redis stream lengths, VRAM usage, GPU utilization + temperature + power, and Redis op rate. Captured here on real cam1/cam2 traffic.
+Grafana — bound to loopback and opened from the dashboard's System Monitor tab — pulls from a Prometheus scrape of every service in the stack: YOLO inference latency per camera, Redis stream lengths, VRAM usage, GPU utilization + temperature + power, and Redis op rate. Captured here on real cam1/cam2 traffic.
+
+### Optional: Locate tool
+
+Open-vocabulary visual grounding — drop any image into the AI tab, describe what to find in plain English, and get it back with boxes drawn (downloadable). Powered by `nvidia/LocateAnything-3B`.
+
+| Drop an image + a prompt | Get the boxes back |
+|:-:|:-:|
+| ![Locate prompt](docs/images/locate-prompt.png) | ![Locate result](docs/images/locate-result.png) |
+
+**Opt-in + non-commercial.** This is *not* part of the default stack — the model is under NVIDIA's research/non-commercial license. Anyone who clones the repo can still enable and use it: we ship only the service code, you build it locally, and the weights download from NVIDIA's HF Hub at runtime (you fetch them and accept NVIDIA's license). We never bundle the model into a published image. Enable it with the overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.locate.yml up -d locate-anything dashboard
+```
+
+The 📍 Locate button then appears in the AI tab's image panel. First use downloads the model (~7 GB, one-time).
 
 ---
 
@@ -73,7 +89,8 @@ The embedded Grafana panel pulls from a Prometheus scrape of every service in th
 - **DVR recording** — 1-hour MPEG-TS segments, browseable through the dashboard with date + camera filters
 - **Drawable zones** with per-time-of-day alert rules (always / night-only / log / ignore / dead zone)
 - **Up to 20 cameras** out of the box (symmetric `cam1`–`cam20` slots, orchestrator-managed). The real cap is GPU VRAM, not the slot count — a 16 GB card with AI chat off comfortably handles 7+ cameras at 'n' detector models; a 24 GB 3090 with chat off pushes 12+. The wizard estimates a number for your hardware.
-- **Prometheus + Grafana monitoring** embedded in the dashboard
+- **Prometheus + Grafana monitoring** — linked from the dashboard's System Monitor tab (Grafana is bound to `127.0.0.1` for security; reach it on the host or via an SSH tunnel)
+- **Optional open-vocabulary "Locate" tool** — drop an image in the AI tab, type what to find ("vehicle", "license plate"), get it back with boxes drawn. Powered by `nvidia/LocateAnything-3B`. **Opt-in** via `docker-compose.locate.yml`; the model is **non-commercial** (NVIDIA License) and downloads at runtime — see [below](#optional-locate-tool)
 
 ---
 
@@ -153,10 +170,10 @@ Open `http://localhost:8080`, log in with `admin/admin` (forced password rotatio
 
 | Service | URL | Notes |
 |---|---|---|
-| Dashboard | http://localhost:8080 | Main UI. `admin/admin` on first run. |
-| Portainer | https://localhost:9443 | Docker management UI |
-| Grafana | http://localhost:3000 | System metrics (also embedded in dashboard) |
-| Prometheus | http://localhost:9090 | Raw metrics |
+| Dashboard | http://localhost:8080 | Main UI, LAN-reachable. `admin/admin` on first run. |
+| Portainer | https://localhost:9443 | Docker management UI — **host-only** (bound to `127.0.0.1`). From another machine: `ssh -L 9443:localhost:9443 <host>`. |
+| Grafana | http://localhost:3000 | System metrics — **host-only** (bound to `127.0.0.1`); linked from the dashboard's System Monitor tab. Tunnel: `ssh -L 3000:localhost:3000 <host>`. |
+| Prometheus | http://localhost:9090 | Raw metrics — host-only (bound to `127.0.0.1`). |
 
 ---
 
